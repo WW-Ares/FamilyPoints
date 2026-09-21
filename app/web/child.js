@@ -220,15 +220,15 @@ function kShell(opt, body) {
 /* 「有事就说」的两个入口。刻意不做成道具卡：偷玩的根因是「正规通道比偷玩更麻烦」，
    把入口埋进两层菜单，等于亲手把它变回更麻烦的那一条。
    两条各贴着它要用的那个地方：申请加时在券包（紧挨着要用的那张券），
-   「这题我不会」在首页（正在写作业的时候开的就是这一屏）。
+   「遇到困难」在首页（正在写作业的时候开的就是这一屏）。
    原来两块都堆在「我的」最下面，等于要翻两屏才找得到。
    按钮 id 不变，CHILD.bind 按 id 绑，不用跟着搬。 */
 function kAskCard(kind) {
   const ot = kind === 'ot';
   return '<div class="card card--tight"><div class="hb"><div>' +
-    '<div class="row-title">' + (ot ? '想多玩一会儿' : '这题我不会') + '</div>' +
+    '<div class="row-title">' + (ot ? '想多玩一会儿' : '遇到困难') + '</div>' +
     '<div class="row-sub">' + (ot ? '不用攒卡，也不用先表现好'
-      : '说清楚卡在哪一步，核实后 +1 星尘') + '</div></div>' +
+      : '说清楚遇到什么困难，核实后 +1 星尘') + '</div></div>' +
     '<button class="btn btn--sm' + (ot ? '' : ' line') + '" id="' +
     (ot ? 'kAskOt' : 'kAskHelp') + '">' + (ot ? '申请加时' : '说一声') +
     '</button></div></div>';
@@ -401,7 +401,7 @@ async function kScreenHome() {
       ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
   }
 
-  // ⑤ 这题我不会。放在心愿上面：孩子开首页多半正写着作业，这一条要先被看见。
+  // ⑤ 遇到困难。放在心愿上面：孩子开首页多半正写着作业，这一条要先被看见。
   h += kAskCard('help');
 
   // ⑥ 心愿
@@ -421,7 +421,7 @@ async function kScreenHome() {
   } else {
     h += '<div class="row" data-go="wish" style="cursor:pointer">' +
       '<span class="icon-box" style="background:var(--pink-bg)">' + ic('i-wishstar', 20, 'var(--pink-deep)') + '</span>' +
-      '<div class="row-grow"><div class="row-title">想要点什么？</div>' +
+      '<div class="row-grow"><div class="row-title">许一个心愿</div>' +
       '<div class="row-sub">写下来挂到心愿屋，爸爸妈妈给你定条件</div></div>' +
       ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
   }
@@ -1543,7 +1543,7 @@ async function kScreenWish() {
 
   // ⑥ 许愿的入口。原来是个橙虚线框加一句「+ 我想要……」—— 虚线框读起来像
   //    「这儿还有东西没填」，可这一页本来就空着等他做这一件事。
-  //    改成一张入口卡，跟首页那张「想要点什么？」同形，一眼知道点哪儿。
+  //    改成一张入口卡，跟首页那张「许一个心愿」同形，一眼知道点哪儿。
   h += '<div class="row wish-new" id="kWnew">' +
     '<span class="icon-box" style="background:var(--pink-bg)">' +
     ic('i-wishstar', 20, 'var(--pink-deep)') + '</span>' +

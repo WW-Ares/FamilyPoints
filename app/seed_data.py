@@ -93,10 +93,13 @@ SHOP_TICKETS = ("ticket_fun", "ticket_company", "ticket_choice",
 # 摆上货架只会让「每天那七分」显得可以绕过。
 SHOP_BOXES = ("gold", "diamond", "king")
 
-# 宝箱图标。七档永远都是个箱子，只是完美箱画的是「已经打开」的那一只，
+# 宝箱图标。七档永远是箱子，只是完美箱画的是「已经打开」的那一只，
 # 跟它在流程里的位置呼应：完美是打到 49 分白拿的，门是敞开的。
-BOX_ICONS = {1: "rw_box", 2: "rw_box", 3: "rw_box", 4: "rw_box",
-             5: "rw_box", 6: "rw_box", 7: "rw_box_open"}
+# v40 起六档不再共用一张 rw_box：每档配到 bx_wood … bx_perfect，
+# 配色照抄孩子端 web/candy/i-chest-*.svg。家长在「给它们换张图」里
+# 挑的箱子和孩子宝箱页里那只，必须是同一个东西。
+BOX_ICONS = {1: "bx_wood", 2: "bx_copper", 3: "bx_silver", 4: "bx_gold",
+             5: "bx_diamond", 6: "bx_king", 7: "bx_perfect"}
 
 # 自选件的候选张数。设计稿按三张画（「从这三张里挑两张，不能挑同一张」）：
 # 三张看得出差别、又不至于让他对着十个选项发呆。候选全部来自同一个稀有度
@@ -554,8 +557,8 @@ POOL_TEMPLATES = [
 
 # 库结构版本。迁移链、pack_release.py 的打包名、verify_devdoc.py 的判据都认它，
 # 改它等于宣告库结构变了，要配套写 _migrate_vNN。跟对外叫的版本号是两码事。
-SCHEMA_VERSION = "39"
+SCHEMA_VERSION = "40"
 
 # 对外版本号。v1.2 是本项目的第一版对外发布，此前 v3–v39 的内部编号作废。
 # 登录页与家长端「我的」页脚显示的是它，不是 SCHEMA_VERSION。
-APP_VERSION = "1.4"
+APP_VERSION = "1.5"

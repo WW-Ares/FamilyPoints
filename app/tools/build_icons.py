@@ -2,14 +2,25 @@
 """
 生成 web/icons/*.svg 与 web/icons.js。
 
-为什么要这个脚本而不是直接手改文件：图标是六十来份 SVG，内容高度雷同
+为什么要这个脚本而不是直接手改文件：图标是六七十份 SVG，内容高度雷同
 （同一个圆形底座，只有中间那几笔不同），手改必然出现某一笔写错、某个
 viewBox 忘记改这类肉眼挑不出来的问题。这里把「底座 + 颜色」收成一行，
 改一个图标只动 body 这一个字符串，重跑一遍就全省同步。
 
-视觉语言（照 RewardHub 的路数）：120 版心、圆形底 + 扁平糖果色、
-白色实心图形、深蓝灰 #2f3b50 做点缀。不用 stroke-only 的细线稿，
-因为在手机上缩到 20px 时细线会糊成一团。
+视觉语言（v41 整套重画）：
+  · 120 版心，圆形底 r=46，右下角压一道 10% 深色月牙做体积 —— 全套共用
+    同一道，凑在一起才像一套，不像七个人各画各的。
+  · 图形一律白色实心，只有「眼睛 / 表盘刻度」这类必须空的地方才用底色
+    挖（{bg}）。深色 #2f3b50 只做少量点缀，不拿来画主体。
+  · 不用 stroke-only 的细线稿：手机上缩到 20px 时细线会糊成一团。真要用
+    线，线宽不低于 5。
+  · 图形落在 26~94 这一段里，四周留白一致。
+
+宝箱七档单独一组，配色照抄孩子端 web/candy/i-chest-*.svg
+（木 #B8824A / 铜 #C4793C / 银 #C3CAD6 / 金 #FFC93C / 钻 #6FC8F5 /
+王 #8B6BFF / 完满 #FF9FCE，描边各自那支深色）。两处画的是同一只箱子：
+孩子端宝箱页那七只，和家长在「给它们换张图」里挑的，必须长得一样 ——
+不同步的话，家长挑的箱子跟孩子看到的就不是同一个东西。
 
 SVG 全部为本项目自绘，不引用任何第三方素材，没有授权问题。
 """
@@ -32,325 +43,431 @@ PALETTE = {
     "green": "#82c8a6", "mint": "#71b69c", "teal": "#7fc4c9",
     "sky": "#8ec9e8", "blue": "#6fa8dc", "indigo": "#8fa5e0",
     "purple": "#b58bd9", "brown": "#c9905f", "grey": "#9aa5b1",
+    # 宝箱七档的底色。比箱子本体浅一档，箱子压在上面才看得出来；
+    # 数值照孩子端那七只箱盖的颜色。
+    "wood": "#E7C79E", "copper": "#EFD3B4", "silver": "#DFE5EC",
+    "goldbox": "#FFE7A8", "diamond": "#C9EEFF", "king": "#DCD3FF",
+    "perfect": "#FFDCEB",
 }
 
+
+# ---------------------------------------------------------------------------
+# 宝箱：七档同一副骨架，只换配色和顶上那件小装饰。
+# 骨架照抄 web/candy/i-chest-*.svg，22 版心放大到 120 版心（约 ×2.7）。
+# ---------------------------------------------------------------------------
+def chest_body(lid, body, stroke, ornament=""):
+    return (
+        '<path d="M30 59c0-11 8-19 18-19h24c10 0 18 8 18 19z" fill="%s" '
+        'stroke="%s" stroke-width="4" stroke-linejoin="round"/>'
+        '<rect x="30" y="59" width="60" height="31" rx="7" fill="%s" '
+        'stroke="%s" stroke-width="4"/>'
+        '<path d="M30 59h60" stroke="%s" stroke-width="3"/>%s'
+        % (lid, stroke, body, stroke, stroke, ornament)
+    )
+
+
+BOXES = [
+    # (token, 显示名, 底色, 箱盖, 箱体, 描边, 顶上的小装饰, 搜索词)
+    ("bx_wood", "木箱", "wood", "#D9A063", "#B8824A", "#6B4213",
+     '<path d="M32 68h56M32 80h56" stroke="#6B4213" stroke-width="3" opacity=".5"/>',
+     "木 一档 7 分"),
+    ("bx_copper", "铜箱", "copper", "#E3A96E", "#C4793C", "#8A3E0C",
+     '<path d="M36 76h48" stroke="#8A3E0C" stroke-width="4" stroke-linecap="round"/>',
+     "铜 二档 14 分"),
+    ("bx_silver", "银箱", "silver", "#EDF1F6", "#C3CAD6", "#76808F",
+     '<rect x="53" y="63" width="14" height="16" rx="4" fill="#76808F"/>',
+     "银 三档 21 分"),
+    ("bx_gold", "金箱", "goldbox", "#FFD76B", "#FFC93C", "#B87A0C",
+     '<rect x="53" y="63" width="14" height="16" rx="4" fill="#B87A0C"/>'
+     '<circle cx="74" cy="50" r="4" fill="#ffffff" opacity=".9"/>',
+     "金 四档 28 分"),
+    ("bx_diamond", "钻石箱", "diamond", "#B7E7FF", "#6FC8F5", "#2F7FE8",
+     '<path d="M60 42l11 8-11 8-11-8z" fill="#EAF8FF" stroke="#2F7FE8" '
+     'stroke-width="3" stroke-linejoin="round"/>',
+     "钻 五档 35 分"),
+    ("bx_king", "王者箱", "king", "#C9BAFF", "#8B6BFF", "#4B2FB8",
+     '<path d="M48 47l4-15 8 10 8-10 4 15z" fill="#FFC93C" stroke="#4B2FB8" '
+     'stroke-width="3" stroke-linejoin="round"/>',
+     "王 六档 42 分"),
+    ("bx_perfect", "完美箱", "perfect", "#FFC9E4", "#FF9FCE", "#C2185B",
+     '<path d="M60 24l4.5 9 10 1.5-7 7 1.6 10-9.1-5-9.1 5 1.6-10-7-7 10-1.5z" '
+     'fill="#FFE9A8" stroke="#C2185B" stroke-width="3" stroke-linejoin="round"/>',
+     "完满 七档 49 分"),
+]
+
+# 通用箱子：不带档位，任务与心愿配图的兜底用这一只。
+RW_BOX = chest_body("#D9A063", "#B8824A", "#6B4213",
+                    '<rect x="53" y="63" width="14" height="16" rx="4" fill="#6B4213"/>')
+RW_BOX_OPEN = (
+    '<path d="M40 44c0-9 8-16 20-16s20 7 20 16z" fill="#D9A063" stroke="#6B4213" '
+    'stroke-width="4" stroke-linejoin="round"/>'
+    '<rect x="30" y="52" width="60" height="34" rx="7" fill="#B8824A" '
+    'stroke="#6B4213" stroke-width="4"/>'
+    '<path d="M52 40l6-10 4 8 6-10 4 12" fill="none" stroke="#f2c55c" '
+    'stroke-width="4" stroke-linecap="round"/>'
+)
+
+# 券：同一张票，右半边换一件小东西表示是哪一种。
+def ticket_body(emblem):
+    return (
+        '<path d="M28 42h64v12a6 6 0 0 0 0 12v12H28V66a6 6 0 0 0 0-12z" fill="{w}"/>'
+        '<path d="M62 50v28" stroke="{bg}" stroke-width="3" stroke-dasharray="4 5"/>'
+        '<path d="M40 54h12M40 66h12" stroke="{bg}" stroke-width="4" '
+        'stroke-linecap="round"/>' + emblem
+    )
+
+
 # (token, 显示名, 分组, 底色, 搜索关键词, 图形)
-# 图形坐标范围：圆心 (60,60)，半径 44，可用区大约 22~98。
+# 图形坐标范围：圆心 (60,60)、半径 46，主体尽量落在 26~94 这一段里。
+# body 里三个占位符：{w} 白、{bg} 底色（挖空用）、{d} 深蓝灰。
 ICONS = [
     # 一、七个维度 ----------------------------------------------------------
     ("dim_heart", "心能", "维度", "red", "心 情绪 平静",
-     '<path d="M60 88C41 73 31 63 31 50c0-9 7-16 16-16 6 0 11 3 13 8 2-5 7-8 13-8 9 0 16 7 16 16 0 13-10 23-29 38z" fill="%s"/>' % W),
+     '<path d="M60 86C39 68 29 57 29 45c0-10 8-18 18-18 6 0 11 3 13 8 2-5 7-8 13-8 '
+     '10 0 18 8 18 18 0 12-10 23-31 41z" fill="{w}"/>'),
 
     ("dim_study", "智识", "维度", "blue", "学习 书 专注",
-     '<path d="M60 40c-7-5-18-6-26-3v42c8-3 19-2 26 3 7-5 18-6 26-3V37c-8-3-19-2-26 3z" fill="%s"/>'
-     '<path d="M60 40v42" stroke="%s" stroke-width="3.5"/>'
-     '<path d="M40 50h13M40 61h13M67 50h13M67 61h13" stroke="%s" stroke-width="2.6" stroke-linecap="round"/>' % (W, PALETTE["blue"], PALETTE["blue"])),
+     '<path d="M60 42c-8-6-19-7-27-4v44c9-3 20-2 27 4 8-6 19-7 27-4V38c-8-3-19-2-27 4z" fill="{w}"/>'
+     '<path d="M60 42v44" stroke="{bg}" stroke-width="4"/>'
+     '<path d="M39 54h14M39 66h14M67 54h14M67 66h14" stroke="{bg}" stroke-width="3" '
+     'stroke-linecap="round"/>'),
 
     ("dim_vigor", "活力", "维度", "orange", "运动 精力 跑",
-     '<path d="M66 24 38 66h19l-7 30 28-44H58z" fill="%s"/>' % W),
+     '<path d="M68 26 38 68h19l-6 28 27-43H58z" fill="{w}"/>'),
 
     ("dim_bond", "羁绊", "维度", "blush", "家人 关心 一起",
-     '<circle cx="46" cy="48" r="11" fill="%s"/><circle cx="74" cy="48" r="11" fill="%s"/>'
-     '<path d="M28 86c0-9 8-16 18-16s18 7 18 16zM56 86c0-9 8-16 18-16s18 7 18 16z" fill="%s"/>' % (W, W, W)),
+     '<circle cx="44" cy="46" r="11" fill="{w}"/>'
+     '<path d="M28 86c0-9 7-16 16-16s16 7 16 16z" fill="{w}"/>'
+     '<circle cx="77" cy="46" r="11" fill="{w}"/>'
+     '<path d="M61 86c0-9 7-16 16-16s16 7 16 16z" fill="{w}"/>'
+     '<path d="M52 72c5 5 11 5 16 0" stroke="{bg}" stroke-width="4" fill="none" '
+     'stroke-linecap="round"/>'),
 
     ("dim_craft", "匠力", "维度", "brown", "家务 动手 做",
-     '<rect x="26" y="32" width="40" height="22" rx="7" fill="%s"/>'
-     '<rect x="53" y="52" width="15" height="36" rx="7" fill="%s"/>'
-     '<rect x="32" y="38" width="12" height="10" rx="3" fill="%s"/>' % (W, W, PALETTE["brown"])),
+     '<g transform="rotate(45 60 60)">'
+     '<rect x="40" y="26" width="40" height="18" rx="6" fill="{w}"/>'
+     '<rect x="54" y="40" width="12" height="46" rx="6" fill="{w}"/>'
+     '<rect x="44" y="31" width="12" height="8" rx="3" fill="{bg}"/></g>'),
 
     ("dim_clean", "洁净", "维度", "teal", "卫生 干净 洗",
-     '<circle cx="49" cy="51" r="13" fill="%s"/><circle cx="73" cy="62" r="10" fill="%s" opacity=".9"/>'
-     '<circle cx="55" cy="77" r="7" fill="%s" opacity=".8"/>'
-     '<path d="M34 34c5-4 12-5 17-1" stroke="%s" stroke-width="5" fill="none" stroke-linecap="round"/>' % (W, W, W, W)),
+     '<circle cx="47" cy="53" r="14" fill="{w}"/>'
+     '<circle cx="72" cy="65" r="10" fill="{w}" opacity=".92"/>'
+     '<circle cx="55" cy="79" r="6" fill="{w}" opacity=".85"/>'
+     '<path d="M32 34c6-5 14-6 20-1" stroke="{w}" stroke-width="5" fill="none" '
+     'stroke-linecap="round"/>'),
 
     ("dim_order", "秩序", "维度", "purple", "归位 整洁 房间",
-     '<rect x="28" y="30" width="24" height="24" rx="5" fill="%s"/>'
-     '<rect x="66" y="30" width="24" height="24" rx="5" fill="%s"/>'
-     '<rect x="28" y="66" width="24" height="24" rx="5" fill="%s"/>'
-     '<rect x="66" y="66" width="24" height="24" rx="5" fill="%s" opacity=".45"/>'
-     '<path d="M70 78l6 7 11-13" stroke="%s" stroke-width="5.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' % (W, W, W, W, W)),
+     '<rect x="27" y="29" width="26" height="26" rx="7" fill="{w}" opacity=".55"/>'
+     '<rect x="67" y="29" width="26" height="26" rx="7" fill="{w}" opacity=".55"/>'
+     '<rect x="27" y="67" width="26" height="26" rx="7" fill="{w}" opacity=".55"/>'
+     '<rect x="67" y="67" width="26" height="26" rx="7" fill="{w}"/>'
+     '<path d="M73 80l6 7 12-14" stroke="{bg}" stroke-width="6" fill="none" '
+     'stroke-linecap="round" stroke-linejoin="round"/>'),
 
     # 二、日常 --------------------------------------------------------------
     ("task_read", "读书", "日常", "indigo", "书 阅读 看",
-     '<rect x="32" y="68" width="52" height="13" rx="4" fill="%s"/>'
-     '<rect x="38" y="55" width="44" height="11" rx="4" fill="%s"/>'
-     '<rect x="45" y="43" width="34" height="11" rx="4" fill="%s" opacity=".85"/>'
-     '<path d="M60 43v11" stroke="%s" stroke-width="2.4"/>' % (W, W, W, PALETTE["indigo"])),
+     '<rect x="30" y="70" width="56" height="12" rx="5" fill="{w}"/>'
+     '<rect x="36" y="56" width="48" height="12" rx="5" fill="{w}" opacity=".92"/>'
+     '<rect x="43" y="42" width="38" height="12" rx="5" fill="{w}" opacity=".84"/>'
+     '<path d="M60 42v12" stroke="{bg}" stroke-width="3"/>'),
 
     ("task_write", "写字", "日常", "yellow", "练字 笔 书法",
-     '<path d="M38 82l4-13 31-31 10 10-31 31z" fill="%s"/>'
-     '<path d="M42 69l10 10" stroke="%s" stroke-width="4"/>'
-     '<path d="M38 82l14 4-10-18z" fill="%s"/>' % (W, W, DARK)),
+     '<path d="M36 84l5-14 30-30a7 7 0 0 1 10 10L51 80l-14 5z" fill="{w}"/>'
+     '<path d="M41 70l11 11" stroke="{bg}" stroke-width="4"/>'
+     '<path d="M36 84l14 5-9-19z" fill="{d}"/>'),
 
     ("task_homework", "作业", "日常", "blue", "功课 学校 写",
-     '<rect x="36" y="28" width="48" height="60" rx="7" fill="%s"/>'
-     '<path d="M47 44h22M47 57h22" stroke="%s" stroke-width="4" stroke-linecap="round"/>'
-     '<path d="M51 68l6 7 11-13" stroke="%s" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' % (W, PALETTE["blue"], PALETTE["green"])),
+     '<rect x="34" y="28" width="52" height="62" rx="10" fill="{w}"/>'
+     '<rect x="50" y="22" width="20" height="12" rx="6" fill="{w}"/>'
+     '<path d="M45 46h30M45 58h30" stroke="{bg}" stroke-width="4" stroke-linecap="round"/>'
+     '<path d="M50 70l7 8 13-15" stroke="{bg}" stroke-width="5.5" fill="none" '
+     'stroke-linecap="round" stroke-linejoin="round"/>'),
 
     ("task_piano", "练琴", "日常", "purple", "音乐 乐器 弹",
-     '<rect x="28" y="46" width="64" height="36" rx="6" fill="%s"/>'
-     '<rect x="42" y="46" width="9" height="22" rx="3" fill="%s"/>'
-     '<rect x="55" y="46" width="9" height="22" rx="3" fill="%s"/>'
-     '<rect x="68" y="46" width="9" height="22" rx="3" fill="%s"/>'
-     '<rect x="28" y="74" width="64" height="8" rx="3" fill="%s"/>' % (W, DARK, DARK, DARK, PALETTE["purple"])),
+     '<rect x="26" y="44" width="68" height="38" rx="8" fill="{w}"/>'
+     '<rect x="40" y="44" width="10" height="24" rx="4" fill="{bg}"/>'
+     '<rect x="55" y="44" width="10" height="24" rx="4" fill="{bg}"/>'
+     '<rect x="70" y="44" width="10" height="24" rx="4" fill="{bg}"/>'
+     '<rect x="26" y="74" width="68" height="8" rx="4" fill="{bg}" opacity=".55"/>'),
 
     ("task_sport", "运动", "日常", "orange", "球 足球 锻炼",
-     '<circle cx="60" cy="60" r="26" fill="%s"/>'
-     '<path d="M60 38l12 9-5 15H53l-5-15z" fill="%s"/>'
-     '<path d="M53 62l4 16M67 62l-4 16M45 56l15 6 15-6" stroke="%s" stroke-width="2.6" fill="none"/>' % (W, DARK, DARK)),
+     '<circle cx="60" cy="60" r="28" fill="{w}"/>'
+     '<path d="M60 32l14 11-5 18H51l-5-18z" fill="none" stroke="{bg}" stroke-width="4"/>'
+     '<path d="M51 61l5 18M69 61l-5 18M43 55l17 6 17-6" stroke="{bg}" stroke-width="3.5" '
+     'fill="none"/>'),
 
     ("task_swim", "游泳", "日常", "sky", "水 泳池",
-     '<circle cx="50" cy="46" r="10" fill="%s"/>'
-     '<path d="M40 64c6-5 13-5 17-1l14 12" stroke="%s" stroke-width="7" fill="none" stroke-linecap="round"/>'
-     '<path d="M38 80c8-6 18-6 26 0s18 6 26 0" stroke="%s" stroke-width="5" fill="none" stroke-linecap="round"/>' % (W, W, W)),
+     '<circle cx="48" cy="44" r="10" fill="{w}"/>'
+     '<path d="M38 62c6-5 14-5 18 0l14 12" stroke="{w}" stroke-width="7" fill="none" '
+     'stroke-linecap="round"/>'
+     '<path d="M34 78c8-6 18-6 26 0s18 6 26 0M34 90c8-6 18-6 26 0s18 6 26 0" '
+     'stroke="{w}" stroke-width="5.5" fill="none" stroke-linecap="round"/>'),
 
     ("task_bike", "骑车", "日常", "green", "自行车 户外",
-     '<circle cx="38" cy="70" r="14" fill="none" stroke="%s" stroke-width="5"/>'
-     '<circle cx="82" cy="70" r="14" fill="none" stroke="%s" stroke-width="5"/>'
-     '<path d="M38 70l15-24h17l16 24M53 46l8 24" stroke="%s" stroke-width="5" fill="none" stroke-linecap="round"/>' % (W, W, W)),
+     '<circle cx="36" cy="72" r="15" fill="none" stroke="{w}" stroke-width="6"/>'
+     '<circle cx="84" cy="72" r="15" fill="none" stroke="{w}" stroke-width="6"/>'
+     '<path d="M36 72l16-26h20l16 26M52 46l10 26" stroke="{w}" stroke-width="6" '
+     'fill="none" stroke-linecap="round"/>'),
 
     ("task_walk", "遛弯", "日常", "teal", "散步 走路 遛狗",
-     '<circle cx="52" cy="40" r="10" fill="%s"/>'
-     '<path d="M52 50l-8 18M52 50l10 14 8 10M50 50l-2 18 2 14M62 64l-4 16" stroke="%s" stroke-width="6" fill="none" stroke-linecap="round"/>' % (W, W)),
+     '<circle cx="52" cy="38" r="9" fill="{w}"/>'
+     '<path d="M52 47l-9 20 3 20M52 47l11 15 5 25M48 47l-5 20 5 20" stroke="{w}" '
+     'stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'),
 
     ("task_bath", "洗澡", "日常", "sky", "沐浴 晚上",
-     '<path d="M30 60h60v8a14 14 0 0 1-14 12H44a14 14 0 0 1-14-12z" fill="%s"/>'
-     '<path d="M30 60c0-8 5-14 12-14h36c7 0 12 6 12 14" fill="none" stroke="%s" stroke-width="5"/>'
-     '<circle cx="44" cy="36" r="5" fill="%s"/><circle cx="58" cy="30" r="4" fill="%s"/><circle cx="72" cy="38" r="5" fill="%s"/>' % (W, W, W, W, W)),
+     '<path d="M28 62h64v6a16 16 0 0 1-16 16H44a16 16 0 0 1-16-16z" fill="{w}"/>'
+     '<path d="M28 62c0-9 6-15 14-15h36c8 0 14 6 14 15" fill="none" stroke="{w}" '
+     'stroke-width="6"/>'
+     '<circle cx="44" cy="36" r="6" fill="{w}" opacity=".9"/>'
+     '<circle cx="60" cy="30" r="4.5" fill="{w}" opacity=".8"/>'
+     '<circle cx="74" cy="38" r="5" fill="{w}" opacity=".85"/>'),
 
     ("task_tooth", "刷牙", "日常", "green", "牙齿 卫生",
-     '<rect x="46" y="38" width="30" height="13" rx="5" fill="%s"/>'
-     '<rect x="55" y="50" width="12" height="38" rx="6" fill="%s"/>'
-     '<path d="M50 38v-8M58 38v-8M66 38v-8M74 38v-8" stroke="%s" stroke-width="3.4" stroke-linecap="round"/>' % (W, W, W)),
+     '<path d="M60 28c-12 0-20 8-20 19 0 9 3 14 4 22 1 7 6 21 16 21s15-14 16-21'
+     'c1-8 4-13 4-22 0-11-8-19-20-19z" fill="{w}"/>'
+     '<path d="M52 76c2 8 4 12 8 12s6-4 8-12" stroke="{bg}" stroke-width="4" fill="none"/>'),
 
     ("task_laundry", "洗衣", "日常", "indigo", "洗衣机 衣服",
-     '<rect x="34" y="26" width="52" height="68" rx="11" fill="%s"/>'
-     '<circle cx="60" cy="66" r="18" fill="%s"/>'
-     '<circle cx="46" cy="40" r="4" fill="%s"/><circle cx="58" cy="40" r="4" fill="%s"/>' % (W, PALETTE["indigo"], PALETTE["indigo"], PALETTE["indigo"])),
+     '<rect x="30" y="30" width="60" height="66" rx="12" fill="{w}"/>'
+     '<circle cx="60" cy="68" r="20" fill="{bg}"/>'
+     '<circle cx="60" cy="68" r="13" fill="{w}"/>'
+     '<rect x="38" y="38" width="16" height="6" rx="3" fill="{bg}"/>'
+     '<circle cx="78" cy="41" r="4" fill="{bg}"/>'),
 
     ("task_dish", "洗碗", "日常", "yellow", "盘子 厨房",
-     '<path d="M32 64h56c0 15-12 25-28 25S32 79 32 64z" fill="%s"/>'
-     '<circle cx="42" cy="44" r="6" fill="%s" opacity=".9"/><circle cx="56" cy="38" r="5" fill="%s"/>'
-     '<circle cx="72" cy="46" r="7" fill="%s" opacity=".85"/>' % (W, W, W, W)),
+     '<circle cx="60" cy="62" r="28" fill="{w}"/>'
+     '<circle cx="60" cy="62" r="16" fill="{bg}" opacity=".85"/>'
+     '<circle cx="40" cy="38" r="6" fill="{w}" opacity=".9"/>'
+     '<circle cx="52" cy="30" r="4" fill="{w}" opacity=".8"/>'),
 
     ("task_cook", "做饭", "日常", "red", "厨房 锅 菜",
-     '<path d="M32 56h56v14a20 20 0 0 1-20 20H52a20 20 0 0 1-20-20z" fill="%s"/>'
-     '<path d="M32 56h56" stroke="%s" stroke-width="5"/>'
-     '<path d="M88 62l13-7M32 48H20" stroke="%s" stroke-width="5" stroke-linecap="round"/>' % (W, W, W)),
+     '<path d="M30 54h60v22a16 16 0 0 1-16 16H46a16 16 0 0 1-16-16z" fill="{w}"/>'
+     '<rect x="24" y="46" width="72" height="10" rx="5" fill="{w}"/>'
+     '<path d="M36 38c6-6 12-6 18 0M66 38c6-6 12-6 18 0" stroke="{w}" stroke-width="5" '
+     'fill="none" stroke-linecap="round"/>'),
 
     ("task_tidy", "整理房间", "日常", "purple", "收拾 收纳 归位",
-     '<rect x="32" y="62" width="56" height="26" rx="6" fill="%s"/>'
-     '<rect x="43" y="38" width="34" height="22" rx="6" fill="%s" opacity=".85"/>'
-     '<path d="M32 76h56" stroke="%s" stroke-width="3"/>'
-     '<path d="M56 46h8M60 42v8" stroke="%s" stroke-width="3" stroke-linecap="round"/>' % (W, W, PALETTE["purple"], PALETTE["purple"])),
+     '<path d="M32 52h56l-6 34H38z" fill="{w}"/>'
+     '<rect x="28" y="44" width="64" height="10" rx="5" fill="{w}"/>'
+     '<path d="M46 62v18M60 62v18M74 62v18" stroke="{bg}" stroke-width="3" '
+     'stroke-linecap="round"/>'),
 
     ("task_trash", "倒垃圾", "日常", "grey", "垃圾桶 扔",
-     '<path d="M40 46h40l-4 44a6 6 0 0 1-6 5H50a6 6 0 0 1-6-5z" fill="%s"/>'
-     '<rect x="34" y="38" width="52" height="9" rx="4" fill="%s"/>'
-     '<rect x="52" y="31" width="16" height="8" rx="3" fill="%s"/>'
-     '<path d="M53 58v26M67 58v26" stroke="%s" stroke-width="3.4"/>' % (W, W, W, PALETTE["grey"])),
+     '<path d="M38 42h44l-5 46a6 6 0 0 1-6 5H49a6 6 0 0 1-6-5z" fill="{w}"/>'
+     '<rect x="32" y="34" width="56" height="10" rx="5" fill="{w}"/>'
+     '<rect x="52" y="27" width="16" height="8" rx="4" fill="{w}"/>'
+     '<path d="M50 56v26M70 56v26" stroke="{bg}" stroke-width="3.5" stroke-linecap="round"/>'),
 
     ("task_plant", "浇花", "日常", "green", "植物 水 阳台",
-     '<path d="M60 60V56" stroke="%s" stroke-width="5"/>'
-     '<path d="M60 62c-15 0-21-10-21-20 13 0 21 8 21 20zM60 62c15 0 21-10 21-20-13 0-21 8-21 20z" fill="%s"/>'
-     '<path d="M44 74h32l-4 14a7 7 0 0 1-6 5H54a7 7 0 0 1-6-5z" fill="%s"/>' % (W, W, W)),
+     '<path d="M42 58h36l-5 32a6 6 0 0 1-6 5H53a6 6 0 0 1-6-5z" fill="{w}"/>'
+     '<rect x="38" y="50" width="44" height="10" rx="4" fill="{w}"/>'
+     '<path d="M60 50V34M60 40c-8 0-12-4-12-9 6 0 11 3 12 9M60 44c6-2 9-6 9-11-5 1-9 5-9 11" '
+     'stroke="{w}" stroke-width="5" fill="none" stroke-linecap="round"/>'),
 
     ("task_pet", "照顾宠物", "日常", "brown", "猫 狗 喂",
-     '<circle cx="60" cy="60" r="23" fill="%s"/>'
-     '<path d="M41 42c-8-2-11 8-6 13 1-7 3-10 7-11zM79 42c8-2 11 8 6 13-1-7-3-10-7-11z" fill="%s"/>'
-     '<circle cx="51" cy="56" r="4" fill="%s"/><circle cx="69" cy="56" r="4" fill="%s"/>'
-     '<ellipse cx="60" cy="68" rx="6" ry="5" fill="%s"/>' % (W, W, DARK, DARK, DARK)),
+     '<circle cx="60" cy="62" r="22" fill="{w}"/>'
+     '<path d="M40 47l-4-16 18 8M80 47l4-16-18 8" fill="{w}"/>'
+     '<circle cx="52" cy="58" r="4" fill="{bg}"/>'
+     '<circle cx="68" cy="58" r="4" fill="{bg}"/>'
+     '<path d="M54 70c4 3 8 3 12 0" stroke="{bg}" stroke-width="3.5" fill="none" '
+     'stroke-linecap="round"/>'),
 
     ("task_sleep", "早睡", "日常", "indigo", "睡觉 晚上 床",
-     '<path d="M78 26a34 34 0 1 0 16 44 28 28 0 0 1-16-44z" fill="%s"/>'
-     '<path d="M48 44l-6 9M64 38l-4 9" stroke="%s" stroke-width="3.4" stroke-linecap="round"/>' % (W, PALETTE["indigo"])),
+     '<path d="M64 28a32 32 0 1 0 28 44A28 28 0 0 1 64 28z" fill="{w}"/>'
+     '<circle cx="36" cy="44" r="4" fill="{w}" opacity=".85"/>'
+     '<circle cx="46" cy="34" r="3" fill="{w}" opacity=".75"/>'),
 
     ("task_wake", "起床", "日常", "yellow", "闹钟 早上",
-     '<circle cx="60" cy="64" r="26" fill="%s"/>'
-     '<path d="M60 50v16l10 8" stroke="%s" stroke-width="5" fill="none" stroke-linecap="round"/>'
-     '<path d="M40 34l-8-8M80 34l8-8" stroke="%s" stroke-width="5" stroke-linecap="round"/>'
-     '<path d="M42 88l-6 6M78 88l6 6" stroke="%s" stroke-width="5" stroke-linecap="round"/>' % (W, PALETTE["yellow"], W, W)),
+     '<circle cx="60" cy="64" r="24" fill="{w}"/>'
+     '<path d="M60 50v14l11 8" stroke="{bg}" stroke-width="5" fill="none" '
+     'stroke-linecap="round"/>'
+     '<path d="M42 42L32 32M78 42l10-10" stroke="{w}" stroke-width="6" stroke-linecap="round"/>'
+     '<circle cx="28" cy="28" r="7" fill="{w}"/><circle cx="92" cy="28" r="7" fill="{w}"/>'),
 
     ("task_meal", "吃饭", "日常", "orange", "饭 碗 点餐",
-     '<path d="M32 58h56c0 16-12 27-28 27S32 74 32 58z" fill="%s"/>'
-     '<path d="M86 28L60 58M94 38L72 62" stroke="%s" stroke-width="4.6" stroke-linecap="round"/>' % (W, W)),
+     '<path d="M26 56h68c0 18-15 32-34 32S26 74 26 56z" fill="{w}"/>'
+     '<rect x="22" y="50" width="76" height="9" rx="4.5" fill="{w}"/>'
+     '<path d="M48 40c6-6 12-6 18 0M62 40c4-4 8-6 12-5" stroke="{w}" stroke-width="5" '
+     'fill="none" stroke-linecap="round"/>'),
 
     ("task_drink", "喝水", "日常", "sky", "水杯 牛奶",
-     '<path d="M42 40h30v42a13 13 0 0 1-13 13H55a13 13 0 0 1-13-13z" fill="%s"/>'
-     '<path d="M42 52h30" stroke="%s" stroke-width="4"/>'
-     '<path d="M72 50h8a7 7 0 0 1 0 14h-8" fill="none" stroke="%s" stroke-width="4.5"/>' % (W, PALETTE["sky"], W)),
+     '<path d="M62 28l10 8-24 26" stroke="{w}" stroke-width="5" fill="none" '
+     'stroke-linecap="round"/>'
+     '<path d="M40 46h40l-4 40a7 7 0 0 1-7 6H51a7 7 0 0 1-7-6z" fill="{w}"/>'),
 
     ("task_pack", "收拾书包", "日常", "green", "书包 上学 准备",
-     '<path d="M42 44h36a10 10 0 0 1 10 10v30a6 6 0 0 1-6 6H38a6 6 0 0 1-6-6V54a10 10 0 0 1 10-10z" fill="%s"/>'
-     '<path d="M50 44v-6a10 10 0 0 1 20 0v6" fill="none" stroke="%s" stroke-width="4"/>'
-     '<rect x="44" y="66" width="32" height="11" rx="4" fill="%s"/>' % (W, W, PALETTE["green"])),
+     '<rect x="34" y="44" width="52" height="50" rx="14" fill="{w}"/>'
+     '<path d="M46 44V34a14 14 0 0 1 28 0v10" fill="none" stroke="{w}" stroke-width="6"/>'
+     '<rect x="48" y="66" width="24" height="16" rx="6" fill="{bg}"/>'),
 
     ("task_outdoor", "出去玩", "日常", "teal", "户外 公园 树",
-     '<circle cx="86" cy="34" r="9" fill="%s"/>'
-     '<path d="M58 30l20 28H38z" fill="%s"/>'
-     '<path d="M58 46l14 22H44z" fill="%s" opacity=".75"/>'
-     '<rect x="54" y="58" width="8" height="26" rx="3" fill="%s"/>' % (W, W, W, W)),
+     '<path d="M60 30l18 28H42z" fill="{w}"/>'
+     '<path d="M60 46l22 34H38z" fill="{w}" opacity=".85"/>'
+     '<rect x="55" y="78" width="10" height="14" rx="3" fill="{w}"/>'),
 
     ("task_help", "帮忙", "日常", "rose", "搭把手 一起",
-     '<path d="M28 64c10-9 21-9 32-9s22 0 32 9l-7 22c-8-6-17-6-25-6s-17 0-25 6z" fill="%s"/>'
-     '<path d="M46 68c4 4 10 6 14 6s10-2 14-6" stroke="%s" stroke-width="3" fill="none" opacity=".5"/>' % (W, PALETTE["rose"])),
+     '<path d="M42 86V60c0-5 4-9 9-9s9 4 9 9V50c0-5 4-9 9-9s9 4 9 9v8c0-5 4-9 9-9s9 4 9 9'
+     'v27c0 12-10 21-24 21s-21-9-21-21z" fill="{w}"/>'),
 
     # 三、奖励 --------------------------------------------------------------
     ("rw_stardust", "星尘", "奖励", "gold", "分 星星 积分",
-     '<path d="M60 26l11 23 25 3-18 17 5 25-23-12-23 12 5-25-18-17 25-3z" fill="%s"/>' % W),
+     '<path d="M60 26l12 25 27 4-20 19 5 27-24-13-24 13 5-27-20-19 27-4z" fill="{w}"/>'),
 
-    ("rw_box", "宝箱", "奖励", "brown", "箱子 开箱 档位",
-     '<path d="M22 66h76v26a9 9 0 0 1-9 9H31a9 9 0 0 1-9-9z" fill="%s"/>'
-     '<path d="M22 66c0-13 17-22 38-22s38 9 38 22z" fill="%s" opacity=".72"/>'
-     '<rect x="52" y="60" width="16" height="17" rx="4" fill="%s"/>'
-     '<path d="M22 80h76" stroke="%s" stroke-width="4"/>' % (W, W, PALETTE["brown"], PALETTE["brown"])),
+    ("rw_box", "宝箱", "奖励", "brown", "箱子 开箱 档位", RW_BOX),
 
-    ("rw_box_open", "开箱", "奖励", "brown", "打开 惊喜 完美",
-     '<path d="M22 72h76v20a9 9 0 0 1-9 9H31a9 9 0 0 1-9-9z" fill="%s"/>'
-     '<path d="M32 72l-9-24 62 7 9 17z" fill="%s" opacity=".8"/>'
-     '<path d="M60 58V32M50 42l10-10 10 10M42 52l8-8M78 52l-8-8" stroke="%s" stroke-width="4.5" stroke-linecap="round"/>' % (W, W, W)),
+    ("rw_box_open", "开箱", "奖励", "brown", "打开 惊喜 完美", RW_BOX_OPEN),
 
     ("rw_level", "星球等级", "奖励", "purple", "等级 升级 行星",
-     '<ellipse cx="60" cy="60" rx="38" ry="13" fill="none" stroke="%s" stroke-width="5" opacity=".9"/>'
-     '<circle cx="60" cy="60" r="23" fill="%s"/>'
-     '<path d="M48 54c6-4 14-3 18 3M56 72c6 3 13 1 16-5" stroke="%s" stroke-width="3" fill="none" stroke-linecap="round"/>' % (W, W, PALETTE["purple"])),
+     '<ellipse cx="60" cy="60" rx="38" ry="12" fill="none" stroke="{w}" stroke-width="6"/>'
+     '<circle cx="60" cy="58" r="24" fill="{w}"/>'
+     '<path d="M46 52a10 10 0 0 1 16-4" stroke="{bg}" stroke-width="4" fill="none" '
+     'stroke-linecap="round"/>'
+     '<circle cx="70" cy="66" r="6" fill="{bg}" opacity=".7"/>'),
 
     ("rw_money", "零花钱", "奖励", "gold", "钱 兑换 现金",
-     '<circle cx="60" cy="60" r="28" fill="%s"/>'
-     '<path d="M52 42l8 13 8-13M48 55h24M48 64h24M60 55v22M51 68h18" stroke="%s" stroke-width="4" fill="none" stroke-linecap="round"/>' % (W, PALETTE["gold"])),
+     '<rect x="26" y="42" width="68" height="40" rx="7" fill="{w}"/>'
+     '<circle cx="60" cy="62" r="11" fill="none" stroke="{bg}" stroke-width="5"/>'
+     '<path d="M36 62h10M74 62h10" stroke="{bg}" stroke-width="4" stroke-linecap="round"/>'),
 
     ("rw_double", "翻倍", "奖励", "orange", "双倍 乘二 加倍",
-     '<path d="M38 32l7 15 16 2-11 11 3 16-15-8-15 8 3-16-11-11 16-2z" fill="%s"/>'
-     '<path d="M68 46l5 10 11 1-8 8 2 11-10-5-10 5 2-11-8-8 11-1z" fill="%s" opacity=".85"/>' % (W, W)),
+     '<path d="M60 28l22 22H38z" fill="{w}"/>'
+     '<path d="M60 56l22 22H38z" fill="{w}" opacity=".82"/>'),
 
     ("rw_dice", "骰子", "奖励", "blue", "随机 重抽 运气",
-     '<rect x="32" y="32" width="56" height="56" rx="13" fill="%s"/>'
-     '<circle cx="48" cy="48" r="5" fill="%s"/><circle cx="72" cy="72" r="5" fill="%s"/>'
-     '<circle cx="60" cy="60" r="5" fill="%s"/>' % (W, PALETTE["blue"], PALETTE["blue"], PALETTE["blue"])),
+     '<rect x="32" y="32" width="56" height="56" rx="14" fill="{w}"/>'
+     '<circle cx="46" cy="46" r="6" fill="{bg}"/>'
+     '<circle cx="60" cy="60" r="6" fill="{bg}"/>'
+     '<circle cx="74" cy="74" r="6" fill="{bg}"/>'),
 
     ("rw_rocket", "加速", "奖励", "rose", "火箭 快 冲",
-     '<path d="M60 24c10 10 14 22 14 34l-9 12H55l-9-12c0-12 4-24 14-34z" fill="%s"/>'
-     '<circle cx="60" cy="52" r="7" fill="%s"/>'
-     '<path d="M46 60l-11 16 13-3zM74 60l11 16-13-3z" fill="%s"/>'
-     '<path d="M54 70l6 18-6 7-6-7z" fill="%s"/>' % (W, PALETTE["red"], PALETTE["gold"], PALETTE["gold"])),
+     '<path d="M60 26c12 10 18 24 18 38l-9 10H51l-9-10c0-14 6-28 18-38z" fill="{w}"/>'
+     '<circle cx="60" cy="52" r="8" fill="{bg}"/>'
+     '<path d="M42 62l-11 13 13-3zM78 62l11 13-13-3z" fill="{d}" opacity=".35"/>'
+     '<path d="M52 78l8 12 8-12z" fill="{w}" opacity=".85"/>'),
 
     ("rw_gift", "礼物", "奖励", "red", "礼品 惊喜 兑换",
-     '<rect x="28" y="48" width="64" height="46" rx="7" fill="%s"/>'
-     '<circle cx="50" cy="40" r="9" fill="%s"/><circle cx="70" cy="40" r="9" fill="%s"/>'
-     '<circle cx="60" cy="42" r="5" fill="%s"/>'
-     '<path d="M60 52v42" stroke="%s" stroke-width="6"/>' % (W, PALETTE["gold"], PALETTE["gold"], PALETTE["red"], W)),
+     '<rect x="28" y="52" width="64" height="40" rx="6" fill="{w}"/>'
+     '<rect x="26" y="42" width="68" height="14" rx="5" fill="{w}"/>'
+     '<path d="M60 42v50" stroke="{bg}" stroke-width="6"/>'
+     '<circle cx="47" cy="34" r="12" fill="{w}"/><circle cx="73" cy="34" r="12" fill="{w}"/>'),
 
     ("rw_card", "道具卡", "奖励", "blue", "卡片 图鉴 收藏",
-     '<rect x="34" y="32" width="52" height="58" rx="9" fill="%s"/>'
-     '<path d="M34 50h52" stroke="%s" stroke-width="4"/>'
-     '<path d="M46 64h28M46 76h18" stroke="%s" stroke-width="4" stroke-linecap="round" opacity=".65"/>' % (W, PALETTE["blue"], PALETTE["blue"])),
+     '<rect x="30" y="34" width="60" height="52" rx="9" fill="{w}"/>'
+     '<path d="M30 52h60" stroke="{bg}" stroke-width="4"/>'
+     '<circle cx="60" cy="70" r="11" fill="{bg}" opacity=".85"/>'
+     '<path d="M60 62l3 6 7 1-5 5 1 7-6-4-6 4 1-7-5-5 7-1z" fill="{w}"/>'),
 
     ("rw_fragment", "碎片", "奖励", "teal", "合成 拼图 换",
-     '<path d="M46 40h10a6 6 0 0 1 12 0h10v10a6 6 0 0 0 0 12v10H56a6 6 0 0 0-12 0H34V62a6 6 0 0 0 0-12z" fill="%s"/>'
-     '<circle cx="60" cy="61" r="5" fill="%s"/>' % (W, PALETTE["teal"])),
+     '<path d="M40 30l20 8-6 24-18-6z" fill="{w}"/>'
+     '<path d="M62 40l18 10-8 22-16-6z" fill="{w}" opacity=".85"/>'
+     '<path d="M52 68l14 4-4 18-14-6z" fill="{w}" opacity=".7"/>'),
 
     ("rw_ticket", "券", "奖励", "pink", "票 通用",
-     '<path d="M26 44h68v14a8 8 0 0 0 0 16v14H26V74a8 8 0 0 0 0-16z" fill="%s"/>'
-     '<path d="M60 46v40" stroke="%s" stroke-width="3.5" stroke-dasharray="6 7"/>' % (W, PALETTE["pink"])),
+     ticket_body('<path d="M66 58h20v6H66z" fill="{bg}"/>'
+                 '<path d="M76 50l6 4-6 4z" fill="{bg}"/>')),
 
     ("rw_ticket_fun", "娱乐券", "奖励", "indigo", "屏幕 游戏 电视",
-     '<rect x="26" y="48" width="68" height="34" rx="17" fill="%s"/>'
-     '<circle cx="44" cy="65" r="7" fill="%s"/>'
-     '<path d="M40 65h8M44 61v8" stroke="%s" stroke-width="2.6"/>'
-     '<circle cx="74" cy="58" r="4.5" fill="%s"/><circle cx="82" cy="69" r="4.5" fill="%s"/>'
-     '<path d="M56 58h12" stroke="%s" stroke-width="3" stroke-linecap="round"/>' % (W, PALETTE["indigo"], W, PALETTE["indigo"], PALETTE["indigo"], PALETTE["indigo"])),
+     ticket_body('<rect x="66" y="52" width="20" height="14" rx="3" fill="{bg}"/>'
+                 '<path d="M76 56l6 4-6 4z" fill="{w}"/>')),
 
     ("rw_ticket_company", "陪伴券", "奖励", "green", "陪 父母 亲子",
-     '<circle cx="43" cy="52" r="12" fill="%s"/><circle cx="77" cy="52" r="12" fill="%s"/>'
-     '<path d="M25 88c0-10 8-18 18-18s18 8 18 18zM59 88c0-10 8-18 18-18s18 8 18 18z" fill="%s"/>'
-     '<path d="M60 44c-6-4-12 0-12 5 0 4 6 8 12 12 6-4 12-8 12-12 0-5-6-9-12-5z" fill="%s"/>' % (W, W, W, PALETTE["red"])),
+     ticket_body('<circle cx="70" cy="57" r="5" fill="{bg}"/>'
+                 '<circle cx="82" cy="57" r="5" fill="{bg}"/>'
+                 '<path d="M64 70c0-4 3-6 6-6s6 2 6 6z" fill="{bg}" opacity=".75"/>')),
 
     ("rw_ticket_choice", "选择券", "奖励", "purple", "说了算 挑 决定",
-     '<rect x="32" y="32" width="56" height="56" rx="9" fill="%s"/>'
-     '<circle cx="47" cy="50" r="7" fill="%s"/><circle cx="47" cy="70" r="7" fill="none" stroke="%s" stroke-width="3.4"/>'
-     '<path d="M63 50h20M63 70h20" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (W, PALETTE["purple"], PALETTE["purple"], PALETTE["purple"])),
+     ticket_body('<path d="M68 62l5 6 10-13" stroke="{bg}" stroke-width="5" fill="none" '
+                 'stroke-linecap="round" stroke-linejoin="round"/>')),
 
     ("rw_ticket_exempt", "豁免券", "奖励", "grey", "免一次 不做",
-     '<rect x="32" y="32" width="56" height="56" rx="9" fill="%s"/>'
-     '<path d="M44 50h32M44 66h32" stroke="%s" stroke-width="4" stroke-linecap="round"/>'
-     '<path d="M36 84l48-48" stroke="%s" stroke-width="5" stroke-linecap="round"/>' % (W, PALETTE["grey"], PALETTE["red"])),
+     ticket_body('<path d="M76 51l9 3v7c0 5-4 8-9 10-5-2-9-5-9-10v-7z" fill="{bg}"/>')),
 
     ("rw_ticket_friend", "好友券", "奖励", "rose", "朋友 同学 玩",
-     '<circle cx="40" cy="54" r="11" fill="%s"/><circle cx="78" cy="54" r="11" fill="%s"/>'
-     '<path d="M24 90c0-9 7-16 16-16s16 7 16 16zM62 90c0-9 7-16 16-16s16 7 16 16z" fill="%s"/>'
-     '<path d="M60 26l3 6 6 1-5 4 2 6-6-3-6 3 2-6-5-4 6-1z" fill="%s"/>' % (W, W, W, W)),
+     ticket_body('<circle cx="71" cy="58" r="6" fill="{bg}"/>'
+                 '<circle cx="84" cy="58" r="6" fill="{bg}" opacity=".7"/>')),
 
     ("rw_ticket_solo", "独处券", "奖励", "sky", "单独 一对一 出去",
-     '<circle cx="43" cy="44" r="12" fill="%s"/><path d="M27 88c0-9 7-16 16-16s16 7 16 16z" fill="%s"/>'
-     '<circle cx="78" cy="55" r="9" fill="%s"/><path d="M66 88c0-7 5-13 12-13s12 6 12 13z" fill="%s"/>'
-     '<path d="M59 76h9" stroke="%s" stroke-width="5" stroke-linecap="round"/>' % (W, W, W, W, W)),
+     ticket_body('<circle cx="78" cy="55" r="6" fill="{bg}"/>'
+                 '<path d="M69 70c0-5 4-9 9-9s9 4 9 9z" fill="{bg}"/>')),
 
     ("rw_mute", "不催", "奖励", "grey", "安静 不说话",
-     '<path d="M28 44h50a8 8 0 0 1 8 8v20a8 8 0 0 1-8 8H50l-14 12V80h-8a8 8 0 0 1-8-8V52a8 8 0 0 1 8-8z" fill="%s" opacity=".45"/>'
-     '<path d="M26 86l68-48" stroke="%s" stroke-width="6.5" stroke-linecap="round"/>' % (W, W)),
+     '<path d="M60 32c-13 0-20 9-20 19 0 9-5 13-7 15h54c-2-2-7-6-7-15 0-10-7-19-20-19z" fill="{w}"/>'
+     '<path d="M46 84c-2-3-3-6-3-9h10c0 3-1 6-3 9z" fill="{w}"/>'
+     '<path d="M34 82L86 30" stroke="{bg}" stroke-width="7" stroke-linecap="round"/>'),
 
-    # 四、系统 --------------------------------------------------------------
+    # 四、宝箱七档（配色与孩子端宝箱页同一套）
+] + [(t, n, "宝箱", bg, k, chest_body(lid, bd, st, orn))
+     for (t, n, bg, lid, bd, st, orn, k) in BOXES] + [
+
+    # 五、系统 --------------------------------------------------------------
     ("sys_wish", "心愿", "系统", "pink", "许愿 愿望 目标",
-     '<path d="M58 22l8 17 19 3-13 13 3 19-17-9-17 9 3-19-13-13 19-3z" fill="%s"/>'
-     '<path d="M32 40l10 10M28 56l12 12M44 30l8 8" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (W, W)),
+     '<path d="M60 24c3 15 10 22 26 25-16 3-23 10-26 25-3-15-10-22-26-25 16-3 23-10 26-25z" fill="{w}"/>'
+     '<circle cx="84" cy="34" r="4" fill="{w}" opacity=".8"/>'
+     '<circle cx="34" cy="76" r="3.5" fill="{w}" opacity=".7"/>'),
 
     ("sys_pool", "许愿池", "系统", "mint", "基金 存钱罐 攒",
-     '<ellipse cx="58" cy="64" rx="30" ry="24" fill="%s"/>'
-     '<rect x="46" y="44" width="16" height="7" rx="3" fill="%s"/>'
-     '<circle cx="54" cy="34" r="8" fill="%s"/>'
-     '<ellipse cx="86" cy="64" rx="8" ry="6" fill="%s"/>'
-     '<path d="M40 78h18M43 85h13" stroke="%s" stroke-width="3.4" stroke-linecap="round"/>' % (W, PALETTE["mint"], PALETTE["gold"], PALETTE["mint"], PALETTE["mint"])),
+     '<path d="M40 44h40v36a12 12 0 0 1-12 12H52a12 12 0 0 1-12-12z" fill="{w}"/>'
+     '<rect x="34" y="38" width="52" height="9" rx="4.5" fill="{w}"/>'
+     '<path d="M46 56h28" stroke="{bg}" stroke-width="4" stroke-linecap="round"/>'
+     '<circle cx="60" cy="74" r="9" fill="{bg}"/>'),
 
     ("sys_guardian", "守护灵", "系统", "purple", "宠物 精灵 永久",
-     '<path d="M60 30c18 0 28 12 28 26s-10 28-28 28-28-12-28-26 10-28 28-28z" fill="%s"/>'
-     '<path d="M40 36c-5-8 0-15 7-12M80 36c5-8 0-15-7-12" fill="%s"/>'
-     '<circle cx="50" cy="56" r="5" fill="%s"/><circle cx="70" cy="56" r="5" fill="%s"/>'
-     '<path d="M52 72c4 4 12 4 16 0" stroke="%s" stroke-width="4" fill="none" stroke-linecap="round"/>' % (W, W, DARK, DARK, DARK)),
+     '<path d="M60 30c16 0 26 12 26 28v14c0 6-4 10-9 10h-6l-5 10-6-10H44c-6 0-11-5-11-11'
+     'V58c0-16 11-28 27-28z" fill="{w}"/>'
+     '<circle cx="51" cy="56" r="5" fill="{bg}"/><circle cx="69" cy="56" r="5" fill="{bg}"/>'
+     '<path d="M52 70c5 5 11 5 16 0" stroke="{bg}" stroke-width="4" fill="none" '
+     'stroke-linecap="round"/>'),
 
     ("sys_title", "称号", "系统", "gold", "徽章 头衔 永久",
-     '<circle cx="60" cy="50" r="23" fill="%s"/>'
-     '<path d="M44 74l7 22 9-11 9 11 7-22z" fill="%s"/>'
-     '<path d="M60 34l4 8 9 1-6 6 1 9-8-4-8 4 1-9-6-6 9-1z" fill="%s"/>' % (W, PALETTE["gold"], PALETTE["red"])),
+     '<path d="M46 60l-6 34 10-6 10 6 10-6-6-34z" fill="{w}" opacity=".9"/>'
+     '<circle cx="60" cy="46" r="22" fill="{w}"/>'
+     '<circle cx="60" cy="46" r="11" fill="{bg}"/>'),
 
     ("sys_skin", "皮肤", "系统", "rose", "外观 换装 颜色",
-     '<circle cx="60" cy="62" r="28" fill="%s"/>'
-     '<circle cx="48" cy="50" r="6" fill="%s"/><circle cx="72" cy="50" r="6" fill="%s"/>'
-     '<circle cx="44" cy="72" r="6" fill="%s"/><circle cx="71" cy="75" r="6" fill="%s"/>'
-     '<circle cx="60" cy="62" r="5" fill="%s"/>' % (W, PALETTE["red"], PALETTE["gold"], PALETTE["green"], PALETTE["blue"], PALETTE["purple"])),
+     '<path d="M60 28l14 7-5 8-5-3v34a4 4 0 0 1-4 4H50a4 4 0 0 1-4-4V40l-5 3-5-8z" fill="{w}"/>'),
 
     ("sys_repair", "修复任务", "系统", "red", "道歉 补偿 补救",
-     '<rect x="24" y="52" width="72" height="20" rx="10" fill="%s" transform="rotate(-30 60 62)"/>'
-     '<rect x="54" y="52" width="14" height="20" fill="%s" opacity=".35" transform="rotate(-30 60 62)"/>'
-     '<circle cx="40" cy="60" r="2.6" fill="%s"/><circle cx="80" cy="64" r="2.6" fill="%s"/>' % (W, PALETTE["red"], PALETTE["red"], PALETTE["red"])),
+     '<path d="M60 26l34 34-34 34-34-34z" fill="{w}"/>'
+     '<path d="M60 46v28M46 60h28" stroke="{bg}" stroke-width="7" stroke-linecap="round"/>'),
 
     ("sys_meeting", "家庭会议", "系统", "blue", "开会 讨论 说话",
-     '<path d="M28 42h50a8 8 0 0 1 8 8v20a8 8 0 0 1-8 8H50l-14 12V78h-8a8 8 0 0 1-8-8V50a8 8 0 0 1 8-8z" fill="%s"/>'
-     '<path d="M41 56h28M41 68h18" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (W, PALETTE["blue"])),
+     '<rect x="26" y="34" width="60" height="40" rx="12" fill="{w}"/>'
+     '<path d="M44 74l-4 14 16-14z" fill="{w}"/>'
+     '<circle cx="42" cy="54" r="4" fill="{bg}"/>'
+     '<circle cx="56" cy="54" r="4" fill="{bg}"/>'
+     '<circle cx="70" cy="54" r="4" fill="{bg}"/>'),
 
     ("sys_calendar", "日历", "系统", "teal", "日期 假期 周",
-     '<rect x="28" y="34" width="64" height="58" rx="9" fill="%s"/>'
-     '<rect x="28" y="32" width="64" height="16" rx="8" fill="%s"/>'
-     '<path d="M44 26v10M76 26v10" stroke="%s" stroke-width="4" stroke-linecap="round"/>'
-     '<path d="M42 62h12M42 76h12M64 62h12M64 76h12" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (W, PALETTE["teal"], PALETTE["teal"], PALETTE["teal"])),
+     '<rect x="28" y="34" width="64" height="58" rx="10" fill="{w}"/>'
+     '<path d="M38 34h44a10 10 0 0 1 10 10v6H28v-6a10 10 0 0 1 10-10z" fill="{bg}"/>'
+     '<rect x="42" y="26" width="8" height="14" rx="4" fill="{w}"/>'
+     '<rect x="70" y="26" width="8" height="14" rx="4" fill="{w}"/>'
+     '<circle cx="46" cy="64" r="5" fill="{bg}"/><circle cx="60" cy="64" r="5" fill="{bg}"/>'
+     '<circle cx="74" cy="64" r="5" fill="{bg}"/>'
+     '<circle cx="46" cy="80" r="5" fill="{bg}" opacity=".55"/>'
+     '<circle cx="60" cy="80" r="5" fill="{bg}" opacity=".55"/>'),
 
     ("sys_clock", "时间", "系统", "indigo", "时钟 期限 加时",
-     '<circle cx="60" cy="60" r="27" fill="%s"/>'
-     '<path d="M60 44v18l13 8" stroke="%s" stroke-width="5" fill="none" stroke-linecap="round"/>'
-     '<path d="M60 26v8M60 86v8M26 60h8M86 60h8" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (W, PALETTE["indigo"], W)),
+     '<circle cx="60" cy="60" r="28" fill="{w}"/>'
+     '<path d="M60 42v18l14 9" stroke="{bg}" stroke-width="6" fill="none" stroke-linecap="round"/>'
+     '<circle cx="60" cy="60" r="4.5" fill="{bg}"/>'),
 
     ("sys_award", "成就", "系统", "gold", "奖杯 第一 表扬",
-     '<path d="M40 30h40v20a20 20 0 0 1-40 0z" fill="%s"/>'
-     '<path d="M40 40c-9 0-11-16-2-16M80 40c9 0 11-16 2-16" fill="none" stroke="%s" stroke-width="4.5"/>'
-     '<path d="M60 70v14" stroke="%s" stroke-width="5"/>'
-     '<rect x="46" y="84" width="28" height="9" rx="3" fill="%s"/>' % (W, W, W, PALETTE["gold"])),
+     '<path d="M40 30h40v20a20 20 0 0 1-40 0z" fill="{w}"/>'
+     '<path d="M40 40c-9 0-11-16-2-16M80 40c9 0 11-16 2-16" fill="none" stroke="{w}" '
+     'stroke-width="4.5"/>'
+     '<rect x="52" y="68" width="16" height="16" fill="{w}"/>'
+     '<rect x="42" y="84" width="36" height="9" rx="4" fill="{w}"/>'),
 
     ("sys_holiday", "假期", "系统", "sky", "放假 暑假 寒假 太阳",
-     '<circle cx="60" cy="52" r="16" fill="%s"/>'
-     '<path d="M60 24v8M60 72v8M32 52h8M80 52h8M41 33l6 6M79 33l-6 6M79 71l-6-6M41 71l6-6" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (W, W)),
+     '<circle cx="60" cy="52" r="16" fill="{w}"/>'
+     '<path d="M60 30v-10M60 74v10M44 36l-7-7M76 36l7-7M44 68l-7 7M76 68l7 7'
+     'M32 52h-9M88 52h9" stroke="{w}" stroke-width="5.5" stroke-linecap="round"/>'),
 
     ("sys_shield", "规则", "系统", "grey", "保护 红线 不可改",
-     '<path d="M60 24l26 10v22c0 18-12 29-26 35-14-6-26-17-26-35V34z" fill="%s"/>'
-     '<path d="M48 58l8 8 16-16" stroke="%s" stroke-width="5.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' % (W, PALETTE["grey"])),
+     '<path d="M60 26l28 10v22c0 18-12 29-28 35-16-6-28-17-28-35V36z" fill="{w}"/>'
+     '<path d="M48 60l8 9 16-18" stroke="{bg}" stroke-width="7" fill="none" '
+     'stroke-linecap="round" stroke-linejoin="round"/>'),
 ]
 
 # ---------------------------------------------------------------------------
@@ -384,11 +501,17 @@ HEADER = (
     "<!-- 家庭积分 · 图标。由 tools/build_icons.py 生成，不要手改 -->\n"
 )
 
+# 右下角那道月牙。全套共用一个做法，凑成一套；用 clipPath 裁在圆里，
+# 不然它会从圆的边上露出去。
+CRESCENT = ('<circle cx="72" cy="74" r="44" fill="%s" opacity=".10" '
+            'clip-path="url(#k)"/>' % DARK)
+
 
 def build_one(token, body, bg):
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">'
-        '<circle cx="60" cy="60" r="44" fill="%s"/>%s</svg>\n' % (bg, body)
+        '<defs><clipPath id="k"><circle cx="60" cy="60" r="46"/></clipPath></defs>'
+        '<circle cx="60" cy="60" r="46" fill="%s"/>%s%s</svg>\n' % (bg, CRESCENT, body)
     )
 
 
@@ -399,7 +522,7 @@ def main():
     tokens = []
     for token, label, grp, bgname, keys, body in ICONS:
         bg = PALETTE[bgname]
-        svg = HEADER + build_one(token, body, bg)
+        svg = HEADER + build_one(token, body.format(w=W, d=DARK, bg=bg), bg)
         with io.open(os.path.join(OUT_SVG, token + ".svg"), "w",
                      encoding="utf-8", newline="\n") as f:
             f.write(svg)
@@ -441,13 +564,15 @@ def main():
         grps[x["g"]] += 1
     print("分组：%s" % "、".join("%s %d" % (k, v) for k, v in grps.items()))
 
-    # 自检：token 重名、文件名非 ASCII、body 里出现没定义的颜色变量
+    # 自检：token 重名、底色没定义、占位符漏填
     seen = set()
     for token, label, grp, bgname, keys, body in ICONS:
         assert re.match(r"^[a-z0-9_]+$", token), "token 非法：" + token
         assert token not in seen, "token 重名：" + token
         seen.add(token)
         assert bgname in PALETTE, "底色没定义：" + bgname
+        filled = body.format(w=W, d=DARK, bg=PALETTE[bgname])
+        assert "{" not in filled, "占位符没填完：" + token
     print("自检通过：%d 个 token 无重名" % len(seen))
 
 

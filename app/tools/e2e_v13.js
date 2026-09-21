@@ -299,12 +299,12 @@ async function walkTabs(page, tag) {
   }
 
   /* v40：「有事就说」那两条从「我的」搬走 —— 申请加时挪到券包（它延长的就是
-     下面那张券），「这题我不会」挪到首页（写作业的时候开的就是这一屏）。
+     下面那张券），「遇到困难」挪到首页（写作业的时候开的就是这一屏）。
      原来两块叠在「我的」最下面，要翻两屏才找得到，等于把唯一的正经通道埋起来。 */
-  if (kidView.home.indexOf('这题我不会') < 0) bad('[v40] 首页没有「这题我不会」');
-  if (kidView.coupon.indexOf('想多玩一会儿') < 0) bad('[v40] 券包没有「想多玩一会儿」');
-  if (kidView.mine.indexOf('想多玩一会儿') >= 0 || kidView.mine.indexOf('这题我不会') >= 0) {
-    bad('[v40] 「我的」里还留着那两条入口');
+  if (kidView.home.indexOf('遇到困难') < 0) bad('[v41] 首页没有「遇到困难」');
+  if (kidView.coupon.indexOf('想多玩一会儿') < 0) bad('[v41] 券包没有「想多玩一会儿」');
+  if (kidView.mine.indexOf('想多玩一会儿') >= 0 || kidView.mine.indexOf('遇到困难') >= 0) {
+    bad('[v41] 「我的」里还留着那两条入口');
   }
   await kidGo('home');
   if (!(await page.locator('#view #kAskHelp').count())) bad('[v40] 首页的「说一声」按钮不在');
@@ -1444,49 +1444,84 @@ async function walkTabs(page, tag) {
   const backMe = flat(await page.locator('#view').innerText());
   if (backMe.indexOf('退出登录') < 0) bad('[v40] 设置页返回没回到「我的」');
 
-  // 家长端快捷弹层：换皮后它们收在「我的 → 更多」那一行里的清单。
+  /* v41：「更多」整行撤掉。它和设置页撞车 —— 设置里本来就有「通知与推送」
+     与「周期与假期」两组，而假期日历、推送设备、备份、家人账号、改密码又各
+     在另一处，同一件事两个入口，改一处另一处必漂。现在：
+       · 通知与推送 / 假期日历 → 收进设置页对应那一组（组里给一个按钮）
+       · 备份与导出 / 家人账号 / 改我的密码 → 「我的」页各自一行 */
   say('');
-  say('6. 家长端快捷弹层:');
+  say('6. 家长端「我的」页入口:');
   await tabTo(page, '我的');
   await page.waitForTimeout(700);
-  await clickSel(page, '#view [data-act="more"]', '我的 → 更多');
-  // 先只把入口名字抄下来。别存 ElementHandle —— 每开一次弹层，弹层内的
-  // 节点都会重画一遍，上一轮的句柄会变成「已脱离文档」，下一轮读它的
-  // innerText 就一直等到超时。
-  const labels = (await page.locator('#sheetBody [data-qa]').allInnerTexts())
-    .map(t => flat(t).slice(0, 16));
-  say('   更多小清单: ' + labels.length + ' 个入口');
-  /* v40：这条清单从 8 条压到 5 条。设置成了独立页（搬到「我的」第一行），
-     「发星星时刻」的正经入口一直在打分页（「今天有额外表现」），
-     「发一个任务」与「记一次校准」挪进发布页（前者并进「写任务」，
-     后者是发布胶囊第三格）。同一件事留三个入口，改一处另两处必漂。 */
-  if (labels.length < 5) bad('[快捷入口] 家长端「更多」里的入口太少：' + labels.length);
-  for (const gone of ['发星星时刻', '发一个任务', '记一次校准', '设置']) {
-    if (labels.join('|').indexOf(gone) >= 0) {
-      bad('[v40] 「更多」里还留着已经挪走的「' + gone + '」');
-    }
+  const meRows = flat(await page.locator('#view').innerText());
+  if (meRows.indexOf('更多') >= 0) bad('[v41] 「我的」页还留着「更多」');
+  for (const want of ['我的记录', '家人账号', '改我的密码', '备份与导出', '设置']) {
+    if (meRows.indexOf(want) < 0) bad('[v41] 「我的」页缺入口「' + want + '」');
   }
-  // 上面这一次已经把小清单开着了，先关掉：循环里每一轮自己重开，
-  // 不然第一轮去点「我的 → 更多」时会被还开着的弹层挡住。
-  await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
-  await page.waitForTimeout(320);
-  for (let i = 0; i < labels.length; i++) {
-    const label = labels[i];
-    if (!label) continue;
-    // 每点一次都要重新开小清单：点开一个入口会把它自己关掉
-    await clickSel(page, '#view [data-act="more"]', '我的 → 更多');
-    const rows = page.locator('#sheetBody [data-qa]');
-    if (i >= await rows.count()) break;
-    await rows.nth(i).click();
-    await page.waitForTimeout(800);
+  // 「我的记录」是跳页不是弹层（走动态日志页，前面已经验过），这里只验三个开弹层的。
+  for (const [act, name] of [['members', '家人账号'], ['chpw', '改我的密码'],
+    ['ops', '备份与导出']]) {
+    await clickSel(page, '#view [data-act="' + act + '"]', '我的 → ' + name);
+    await page.waitForTimeout(700);
     const on = await page.locator('#sheet.on').count();
-    if (!on) { bad('[未弹出] 设置小清单 ' + label); continue; }
+    if (!on) { bad('[未弹出] 我的 → ' + name); continue; }
     const body = flat(await page.locator('#sheet.on .sheet-body').innerText());
-    say('   [弹层] ' + label + ' -> ' + body.length + ' 字: ' + body.slice(0, 56));
-    if (body.length < 4) bad('[空弹层] 设置小清单 ' + label);
+    say('   [弹层] ' + name + ' -> ' + body.length + ' 字: ' + body.slice(0, 56));
+    if (body.length < 4) bad('[空弹层] 我的 → ' + name);
     await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
     await page.waitForTimeout(300);
   }
+
+  // 设置页里那两个「不是数字、得单独开一屏」的入口。原先它们挂在「更多」
+  // 里，跟这两个分组说的是同一件事。
+  await clickSel(page, '#view [data-go="settings"]', '我的 → 设置');
+  for (const [grp, qa, name] of [['通知与推送', 'push', '家人的手机与推送'],
+    ['周期与假期', 'holiday', '假期日历']]) {
+    await clickSel(page, '#view [data-setgrp="' + grp + '"]', '设置 → ' + grp);
+    await clickSel(page, '#view [data-grpqa="' + qa + '"]', grp + ' → ' + name);
+    await page.waitForTimeout(700);
+    const on = await page.locator('#sheet.on').count();
+    if (!on) { bad('[未弹出] 设置 → ' + name); continue; }
+    const body = flat(await page.locator('#sheet.on .sheet-body').innerText());
+    say('   [弹层] ' + name + ' -> ' + body.length + ' 字: ' + body.slice(0, 56));
+    if (body.length < 4) bad('[空弹层] 设置 → ' + name);
+    await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+    await page.waitForTimeout(300);
+    await clickSel(page, '#view #pSetBack', grp + ' 二级 返回');
+  }
+
+  /* v41：整套图标重画。宝箱七档从「六档共用 rw_box、第七档 rw_box_open」
+     换成各自一档一张；家长唯一能看见全套图的地方就是这个「给它们换张图」。
+     数三组、数七档，并确认七档互不重样、图真的加载出来了 ——
+     原来的坏法是「库里存了新 token，icons/ 里没有对应文件」，
+     界面上只看得到一片空白，没有任何报错。 */
+  say('');
+  say('7. 「给它们换张图」:');
+  // 刚从两组二级页退回设置一级，那颗按钮就在这一屏上，不用再绕一趟「我的」。
+  await clickSel(page, '#view #iconBtn', '设置 → 给它们换张图');
+  await page.waitForTimeout(1000);
+  const iconBody = flat(await page.locator('#sheet.on .sheet-body').innerText());
+  for (const grp of ['七个维度', '宝箱七档', '券与卡']) {
+    if (iconBody.indexOf(grp) < 0) bad('[v41] 换图弹层缺一组「' + grp + '」');
+  }
+  const cellSrc = sel => page.evaluate(s => Array.from(
+    document.querySelectorAll('#sheet.on ' + s + ' img.gly'))
+    .map(i => i.getAttribute('src')), sel);
+  const boxSrc = await cellSrc('[data-ip^="ic-b-"]');
+  say('   宝箱七档: ' + boxSrc.length + ' 张 -> ' + boxSrc.join(' '));
+  if (boxSrc.length !== 7) bad('[v41] 宝箱七档不是 7 张，是 ' + boxSrc.length);
+  if (new Set(boxSrc).size !== boxSrc.length) bad('[v41] 宝箱七档里有重复的图');
+  const dimSrc = await cellSrc('[data-ip^="ic-d-"]');
+  say('   七个维度: ' + dimSrc.length + ' 张，去重后 ' + new Set(dimSrc).size + ' 张');
+  if (dimSrc.length !== 7) bad('[v41] 七个维度不是 7 张，是 ' + dimSrc.length);
+  if (new Set(dimSrc).size !== dimSrc.length) bad('[v41] 七个维度里有重复的图');
+  const broken = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#sheet.on img.gly'))
+    .filter(i => i.complete && i.naturalWidth === 0).length);
+  say('   没加载出来的图: ' + broken + ' 张');
+  if (broken) bad('[v41] 换图弹层里有 ' + broken + ' 张图没加载出来');
+  await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+  await page.waitForTimeout(300);
 
   // ---------- 汇总 ----------
   say('');

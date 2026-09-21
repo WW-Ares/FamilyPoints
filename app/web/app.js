@@ -402,6 +402,9 @@ function pGo(v) {
   if (!pValid(v)) return;
   if (v === S.view) { pHash(v, false); render(); return; }
   S.view = v;
+  // 离开设置页就把「正在看哪一组」清掉。不清的话：设置 → 周期与假期 →
+  // 底栏切走 → 再进设置，会直接落在上一次那一组里，一级那七行看不见了。
+  if (v !== 'settings') P_SETGRP = '';
   pHash(v);
   scrollTop0();
   renderTabs(); render();
@@ -426,7 +429,7 @@ function pPick(fallback) {
 function pFromHash() {
   if (!S.isParent || !S.me) return;
   const v = String(location.hash || '').replace(/^#/, '');
-  if (pValid(v) && v !== S.view) { S.view = v; renderTabs(); render(); }
+  if (pValid(v) && v !== S.view) { if (v !== 'settings') P_SETGRP = ''; S.view = v; renderTabs(); render(); }
 }
 window.addEventListener('popstate', pFromHash);
 window.addEventListener('hashchange', pFromHash);
@@ -1869,7 +1872,7 @@ function askOvertimeSheet(mid) {
 }
 
 function askHelpSheet(mid) {
-  sheet('<h3>这题我不会</h3>' +
+  sheet('<h3>遇到困难</h3>' +
     '<p class="muted">主动说不会不是丢人的事，它是这套规则里最有用的一句话。' +
     '把「承认不会」从丢人的事变成有收益的事，抄作业的动机就掉一大半。</p>' +
     '<p class="muted">只写「哪一题、卡在哪一步」，不写「不会什么」。</p>' +
@@ -2934,44 +2937,13 @@ async function renderAdminHome(v) {
   }));
 }
 
-/* 「我的」页最后一行「设置」开的那个小清单。
-   交付包里「我的」只有一行「设置」，但家长真正要用的入口不止一个
-   （通知、假期日历、家人账号、备份）。收在一处，不进底栏。 */
-function pMoreSheet() {
-  // 「发星星时刻」「发一个任务」「记一次校准」原在这儿，各自挪走了：
-  // 星星时刻的正经入口在打分页（「今天有额外表现」），发任务并进发布页的
-  // 「写任务」（那儿能选派给谁，也能配图，比这儿全），校准变成发布页第三格。
-  // 留着就是同一件事三个入口，改了一处另两处不动。
-  const rows = [
-    ['i-bell', '通知与推送', '哪些事推到你手机上', 'push'],
-    ['i-log-system', '假期日历', '填一次管一年', 'holiday'],
-    ['i-chevron-right-dead', '备份与导出', '数据库快照', 'ops'],
-  ];
-  let h = '<h3>更多</h3><div class="card card--tight" style="padding:6px">' +
-    rows.map(r => '<div class="row" data-qa="' + r[3] + '">' + pic(r[0], 20) +
-      '<div class="row-body"><span class="row-title">' + esc(r[1]) + '</span>' +
-      '<span class="row-sub">' + esc(r[2]) + '</span></div>' +
-      '<span class="chev">›</span></div>').join('') + '</div>' +
-    '<div class="card card--tight" style="padding:6px;margin-top:10px">' +
-    '<div class="row" data-qa="members">' + pic('i-family', 20) +
-    '<div class="row-body"><span class="row-title">家人账号</span>' +
-    '<span class="row-sub">' + (S.me.is_admin ? '开通账号、重置任何人的密码'
-      : '重置孩子的密码，开通账号找管理员') + '</span></div>' +
-    '<span class="chev">›</span></div>' +
-    '<div class="row" data-qa="chpw">' + pic('i-memo', 20) +
-    '<div class="row-body"><span class="row-title">改我的密码</span>' +
-    '<span class="row-sub">账号 ' + esc(S.me.username || '—') + '</span></div>' +
-    '<span class="chev">›</span></div></div>';
-  sheet(h, box => {
-    $$('[data-qa]', box).forEach(el => el.addEventListener('click', () => {
-      const k = el.dataset.qa;
-      closeSheet();
-      if (k === 'members') return membersSheet();
-      if (k === 'chpw') return changePwSheet();
-      openQA(k);
-    }));
-  });
-}
+/* 「我的」页原来有一行「更多」，里面装着通知、假期日历、备份、家人账号、
+   改密码。它和设置页撞车：设置页本来就有「通知与推送」「周期与假期」两组，
+   假期日历和推送设备又各在另一处 —— 同一件事两个入口，改了一处另一处不动。
+   v41 整行撤掉：
+     · 通知与推送、假期日历 → 收进设置页对应的那一组（组里给一个按钮）
+     · 备份与导出、家人账号、改我的密码 → 提到「我的」页，各自一行
+   家长要找的东西不该先猜它躲在「更多」后面。 */
 
 /* ================================================================== 家长端 · 审核 */
 /* 这一页只回答一件事：球在我这边的有几件、每件我该按哪个钮。
@@ -4351,13 +4323,21 @@ async function renderAdminMe(v) {
     '</span><span class="badge-pilot">领航员</span></div>' +
     '<span class="caption--warm">' + esc(sub) + '</span></div></div>';
 
+  // 「我的」这一组只装跟**账号**有关的三件事：我看过什么、家里有谁、我的密码。
+  // 家人账号与改密码原先躲在「更多」里，那是一条和设置页撞车的死路。
+  const mine = [
+    ['i-memo', '我的记录', '我打过的分、我审过的、我发过的', 'mine'],
+    ['i-nav-user', '家人账号', S.me.is_admin ? '开通账号、重置任何人的密码'
+      : '重置孩子的密码，开通账号找管理员', 'members'],
+    ['i-nav-stamp', '改我的密码', '账号 ' + (S.me.username || '—'), 'chpw'],
+  ];
   h += '<div class="stack--sm" style="display:flex;flex-direction:column;gap:8px">' +
     '<span class="sec-title">我的</span>' +
     '<div class="card card--tight" style="padding:6px">' +
-    '<div class="row" data-act="mine">' + pic('i-memo', 20) +
-    '<div class="row-body"><span class="row-title">我的记录</span>' +
-    '<span class="row-sub">我打过的分、我审过的、我发过的</span></div>' +
-    '<span class="chev">›</span></div></div></div>';
+    mine.map(r => '<div class="row" data-act="' + r[3] + '">' + pic(r[0], 20) +
+      '<div class="row-body"><span class="row-title">' + esc(r[1]) + '</span>' +
+      '<span class="row-sub">' + esc(r[2]) + '</span></div>' +
+      '<span class="chev">›</span></div>').join('') + '</div></div>';
 
   const rows = [
     ['i-family', '家庭页', '全家能量 · 许愿池 · 成员', 'family'],
@@ -4375,11 +4355,15 @@ async function renderAdminMe(v) {
     '<div class="row" data-go="settings">' + pic('i-gear', 20) +
     '<div class="row-body"><span class="row-title">设置</span>' +
     '<span class="row-sub">价格 · 门槛 · 额度，改完就生效</span></div>' +
-    '<span class="chev">›</span></div>' +
-    '<div class="row" data-act="more">' + pic('i-log-system', 20) +
-    '<div class="row-body"><span class="row-title">更多</span>' +
-    '<span class="row-sub">推送 · 假期 · 备份 · 家人账号</span></div>' +
     '<span class="chev">›</span></div></div></div>';
+
+  // 备份单独一行，不并进「家里的事」：它改的不是家里的规矩，是「万一没了
+  // 还能不能找回来」。摆在最底下，跟退出登录隔开。
+  h += '<div class="card card--tight" style="padding:6px">' +
+    '<div class="row" data-act="ops">' + pic('i-log-system', 20) +
+    '<div class="row-body"><span class="row-title">备份与导出</span>' +
+    '<span class="row-sub">数据库快照 · 导出一份 JSON</span></div>' +
+    '<span class="chev">›</span></div></div>';
 
   h += '<button class="btn btn--block btn--quiet" id="pLogout">退出登录</button>';
 
@@ -4394,13 +4378,16 @@ async function renderAdminMe(v) {
   v.innerHTML = h;
   $$('#view [data-go]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.go)));
   $('#pLogout').addEventListener('click', () => logoutNow());
-  const more = $('#view [data-act="more"]');
-  if (more) more.addEventListener('click', () => pMoreSheet());
-  const mine = $('#view [data-act="mine"]');
-  if (mine) mine.addEventListener('click', () => {
-    LOG_FILTER.mine = true; LOG_FILTER.group = ''; LOG_FILTER.member_id = '';
-    pGo('logs');
-  });
+  $$('#view [data-act]').forEach(el => el.addEventListener('click', () => {
+    const k = el.dataset.act;
+    if (k === 'members') return membersSheet();
+    if (k === 'chpw') return changePwSheet();
+    if (k === 'ops') return opsSheet();
+    if (k === 'mine') {
+      LOG_FILTER.mine = true; LOG_FILTER.group = ''; LOG_FILTER.member_id = '';
+      pGo('logs');
+    }
+  }));
 }
 
 /* ================================================================== 家长端 · 家庭页 */
@@ -4494,8 +4481,10 @@ async function renderFamily(v) {
   $$('#view [data-kid]').forEach(el => el.addEventListener('click', () => {
     S.kidId = +el.dataset.kid; pGo('kid');
   }));
+  // 这一颗原来开的是「更多」那条小清单 —— 家长点「去设一个」想设的是许愿池，
+  // 弹出来的却是一张入口表，还得再找一遍。直接开许愿池。
   const pb = $('#pPool');
-  if (pb) pb.addEventListener('click', () => pMoreSheet());
+  if (pb) pb.addEventListener('click', () => wishSheet());
 }
 
 /* ================================================================== 家长端 · 心愿与许愿池 */
@@ -5229,7 +5218,10 @@ const GRP_NOTE = {
    所以库不用迁移。 */
 const GRP_TREE = [
   { n: '每天的七分', sub: '满分、维度、星探、修正窗口、求助、忘打卡', grps: ['成员与打分'] },
-  { n: '周期与假期', sub: '一周从哪天起、多长、假期模式与顺延', grps: ['周期', '假期'] },
+  // qa = 这一组里除了数字之外还有一个要单独开的东西。原先它们挂在「我的 →
+  // 更多」，跟设置页这两组说的是同一件事，两个入口各自漂。
+  { n: '周期与假期', sub: '一周从哪天起、多长、假期模式与顺延', grps: ['周期', '假期'],
+    qa: ['i-hourglass', '假期日历', '填一次管一年', 'holiday'] },
   { n: '任务与心愿', sub: '奖励上限、自动确认、心愿单件数', grps: ['两套系统'] },
   { n: '奖励与道具', sub: '娱乐券、加时、卡到期、七档门槛、等级表',
     grps: ['券与道具', '宝箱', '星球等级'] },
@@ -5237,7 +5229,8 @@ const GRP_TREE = [
     grps: ['校准与修复', '汇率与基金'] },
   { n: '红线与运维', sub: '四条改不得的规则、快照保留、双人确认',
     grps: ['四条红线', '运维与权限'] },
-  { n: '通知与推送', sub: '提醒时间、Bark、免打扰', grps: ['通知', '通知与推送'] },
+  { n: '通知与推送', sub: '提醒时间、Bark、免打扰', grps: ['通知', '通知与推送'],
+    qa: ['i-bell', '家人的手机与推送', '谁收通知、收到哪台设备', 'push'] },
 ];
 let P_SETGRP = '';   // 空 = 一级（列七组）；非空 = 正在看这一组
 
@@ -5289,6 +5282,15 @@ async function renderAdminSettings(v) {
     h += '<button class="btn btn--block btn--quiet" id="iconBtn" style="margin-top:10px">' +
       '给它们换张图</button>';
   } else {
+    // 这一组里那个「不是数字、得单独开一屏」的东西，摆在分组最上面：
+    // 家长点进「通知与推送」先看到的应该是配设备，而不是四个时间框。
+    if (node.qa) {
+      h += '<div class="card card--tight" style="padding:6px;margin-bottom:10px">' +
+        '<div class="row" data-grpqa="' + esc(node.qa[3]) + '">' + pic(node.qa[0], 20) +
+        '<div class="row-body"><span class="row-title">' + esc(node.qa[1]) + '</span>' +
+        '<span class="row-sub">' + esc(node.qa[2]) + '</span></div>' +
+        '<span class="chev">›</span></div></div>';
+    }
     const gs = d.groups.filter(x => node.grps.indexOf(x.grp) >= 0);
     gs.forEach(g => {
       if (!g.items.length) return;
@@ -5309,6 +5311,9 @@ async function renderAdminSettings(v) {
   if (bk) bk.addEventListener('click', () => { P_SETGRP = ''; render(); });
   $$('#view [data-setgrp]').forEach(el => el.addEventListener('click', () => {
     P_SETGRP = el.dataset.setgrp; render();
+  }));
+  $$('#view [data-grpqa]').forEach(el => el.addEventListener('click', () => {
+    openQA(el.dataset.grpqa);
   }));
   $$('#view button[data-ap]').forEach(b => b.addEventListener('click', async () => {
     try {

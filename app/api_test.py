@@ -1093,7 +1093,7 @@ def _icon_cases(dad, girl, mom):
     check("七维度全都有图了", all(x["icon"] for x in lst["dims"]),
           [x["key"] for x in lst["dims"] if not x["icon"]])
     check("宝箱七档全都有图", all(x["icon"] for x in lst["boxes"]))
-    check("完美箱用的是「已打开」那张", lst["boxes"][-1]["icon"] == "rw_box_open",
+    check("完美箱用的是「已打开」那张", lst["boxes"][-1]["icon"] == "bx_perfect",
           lst["boxes"][-1]["icon"])
 
     # --- 权限 ---

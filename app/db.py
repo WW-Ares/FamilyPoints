@@ -239,6 +239,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v37(conn)
     _migrate_v38(conn)
     _migrate_v39(conn)
+    _migrate_v40(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -1028,9 +1029,28 @@ def _migrate_v39(conn):
     外加一份行定义（今天这套维度），七分矩阵直接吃，界面不再自己拼。
 
     挂版本号是为了让 meta.schema_version 跟 web/app.js 里「这一版」那句话
-    对得上，跟 v31 / v33 / v35 / v36 / v37 那几次空迁移同一个用法。
+    对得上，跟 v31 / v33 / v35 / v36 / v37 / v39 那几次空迁移同一个用法。
     """
     return
+
+
+def _migrate_v40(conn):
+    """v40：宝箱七档换成各自的图。
+
+    以前 seed_data.BOX_ICONS 里六档共用一张 rw_box、第七档 rw_box_open：
+    家长在设置「给它们换张图」里看到的七档宝箱是同一只棕色箱子，
+    跟孩子端宝箱页那七只（木/铜/银/金/钻/王/完满，各一个颜色）完全对不上。
+
+    现在按 tier 配到 bx_wood … bx_perfect，配色照抄 web/candy/i-chest-*.svg。
+    只动「还是旧默认图」的那几行：家长自己挑过的（哪怕挑的还是 rw_box
+    这一只）一律不碰 —— 判据就是那两个旧 token，老库里没改过的写法
+    只可能是它们。
+    """
+    for tier, tok in sorted(seed_data.BOX_ICONS.items()):
+        conn.execute(
+            "UPDATE box_tier SET icon=? WHERE tier=? AND icon IN ('rw_box','rw_box_open')",
+            (tok, tier),
+        )
 
 
 if __name__ == "__main__":
