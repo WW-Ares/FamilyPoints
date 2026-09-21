@@ -174,12 +174,24 @@ function kHash(v, push) {
    换屏时不重画底栏的话，二级页进去以后高亮还停在上一个 Tab 上。 */
 function kGo(v) {
   if (!kValid(v) || v === S.view) { if (v === S.view) kRedraw(v, true); return; }
+  // 记一句「从哪来」。二级页（报告 / 心愿屋 / 图鉴 / 家庭）的返回要看它：
+  // 原来返回按钮写死 data-go="home" / "mine"，于是从「我的」进成长报告，
+  // 点返回掉回首页；心愿屋从首页也能进，返回的却是「我的」。
+  if (!S.from) S.from = {};
+  S.from[v] = S.view;
   S.view = v;
   kHash(v);
   // render() 会把滚动位置还回去，换屏要先清成 0，不然新的一屏停在上一屏的位置
   if (typeof scrollTop0 === 'function') scrollTop0();
   renderTabs();
   render();
+}
+/* 这一屏的返回目标：有来路就回来路，没有（比如刷新后直接落在这一屏，
+   或者这一屏就是个 Tab）退回它所属的底栏格。 */
+function kBack(v) {
+  const f = (S.from || {})[v];
+  if (f && kValid(f) && f !== v) return f;
+  return K_TAB_OF[v] || 'home';
 }
 function kRedraw(v, same) {
   // 已经在当前屏时点同一格：只把内容重画一遍，不产生新的历史记录
@@ -203,6 +215,23 @@ function kShell(opt, body) {
   }
   return '<div class="screen">' + head +
     '<div class="content' + (head ? '' : ' lead') + '">' + body + '</div></div>';
+}
+
+/* 「有事就说」的两个入口。刻意不做成道具卡：偷玩的根因是「正规通道比偷玩更麻烦」，
+   把入口埋进两层菜单，等于亲手把它变回更麻烦的那一条。
+   两条各贴着它要用的那个地方：申请加时在券包（紧挨着要用的那张券），
+   「这题我不会」在首页（正在写作业的时候开的就是这一屏）。
+   原来两块都堆在「我的」最下面，等于要翻两屏才找得到。
+   按钮 id 不变，CHILD.bind 按 id 绑，不用跟着搬。 */
+function kAskCard(kind) {
+  const ot = kind === 'ot';
+  return '<div class="card card--tight"><div class="hb"><div>' +
+    '<div class="row-title">' + (ot ? '想多玩一会儿' : '这题我不会') + '</div>' +
+    '<div class="row-sub">' + (ot ? '不用攒卡，也不用先表现好'
+      : '说清楚卡在哪一步，核实后 +1 星尘') + '</div></div>' +
+    '<button class="btn btn--sm' + (ot ? '' : ' line') + '" id="' +
+    (ot ? 'kAskOt' : 'kAskHelp') + '">' + (ot ? '申请加时' : '说一声') +
+    '</button></div></div>';
 }
 
 /* ============================================================ 七分矩阵（首页） */
@@ -372,7 +401,10 @@ async function kScreenHome() {
       ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
   }
 
-  // ⑤ 心愿
+  // ⑤ 这题我不会。放在心愿上面：孩子开首页多半正写着作业，这一条要先被看见。
+  h += kAskCard('help');
+
+  // ⑥ 心愿
   const act = (ws && ws.items || []).filter(x => x.status === 'active');
   const w = act[0];
   if (w) {
@@ -394,7 +426,7 @@ async function kScreenHome() {
       ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
   }
 
-  // ⑥ 最近发生。接口本来就只回自己那一份（member_id 从会话里来），不用在这儿筛。
+  // ⑦ 最近发生。接口本来就只回自己那一份（member_id 从会话里来），不用在这儿筛。
   //    原来是整块只报最新那一条的灰字：看得到「刚发生了什么」，看不到「这几天
   //    都在发生什么」。改成三条胶囊，每条前面挂一个来源小符号。
   const rec = (fd && fd.recent || []).slice(0, 3);
@@ -1010,6 +1042,10 @@ async function kScreenCoupon() {
       '</div></div>';
   }
 
+  // 想多玩一会儿：它延长的就是下面那张券，贴着摆。位置在清单标题上面，
+  // 免得被一长串券挤到屏幕外头，等于把唯一的正经通道又埋回去。
+  h += kAskCard('ot');
+
   // 手上的券：六种都摆出来，×0 的置灰 —— 「豁免券用完了」和「从来没有过」
   // 对孩子是两件不同的事，摆着不动比整张卡消失诚实。
   h += '<div class="sect-head"><span class="sect-title">' +
@@ -1208,7 +1244,7 @@ async function kScreenReport() {
   const energy = +c.energy || 0;
 
   let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="home">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('report') + '">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
     '<span class="appbar-grow"><div class="appbar-title">成长报告</div>' +
     '<div class="appbar-sub">本周 vs 上周的自己</div></span>' +
     '<span class="pill pill--gray" style="background:rgba(255,255,255,.72)">' +
@@ -1499,7 +1535,7 @@ async function kScreenWish() {
     || x.status === 'cancelled');
 
   let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="mine">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('wish') + '">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
     '<span class="appbar-grow appbar-title">心愿屋</span>' +
     '<span class="appbar-right"><span class="pill" style="gap:5px;padding:5px 10px">' +
     ic('i-stardust', 11, 'var(--stardust)') + '<span class="num" style="font-size:11px">' +
@@ -1713,17 +1749,6 @@ async function kScreenMine() {
     (rec.length ? ' · 走过 ' + num(rec.length) + ' 个周期' : '') + '</div></div>' +
     ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
 
-  // 「有事就说」。这两条刻意不做成道具卡：偷玩的根因是「正规通道比偷玩更麻烦」，
-  // 把入口埋进两层菜单，等于亲手把它变回更麻烦的那一条。
-  h += '<div class="card card--tight">' +
-    '<div class="hb"><div><div class="row-title">想多玩一会儿</div>' +
-    '<div class="row-sub">不用攒卡，也不用先表现好</div></div>' +
-    '<button class="btn btn--sm" id="kAskOt">申请加时</button></div>' +
-    '<hr class="rule" style="margin:12px 0">' +
-    '<div class="hb"><div><div class="row-title">这题我不会</div>' +
-    '<div class="row-sub">说清楚卡在哪一步，核实后 +1 星尘</div></div>' +
-    '<button class="btn btn--sm line" id="kAskHelp">说一声</button></div></div>';
-
   h += '<div class="card" style="padding:0;overflow:hidden">' +
     '<div class="hb" style="padding:13px;cursor:pointer" id="kAvRow">' +
     ic('i-palette', 20, 'var(--orange)') +
@@ -1753,7 +1778,7 @@ async function kScreenAtlas() {
   const have = cat.items.filter(x => x.owned > 0).length;
 
   let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="mine">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('atlas') + '">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
     '<span class="appbar-grow"><div class="appbar-title">图鉴</div>' +
     '<div class="appbar-sub">已收集 ' + num(have) + ' / ' + num(cat.items.length) +
     ' 张 · 卡不卖，只能开箱开出</div></span></div>';
@@ -1816,7 +1841,7 @@ async function kScreenFamily() {
   const hist = (cyc && cyc.history) || [];
 
   let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="mine">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('family') + '">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
     '<span class="appbar-grow"><div class="appbar-title">家庭</div>' +
     '<div class="appbar-sub">' + num(S.members.length) + ' 口人</div></span></div>';
 

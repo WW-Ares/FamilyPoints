@@ -325,6 +325,10 @@ body.grown .avatar--parent { background: #FFD9A8; box-shadow: inset 0 0 0 6px rg
 
 /* ------------------------------------------------------------------ 输入 */
 body.grown .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 0; }
+/* .field 是 display:flex，作者样式压得过浏览器给 [hidden] 的 display:none，
+   于是 hidden 属性悄悄失效。发布页「派给谁」那一格、写校准的「修复类型」
+   都靠它切换显隐，这里统一兜住。 */
+body.grown [hidden] { display: none !important; }
 body.grown .field-label,
 body.grown .field label { font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2); margin-bottom: 0; display: block; }
 body.grown .field-box {
@@ -412,6 +416,17 @@ body.grown .footnote {
   display: flex; align-items: center; justify-content: center; gap: 5px; text-align: center;
 }
 body.grown .footnote--left { text-align: left; justify-content: flex-start; }
+/* 「我的」页脚：软件名与版本号一行，仓库地址一行，都居中。
+   这一页原本没有版本号，它挂在设置弹层最底下，而设置又套在「更多」弹层里 ——
+   出问题要找「跑的是哪一版」的时候，先记得它在哪儿。 */
+body.grown .p-about {
+  margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+body.grown .p-about-line {
+  font-size: calc(9 * var(--u-sm)); line-height: 1.5; color: var(--ink-3);
+  text-align: center;
+}
+body.grown .p-about-link { text-decoration: underline; text-underline-offset: 2px; }
 
 /* ------------------------------------------------------------------ 图标 */
 body.grown .ico { display: block; flex: none; }

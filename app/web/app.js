@@ -16,6 +16,9 @@ function num(v) {
 const S = {
   me: null, isParent: false, members: [], target: null,
   view: 'week', day: null, data: {}, score: {}, pin: {},
+  // 二级页「来路」：哪一屏把我送到这儿来的。返回按钮按它走，
+  // 写死目标的话「我的 → 成长报告 → 返回」会掉到首页去。见 child.js 的 kBack。
+  from: {},
   // 打分页底部那张月度统计看的是哪个月（'YYYY-MM'）。空着就跟着 S.day 走，
   // 切了月份之后不再被选日期带着跑，否则点一个上月的格子月份会跟着跳。
   month: null,
@@ -381,6 +384,7 @@ const P_TAB_OF = {
   score: 'score', month: 'score', history: 'score',
   publish: 'publish',
   me: 'me', chest: 'me', shop: 'me', family: 'me', wish: 'me', kid: 'me',
+  settings: 'me',
 };
 function pValid(v) { return !!(v && P_TAB_OF[v]); }
 
@@ -1139,7 +1143,7 @@ async function render() {
         home: renderAdminHome, review: renderAdminReview, publish: renderAdminPublish,
         score: renderAdminScore, month: renderAdminMonth, me: renderAdminMe,
         logs: renderAdminLogs, chest: renderParentChest, shop: renderParentShop,
-        family: renderFamily, wish: renderParentWish,
+        family: renderFamily, wish: renderParentWish, settings: renderAdminSettings,
         kid: renderKidDetail, history: renderKidHistory,
       };
       await (P[S.view] || renderAdminHome)(v);
@@ -2934,13 +2938,13 @@ async function renderAdminHome(v) {
    交付包里「我的」只有一行「设置」，但家长真正要用的入口不止一个
    （通知、假期日历、家人账号、备份）。收在一处，不进底栏。 */
 function pMoreSheet() {
+  // 「发星星时刻」「发一个任务」「记一次校准」原在这儿，各自挪走了：
+  // 星星时刻的正经入口在打分页（「今天有额外表现」），发任务并进发布页的
+  // 「写任务」（那儿能选派给谁，也能配图，比这儿全），校准变成发布页第三格。
+  // 留着就是同一件事三个入口，改了一处另两处不动。
   const rows = [
-    ['i-gear', '设置', '价格门槛额度，改完就生效', 'settings'],
     ['i-bell', '通知与推送', '哪些事推到你手机上', 'push'],
     ['i-log-system', '假期日历', '填一次管一年', 'holiday'],
-    ['i-card-a', '发星星时刻', '写一句具体的话，加 1 分', 'explore'],
-    ['i-task-flag', '发一个任务', '写清完成标准', 'task'],
-    ['i-fix', '记一次校准', '承担后果，不是罚', 'calib'],
     ['i-chevron-right-dead', '备份与导出', '数据库快照', 'ops'],
   ];
   let h = '<h3>更多</h3><div class="card card--tight" style="padding:6px">' +
@@ -3326,6 +3330,26 @@ function pPubRewards() {
       '" data-d="' + o[2] + '">' + esc(o[1]) + '</button>').join('') + '</div></div>';
 }
 
+/* 「写校准」这一格用的几张表。校准原来是一层弹窗，现在它是发布胶囊的第三格。 */
+const CALIB_TPL = [
+  ['apology', '道歉修复（24 小时）'],
+  ['redo', '行为重做（当天）'],
+  ['goods', '实物修复（48 小时）'],
+  ['relation', '关系补偿（48 小时）'],
+];
+const CALIB_HINT = {
+  task: '让他去做一件弥补的事，做完由你点确认。',
+  fine: '罚的钱进家庭许愿池，不进任何人的口袋。',
+  ticket_min: '从这一轮的娱乐时间里扣，不是扣以后。',
+  none: '只留一条记录，不动分也不动钱。',
+};
+/* 三档定在哪一层。原来写死 level 3（契约校准），界面上一个旋钮都不给；
+   但规则表里「挂一条修复任务」是第 2 层（联动校准），只有违约罚金才是第 3 层 ——
+   一律记成 3，记录跟真正做的事对不上。
+   这个字段只写不读：报告不看、统计不看、界面上也不显示。所以也不该做成一个
+   选了却什么都不改变的旋钮。按家长选的处理方式自动定档，家长一道题都不用多答。 */
+const CALIB_LEVEL = { task: 2, fine: 3, ticket_min: 3, none: 1 };
+
 async function renderAdminPublish(v) {
   const seg = P_PUBSEG;
   const all = await pg('/api/tasks', { items: [] });
@@ -3335,6 +3359,8 @@ async function renderAdminPublish(v) {
   h += '<div class="seg">' +
     '<button type="button" class="seg-item' + (seg === 'new' ? ' on' : '') +
     '" data-pseg="new">写任务</button>' +
+    '<button type="button" class="seg-item' + (seg === 'calib' ? ' on' : '') +
+    '" data-pseg="calib">写校准</button>' +
     '<button type="button" class="seg-item' + (seg === 'mine' ? ' on' : '') +
     '" data-pseg="mine">我发出的 ' + mine.length + '</button></div>';
 
@@ -3352,7 +3378,21 @@ async function renderAdminPublish(v) {
       '<div class="field" id="pAmtBox"><span class="field-label">数量</span>' +
       '<input id="pAmt" type="number" value="5" min="1"></div>' +
       '<p class="caption">星尘一周合计不超过 20 · 宝箱只发到银箱 · 稀有卡不发</p>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      iconField('pIcon', '', 'task', '配一张图') +
+      '<p class="caption">他在大厅里先看见的就是这张图。不挑也行，系统会按类型给默认的。</p>' +
+      '</div>';
+
+    // 给谁。原来「直接派给某个孩子」只躲在我的 → 更多 → 发一个任务那条路上，
+    // 比挂大厅深两层，于是几乎没人走；那条路撤掉之后，这个开关就是它的替代。
+    h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
+      '<div class="field" style="gap:7px"><span class="field-label">给谁</span>' +
+      '<div class="chips">' +
+      '<button type="button" class="chip on" data-to="hall">挂大厅，谁都能接</button>' +
+      '<button type="button" class="chip" data-to="kid">派给一个孩子</button></div>' +
+      '<div class="field" id="pKidBox" hidden><span class="field-label">哪一个</span>' +
+      '<select id="pKid">' + KIDS().map(m => '<option value="' + m.id + '">' +
+      esc(m.name) + '</option>').join('') + '</select></div></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="pHallOnly">' +
       '<div class="field" style="gap:7px"><span class="field-label">接取</span>' +
       '<div class="chips">' +
       '<button type="button" class="chip on" data-s="1">单人</button>' +
@@ -3364,10 +3404,35 @@ async function renderAdminPublish(v) {
       '</div></div>';
 
     h += '<button class="btn btn--primary btn--block" id="pSend">发出去</button>' +
-      '<p class="footnote">发出去就挂进任务大厅 · 时限内没人接会自动下线，不罚任何人</p>';
+      '<p class="footnote">挂出去就进任务大厅 · 时限内没人接会自动下线，不罚任何人</p>';
 
     v.innerHTML = h;
     bindPublishForm();
+  } else if (seg === 'calib') {
+    h += '<p class="caption" style="margin-top:2px">校准是让他承担后果，不是罚得越重越好。' +
+      '选「挂一条修复任务」的，系统会自己把修复清单挂到他的任务上，做完由你确认。</p>';
+    h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
+      '<div class="field"><span class="field-label">谁的事</span>' +
+      '<select id="cKid">' + KIDS().map(m => '<option value="' + m.id + '">' +
+      esc(m.name) + '</option>').join('') + '</select></div>' +
+      '<div class="field"><span class="field-label">哪件事</span>' +
+      '<input id="cWhy" placeholder="例如：说好 8 点回家，9 点半才回"></div>' +
+      '<div class="field" style="gap:7px"><span class="field-label">怎么处理</span>' +
+      '<div class="chips">' +
+      '<button type="button" class="chip on" data-ce="task">挂一条修复任务</button>' +
+      '<button type="button" class="chip" data-ce="fine">罚款（进许愿池）</button>' +
+      '<button type="button" class="chip" data-ce="ticket_min">扣娱乐时间</button>' +
+      '<button type="button" class="chip" data-ce="none">只记下来</button></div>' +
+      '<p class="caption" id="cHint">' + esc(CALIB_HINT.task) + '</p></div>' +
+      '<div class="field" id="cTplBox"><span class="field-label">修复类型</span>' +
+      '<select id="cTpl">' + CALIB_TPL.map(t => '<option value="' + t[0] + '">' +
+      esc(t[1]) + '</option>').join('') + '</select></div>' +
+      '</div>' +
+      '<button class="btn btn--primary btn--block" id="cGo">记下来</button>' +
+      '<p class="footnote">金额、扣几分钟、负库存下限都在设置「校准与钱」那一组里，' +
+      '四条红线改不了。</p>';
+    v.innerHTML = h;
+    bindCalibForm();
   } else {
     const t = await pTasksHTML();
     h += t.h;
@@ -3383,6 +3448,11 @@ async function renderAdminPublish(v) {
 
 function bindPublishForm() {
   let rt = 'stardust', defaultAmt = 5, slots = 1, dl = 1;
+  let to = 'hall';   // hall = 挂大厅谁都能接；kid = 直接派给某个孩子
+  // 选图面板是一次事件委托绑在祖先上，而 #view 这个容器不会重画，
+  // 每渲染一次发布页就绑一次，第五次点下去会同时开合五个盒子。
+  const view = $('#view');
+  if (!view.dataset.ipBound) { bindIconField(view); view.dataset.ipBound = '1'; }
   $$('#view .chip[data-r]').forEach(c => c.addEventListener('click', () => {
     rt = c.dataset.r;
     defaultAmt = +c.dataset.d;
@@ -3391,6 +3461,13 @@ function bindPublishForm() {
     $('#pAmt').value = defaultAmt;
     // 银箱是整档的，填数量没有意义
     $('#pAmtBox').style.display = rt === 'box' ? 'none' : '';
+  }));
+  $$('#view .chip[data-to]').forEach(c => c.addEventListener('click', () => {
+    to = c.dataset.to;
+    $$('#view .chip[data-to]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    // 派给某个孩子之后，没有「谁能来领」和「多久没人领就下线」这两问
+    $('#pKidBox').hidden = to !== 'kid';
+    $('#pHallOnly').style.display = to === 'kid' ? 'none' : '';
   }));
   $$('#view .chip[data-s]').forEach(c => c.addEventListener('click', () => {
     slots = +c.dataset.s;
@@ -3406,13 +3483,47 @@ function bindPublishForm() {
     const amt = +$('#pAmt').value;
     const reward = rt === 'stardust' || rt === 'energy' ? { amount: amt } :
       rt === 'ticket' ? { code: 'ticket_fun', qty: amt } : { tier: 3 };
+    const body = {
+      title: title, std: std, reward_type: rt, reward: reward,
+      icon: ($('#pIcon') || {}).value || '',
+    };
+    if (to === 'hall') {
+      body.open_to_all = true; body.slots = slots;
+      body.deadline = dl === 1 ? todayStr() : shiftDay(todayStr(), 1);
+    } else {
+      body.assignee_id = +$('#pKid').value;
+    }
     try {
-      await api('POST', '/api/tasks', {
-        title: title, std: std, reward_type: rt, reward: reward,
-        open_to_all: true, slots: slots,
-        deadline: dl === 1 ? todayStr() : shiftDay(todayStr(), 1),
+      await api('POST', '/api/tasks', body);
+      const who = KIDS().filter(m => m.id === +$('#pKid').value)[0];
+      toast(to === 'hall' ? '挂到大厅了' : '派给' + (who ? who.name : '') + '了');
+      P_PUBSEG = 'mine';
+      await render();
+    } catch (e) { err(e); }
+  });
+}
+
+/* 发布胶囊第三格「写校准」的表单。原来是一层弹窗，现在摊平在这一屏。
+   level 不再写死 3，按选的处理方式从 CALIB_LEVEL 取，理由写在那个常数上。 */
+function bindCalibForm() {
+  let eff = 'task';
+  const hint = $('#cHint'), tplBox = $('#cTplBox'), go = $('#cGo');
+  $$('#view .chip[data-ce]').forEach(c => c.addEventListener('click', () => {
+    eff = c.dataset.ce;
+    $$('#view .chip[data-ce]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    if (hint) hint.textContent = CALIB_HINT[eff] || '';
+    if (tplBox) tplBox.hidden = eff !== 'task';
+    if (go) go.textContent = eff === 'fine' ? '罚款并入许愿池' : '记下来';
+  }));
+  $('#cGo').addEventListener('click', async () => {
+    const reason = $('#cWhy').value.trim();
+    if (!reason) return err({ message: '写清楚是哪件事，空着记不下来' });
+    try {
+      const r = await api('POST', '/api/calibration', {
+        member_id: +$('#cKid').value, level: CALIB_LEVEL[eff] || 1, reason: reason,
+        effect_type: eff, template: ($('#cTpl') || {}).value || 'apology',
       });
-      toast('发出去了');
+      toast(r.task_id ? '记下了，修复任务已进他的清单' : '记下了');
       P_PUBSEG = 'mine';
       await render();
     } catch (e) { err(e); }
@@ -4261,12 +4372,24 @@ async function renderAdminMe(v) {
       '<div class="row-body"><span class="row-title">' + esc(r[1]) + '</span>' +
       '<span class="row-sub">' + esc(r[2]) + '</span></div>' +
       '<span class="chev">›</span></div>').join('') +
-    '<div class="row" data-act="more">' + pic('i-gear', 20) +
+    '<div class="row" data-go="settings">' + pic('i-gear', 20) +
     '<div class="row-body"><span class="row-title">设置</span>' +
-    '<span class="row-sub">家人账号 · 维度 · 推送 · 换图</span></div>' +
+    '<span class="row-sub">价格 · 门槛 · 额度，改完就生效</span></div>' +
+    '<span class="chev">›</span></div>' +
+    '<div class="row" data-act="more">' + pic('i-log-system', 20) +
+    '<div class="row-body"><span class="row-title">更多</span>' +
+    '<span class="row-sub">推送 · 假期 · 备份 · 家人账号</span></div>' +
     '<span class="chev">›</span></div></div></div>';
 
   h += '<button class="btn btn--block btn--quiet" id="pLogout">退出登录</button>';
+
+  // 版本号与仓库地址。原来挂在设置页最底下，那一页又套在两层弹层里，
+  // 出问题要找「跑的是哪一版」时得先记得它在哪儿。挪到「我的」页脚，
+  // 不用翻菜单。
+  h += '<div class="p-about">' +
+    '<div class="p-about-line">家庭积分 v' + esc(S.data.version || '') + '</div>' +
+    '<a class="p-about-line p-about-link" href="https://github.com/WW-Ares/FamilyPoints"' +
+    ' target="_blank" rel="noopener">github.com/WW-Ares/FamilyPoints</a></div>';
 
   v.innerHTML = h;
   $$('#view [data-go]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.go)));
@@ -4596,11 +4719,10 @@ async function logoutNow() {
 /* ------------------------------------------------------------------ 家长操作面板 */
 function openQA(k) {
   if (k === 'explore') return exploreSheet();
-  if (k === 'calib') return calibSheet();
-  if (k === 'task') return taskSheet();
   if (k === 'wish') return wishSheet();
   if (k === 'holiday') return holidaySheet();
-  if (k === 'settings') return settingsSheet();
+  // 设置不再是弹层：13 组 90 项压在一层弹窗里翻不完，改成独立页，还能返回。
+  if (k === 'settings') return pGo('settings');
   if (k === 'push') return pushSheet();
   if (k === 'ops') return opsSheet();
   if (k === 'settleAll') {
@@ -4648,94 +4770,6 @@ function exploreSheet() {
       });
     });
 }
-
-function calibSheet() {
-  sheet('<h3>记一次校准</h3><p class="muted">校准是让他承担后果，不是罚得越重越好。凡是「他需要去做一件事」的，系统会自己挂一条修复任务到清单上，做完由你确认。</p>' +
-    kidPicker('kid') +
-    '<div class="field"><label>哪件事</label><input id="rs" placeholder="例如：说好 8 点回家，9 点半才回"></div>' +
-    '<div class="field"><label>怎么处理</label><div class="chips">' +
-    '<button type="button" class="chip on" data-e="task">挂一条修复任务</button>' +
-    '<button type="button" class="chip" data-e="fine">罚款 5 元</button>' +
-    '<button type="button" class="chip" data-e="ticket_min">扣 30 分钟</button>' +
-    '<button type="button" class="chip" data-e="none">只记下来</button></div></div>' +
-    '<div class="field" id="tplWrap"><label>修复类型</label><select id="tpl">' +
-    '<option value="apology">道歉修复（24 小时）</option>' +
-    '<option value="redo">行为重做（当天）</option>' +
-    '<option value="goods">实物修复（48 小时）</option>' +
-    '<option value="relation">关系补偿（48 小时）</option></select></div>' +
-    '<button class="btn wide" id="go">记下来</button>', box => {
-      let eff = 'task';
-      $$('.chip', box).forEach(c => c.addEventListener('click', () => {
-        eff = c.dataset.e; $$('.chip', box).forEach(x => x.classList.remove('on')); c.classList.add('on');
-        $('#tplWrap', box).style.display = eff === 'task' ? '' : 'none';
-        $('#go', box).textContent = eff === 'fine' ? '罚款 5 元并入许愿池' : '记下来';
-      }));
-      $('#go', box).addEventListener('click', async () => {
-        try {
-          const r = await api('POST', '/api/calibration', {
-            member_id: +$('#kid', box).value, level: 3, reason: $('#rs', box).value,
-            effect_type: eff, template: $('#tpl', box).value,
-          });
-          closeSheet();
-          toast(r.task_id ? '记下了，修复任务已进他的清单' : '记下了');
-          await render();
-        } catch (e) { err(e); }
-      });
-    });
-}
-
-function taskSheet(toHall) {
-  sheet('<h3>' + (toHall ? '挂一个任务到大厅' : '发一个任务') + '</h3>' +
-    '<p class="muted">完成标准要能一眼核对。家务、卫生、吃饭不在任务里，那些本来就在每天的分里。</p>' +
-    (toHall
-      ? '<div class="field"><label>谁能领</label><div class="chips">' +
-        '<button type="button" class="chip on" data-s="1">只能一个人接</button>' +
-        '<button type="button" class="chip" data-s="0">每个孩子各一份</button></div>' +
-        '<div class="muted" style="margin-top:5px">先到先得的被别人领走就看不见了；' +
-        '每人一份的会一直挂着，谁都能领自己那份。</div></div>'
-      : kidPicker('kid')) +
-    '<div class="field"><label>做什么</label><input id="ti" placeholder="例如：整理书架"></div>' +
-    '<div class="field"><label>怎么算做完</label><textarea id="st" placeholder="例如：三层都归位，家长只看结果不动手"></textarea></div>' +
-    '<div class="field"><label>给什么</label><div class="chips">' +
-    '<button type="button" class="chip on" data-r="stardust">星尘</button>' +
-    '<button type="button" class="chip" data-r="energy">周能量</button>' +
-    '<button type="button" class="chip" data-r="ticket">娱乐券</button>' +
-    '<button type="button" class="chip" data-r="box">银箱</button></div></div>' +
-    '<div class="field"><label>数量</label><input id="am" type="number" value="5" min="1"></div>' +
-    iconField('tkIcon', '', 'task', '配一张图') +
-    '<div class="muted" style="margin-top:-4px">孩子看到的就是这张图。不挑也行，会用一个默认的。</div>' +
-    '<button class="btn wide" id="go">发出去</button>', box => {
-      bindIconField(box);
-      let rt = 'stardust', slots = 1;
-      $$('.chip[data-r]', box).forEach(c => c.addEventListener('click', () => {
-        rt = c.dataset.r; $$('.chip[data-r]', box).forEach(x => x.classList.remove('on')); c.classList.add('on');
-        $('#am', box).value = { stardust: 5, energy: 1, ticket: 1, box: 3 }[rt];
-        $('#am', box).parentNode.style.display = rt === 'box' ? 'none' : '';
-      }));
-      $$('.chip[data-s]', box).forEach(c => c.addEventListener('click', () => {
-        slots = +c.dataset.s;
-        $$('.chip[data-s]', box).forEach(x => x.classList.remove('on')); c.classList.add('on');
-      }));
-      $('#go', box).addEventListener('click', async () => {
-        const amt = +$('#am', box).value;
-        const reward = rt === 'stardust' ? { amount: amt } :
-          rt === 'energy' ? { amount: amt } :
-            rt === 'ticket' ? { code: 'ticket_fun', qty: amt } : { tier: 3 };
-        const body = {
-          title: $('#ti', box).value, std: $('#st', box).value,
-          reward_type: rt, reward: reward,
-        };
-        if (toHall) { body.open_to_all = true; body.slots = slots; }
-        else { body.assignee_id = +$('#kid', box).value; }
-        body.icon = ($('#tkIcon', box) || {}).value || '';
-        try {
-          await api('POST', '/api/tasks', body);
-          closeSheet(); toast(toHall ? '挂上去了' : '发出去了'); await render();
-        } catch (e) { err(e); }
-      });
-    });
-}
-
 /* 条件表单：七选一 + 对应的输入区。孩子许愿那条和家长直接建那条共用这一份，
    两处各写一遍迟早会漂。`wish` 非空就是「给这条挂起的定条件」。
 
@@ -5184,7 +5218,30 @@ const GRP_NOTE = {
     '星尘、称号、守护灵永久。',
 };
 
-async function settingsSheet() {
+/* ---------------------------------------------------------------- 设置页 */
+/* 原来 90 项按 grp 一股脑压在一层弹窗里，两个毛病：
+   ① 顺序是乱的。接口 ORDER BY grp（`api/auth.py`），SQLite 对中文按 UTF-8
+      字节序排，于是「周期」排第 4、「成员与打分」排第 7，中间还夹着一条改不得的
+      四条红线。组本身没有排序键，接口只能拿组名当排序用。
+   ② 一屏摊 90 项，家长找不到要改的那个数。
+   改成分两级：先按七件事列组（带项数），点进去才看见这一组的项。
+   下面这张表兼任顺序 —— 组的次序不再由汉字决定，也不动任何一个 key、一个默认值，
+   所以库不用迁移。 */
+const GRP_TREE = [
+  { n: '每天的七分', sub: '满分、维度、星探、修正窗口、求助、忘打卡', grps: ['成员与打分'] },
+  { n: '周期与假期', sub: '一周从哪天起、多长、假期模式与顺延', grps: ['周期', '假期'] },
+  { n: '任务与心愿', sub: '奖励上限、自动确认、心愿单件数', grps: ['两套系统'] },
+  { n: '奖励与道具', sub: '娱乐券、加时、卡到期、七档门槛、等级表',
+    grps: ['券与道具', '宝箱', '星球等级'] },
+  { n: '校准与钱', sub: '后果怎么落地、罚款与扣分钟、星尘兑零花钱、许愿池',
+    grps: ['校准与修复', '汇率与基金'] },
+  { n: '红线与运维', sub: '四条改不得的规则、快照保留、双人确认',
+    grps: ['四条红线', '运维与权限'] },
+  { n: '通知与推送', sub: '提醒时间、Bark、免打扰', grps: ['通知', '通知与推送'] },
+];
+let P_SETGRP = '';   // 空 = 一级（列七组）；非空 = 正在看这一组
+
+async function renderAdminSettings(v) {
   const d = await api('GET', '/api/settings');
   // 双人确认默认关，所以这里平时是空的。开了之后必须有地方能点「同意」，
   // 否则提改动那个人会一直等一个永远不来的确认 —— 那不是谨慎，是死锁。
@@ -5192,9 +5249,18 @@ async function settingsSheet() {
     for (const g of d.groups) for (const it of g.items) if (it.key === k) return it.label;
     return k;
   };
-  let h = '<h3>设置</h3><p class="muted">改价格、门槛、额度改完立刻生效，不用重新部署。' +
-    '默认一个人改就算；打开「设置变更双人确认」之后才要另一位家长点一下。</p>';
-  if (d.pending.length) {
+  const node = P_SETGRP ? GRP_TREE.filter(x => x.n === P_SETGRP)[0] : null;
+
+  // 二级页的返回不走 pGo：两级共用同一个 S.view，这里只是把分组状态清掉重画。
+  // 走 pGo('settings') 会因为目标就是当前屏而被判成「重画」，状态留在原地。
+  let h = node
+    ? '<div class="page-head"><div style="display:flex;align-items:center;gap:10px;min-width:0">' +
+      '<button class="back-btn" type="button" id="pSetBack">' + pic('i-back', 18) + '</button>' +
+      '<div class="left"><span class="heading-page">' + esc(node.n) + '</span>' +
+      '<span class="caption--warm">' + esc(node.sub) + '</span></div></div></div>'
+    : pHead({ title: '设置', back: 'me', sub: '改完立刻生效，不用重新部署' });
+
+  if (d.pending.length && !node) {
     h += '<div class="sec"><div class="sec-h"><h2>等着确认的改动</h2>' +
       '<span class="sub">' + d.pending.length + ' 项</span></div><div class="card">' +
       d.pending.map(x => {
@@ -5207,74 +5273,100 @@ async function settingsSheet() {
           (mine ? '' : '<button class="btn sm" data-ap="' + x.id + '">同意</button>') + '</div>';
       }).join('') + '</div></div>';
   }
-  d.groups.forEach(g => {
-    h += '<div class="sec"><div class="sec-h"><h2>' + esc(g.grp) + '</h2></div>';
-    if (GRP_NOTE[g.grp]) {
-      h += '<div class="notice info" style="margin:0 0 8px">' + esc(GRP_NOTE[g.grp]) + '</div>';
-    }
-    h += '<div class="card">';
-    g.items.forEach(it => {
-      const val = typeof it.value === 'object' ? JSON.stringify(it.value) : it.value;
-      const ro = it.locked || !it.editable;
-      h += '<div class="item"><div class="txt"><div class="nm">' + esc(it.label) +
-        (it.locked ? ' <span class="tag warn">红线</span>' : '') + '</div>' +
-        '<div class="ds">' + esc(it.note) + '</div>' +
-        (ro ? '<div class="ds">当前：' + esc(String(val)) + '</div>' : '') + '</div>';
-      if (!ro) {
-        if (it.vtype === 'bool') {
-          h += '<button class="btn sm ' + (it.value ? '' : 'line') + '" data-set="' + it.key +
-            '" data-t="bool" data-v="' + (it.value ? '0' : '1') + '">' + (it.value ? '开' : '关') + '</button>';
-        } else if (it.vtype === 'json') {
-          h += '<span class="muted">' + (Array.isArray(it.value) ? it.value.length + ' 条' : 'JSON') + '</span>';
-        } else {
-          h += '<button class="btn sm line" data-edit="' + it.key + '" data-v="' + esc(String(val)) + '">' +
-            esc(String(val).slice(0, 10)) + '</button>';
-        }
+
+  if (!node) {
+    h += '<p class="caption">改哪一项都是立刻生效。默认一个人改就算；' +
+      '打开「设置变更双人确认」之后才要另一位家长点一下。</p>';
+    h += '<div class="card card--tight" style="padding:6px">' +
+      GRP_TREE.map(g => {
+        const n = d.groups.filter(x => g.grps.indexOf(x.grp) >= 0)
+          .reduce((a, x) => a + x.items.length, 0);
+        return '<div class="row" data-setgrp="' + esc(g.n) + '">' +
+          '<div class="row-body"><span class="row-title">' + esc(g.n) + '</span>' +
+          '<span class="row-sub">' + esc(g.sub) + '</span></div>' +
+          '<span class="sub">' + n + ' 项</span><span class="chev">›</span></div>';
+      }).join('') + '</div>';
+    h += '<button class="btn btn--block btn--quiet" id="iconBtn" style="margin-top:10px">' +
+      '给它们换张图</button>';
+  } else {
+    const gs = d.groups.filter(x => node.grps.indexOf(x.grp) >= 0);
+    gs.forEach(g => {
+      if (!g.items.length) return;
+      h += '<div class="sec"><div class="sec-h"><h2>' + esc(g.grp) + '</h2>' +
+        '<span class="sub">' + g.items.length + ' 项</span></div>';
+      if (GRP_NOTE[g.grp]) {
+        h += '<div class="notice info" style="margin:0 0 8px">' + esc(GRP_NOTE[g.grp]) + '</div>';
       }
-      h += '</div>';
+      h += '<div class="card">' + g.items.map(pSetItem).join('') + '</div></div>';
     });
-    h += '</div></div>';
-  });
-  h += '<button class="btn wide ghost" id="pinBtn" style="margin-top:12px">改我的密码</button>';
-  h += '<button class="btn wide ghost" id="iconBtn" style="margin-top:8px">给它们换张图</button>';
-  // 版本号和仓库地址落在设置页最底下：这一页就是这个 App 的「关于」，
-  // 出问题时要找的是「跑的是哪一版、代码在哪」。「我的」页原来那段一百八十字的
-  // 版本说明撤了 —— 那是在解释「这一版改了什么」，不是版本信息，看一次就够了。
-  h += '<p class="footnote" style="text-align:center;margin-top:16px">家庭积分 v' +
-    esc(S.data.version || '') + ' · github.com/WW-Ares/FamilyPoints</p>';
-  sheet(h, box => {
-    const ib = $('#iconBtn', box);
-    if (ib) ib.addEventListener('click', iconSheet);
-    $$('button[data-ap]', box).forEach(b => b.addEventListener('click', async () => {
-      try {
-        await api('POST', '/api/settings/changes/' + b.dataset.ap + '/approve', {});
-        toast('生效了'); settingsSheet();
-      } catch (e) { err(e); }
-    }));
-    $$('button[data-set]', box).forEach(b => b.addEventListener('click', async () => {
-      try {
-        const v = b.dataset.t === 'bool' ? (b.dataset.v === '1') : b.dataset.v;
-        const r = await api('POST', '/api/settings', { key: b.dataset.set, value: v });
-        toast(r.message); settingsSheet();
-      } catch (e) { err(e); }
-    }));
-    $$('button[data-edit]', box).forEach(b => b.addEventListener('click', () => {
-      const key = b.dataset.edit, cur = b.dataset.v;
-      sheet('<h3>改一个数</h3><div class="field"><label>' + esc(key) + '</label>' +
-        '<input id="nv" value="' + esc(cur) + '"></div><button class="btn wide" id="go">提交</button>',
-        b2 => {
-          $('#go', b2).addEventListener('click', async () => {
-            let v = $('#nv', b2).value;
-            if (/^-?\d+(\.\d+)?$/.test(v)) v = parseFloat(v);
-            try {
-              const r = await api('POST', '/api/settings', { key: key, value: v });
-              closeSheet(); toast(r.message); settingsSheet();
-            } catch (e) { err(e); }
-          });
-        });
-    }));
-    $('#pinBtn', box).addEventListener('click', changePwSheet);
-  });
+  }
+
+  v.innerHTML = h;
+  const ib = $('#iconBtn', v);
+  if (ib) ib.addEventListener('click', iconSheet);
+  $$('#view [data-back]').forEach(b2 => b2.addEventListener('click', () => pGo(b2.dataset.back)));
+  const bk = $('#pSetBack', v);
+  if (bk) bk.addEventListener('click', () => { P_SETGRP = ''; render(); });
+  $$('#view [data-setgrp]').forEach(el => el.addEventListener('click', () => {
+    P_SETGRP = el.dataset.setgrp; render();
+  }));
+  $$('#view button[data-ap]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      await api('POST', '/api/settings/changes/' + b.dataset.ap + '/approve', {});
+      toast('生效了'); render();
+    } catch (e) { err(e); }
+  }));
+  $$('#view button[data-set]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      const val = b.dataset.t === 'bool' ? (b.dataset.v === '1') : b.dataset.v;
+      const r = await api('POST', '/api/settings', { key: b.dataset.set, value: val });
+      toast(r.message); render();
+    } catch (e) { err(e); }
+  }));
+  $$('#view button[data-edit]').forEach(b => b.addEventListener('click', () => {
+    const key = b.dataset.edit, cur = b.dataset.v;
+    pEditSheet(key, cur, () => render());
+  }));
+}
+
+function pSetItem(it) {
+  const val = typeof it.value === 'object' ? JSON.stringify(it.value) : it.value;
+  const ro = it.locked || !it.editable;
+  let h = '<div class="item"><div class="txt"><div class="nm">' + esc(it.label) +
+    (it.locked ? ' <span class="tag warn">红线</span>' : '') + '</div>' +
+    '<div class="ds">' + esc(it.note) + '</div>' +
+    (ro ? '<div class="ds">当前：' + esc(String(val)) + '</div>' : '') + '</div>';
+  if (!ro) {
+    if (it.vtype === 'bool') {
+      h += '<button class="btn sm ' + (it.value ? '' : 'line') + '" data-set="' + it.key +
+        '" data-t="bool" data-v="' + (it.value ? '0' : '1') + '">' + (it.value ? '开' : '关') +
+        '</button>';
+    } else if (it.vtype === 'json') {
+      h += '<span class="muted">' + (Array.isArray(it.value) ? it.value.length + ' 条' : 'JSON') +
+        '</span>';
+    } else {
+      h += '<button class="btn sm line" data-edit="' + it.key + '" data-v="' + esc(String(val)) +
+        '">' + esc(String(val).slice(0, 10)) + '</button>';
+    }
+  }
+  return h + '</div>';
+}
+
+/* 改一个数。原来写在设置弹层的回调里，现在弹层与页面都要用它，
+   抽出来 —— 两处各写一遍，改数值的地方迟早会对不上。 */
+function pEditSheet(key, cur, after) {
+  sheet('<h3>改一个数</h3><div class="field"><label>' + esc(key) + '</label>' +
+    '<input id="nv" value="' + esc(cur) + '"></div><button class="btn wide" id="go">提交</button>',
+    b2 => {
+      $('#go', b2).addEventListener('click', async () => {
+        let val = $('#nv', b2).value;
+        if (/^-?\d+(\.\d+)?$/.test(val)) val = parseFloat(val);
+        try {
+          const r = await api('POST', '/api/settings', { key: key, value: val });
+          closeSheet(); toast(r.message); after();
+        } catch (e) { err(e); }
+      });
+    });
 }
 
 /* ---------------------------------------------------------------- 通知与推送 */

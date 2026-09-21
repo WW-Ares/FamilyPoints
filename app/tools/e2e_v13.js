@@ -298,6 +298,35 @@ async function walkTabs(page, tag) {
     await page.screenshot({ path: path.join(SHOT, 'kid-' + v + '.png'), fullPage: true });
   }
 
+  /* v40：「有事就说」那两条从「我的」搬走 —— 申请加时挪到券包（它延长的就是
+     下面那张券），「这题我不会」挪到首页（写作业的时候开的就是这一屏）。
+     原来两块叠在「我的」最下面，要翻两屏才找得到，等于把唯一的正经通道埋起来。 */
+  if (kidView.home.indexOf('这题我不会') < 0) bad('[v40] 首页没有「这题我不会」');
+  if (kidView.coupon.indexOf('想多玩一会儿') < 0) bad('[v40] 券包没有「想多玩一会儿」');
+  if (kidView.mine.indexOf('想多玩一会儿') >= 0 || kidView.mine.indexOf('这题我不会') >= 0) {
+    bad('[v40] 「我的」里还留着那两条入口');
+  }
+  await kidGo('home');
+  if (!(await page.locator('#view #kAskHelp').count())) bad('[v40] 首页的「说一声」按钮不在');
+  await kidGo('coupon');
+  if (!(await page.locator('#view #kAskOt').count())) bad('[v40] 券包的「申请加时」按钮不在');
+
+  /* v40：二级页返回要回「从哪进的」，不能写死一个目标。
+     原来成长报告的返回写死 data-go="home"，于是「我的 → 成长报告 → 返回」
+     掉回首页。这里两条路各走一遍：从我的进去退回我的，从首页进去退回首页。
+     必须真点入口进去 —— kidGo 直接改 location.hash，来路是空的。 */
+  for (const [from, mark] of [['mine', '头像与皮肤'], ['home', '这一周的七分']]) {
+    await kidGo(from);
+    await clickSel(page, '#view [data-go="report"]', from + ' → 成长报告');
+    const inRep = await kidText();
+    if (inRep.indexOf('成长报告') < 0) bad('[v40] 从「' + from + '」点不进成长报告');
+    await clickSel(page, '#view .appbar-back', '成长报告 返回');
+    const backTxt = await kidText();
+    if (backTxt.indexOf(mark) < 0) {
+      bad('[v40] 从「' + from + '」进成长报告，返回没回到「' + from + '」：' + backTxt.slice(0, 40));
+    }
+  }
+
   // 首页：今天几分、多少星尘、这一周的七分、要做的事
   await kidGo('home');
   const kHome = kidView.home;
@@ -1069,6 +1098,43 @@ async function walkTabs(page, tag) {
   }
   await page.screenshot({ path: path.join(SHOT, 'dad-score-history.png'), fullPage: true });
 
+  /* v40：发布页顶部胶囊从两格变三格 —— 写任务 / 写校准 / 我发出的 N。
+     「记一次校准」原来躲在「我的 → 更多」那层弹窗里，比发布深两层；
+     「发一个任务」原本也挂在「我的 → 更多」，它能做的两件事（派给某个孩子 +
+     给任务配图）现在并进「写任务」，所以那一条整个撤掉。 */
+  await tabTo(page, '发布');
+  await page.waitForTimeout(700);
+  const pubSeg = (await page.locator('#view .seg-item').allInnerTexts()).map(flat);
+  say('   发布胶囊: ' + pubSeg.join(' / '));
+  if (pubSeg.length !== 3) bad('[v40] 发布胶囊不是 3 格，是 ' + pubSeg.length);
+  if (pubSeg[1] !== '写校准') bad('[v40] 发布胶囊第二格不是「写校准」，是「' + pubSeg[1] + '」');
+  if (!/^我发出的\s*\d+$/.test(pubSeg[2] || '')) {
+    bad('[v40] 第三格没带件数写成「我发出的 N」，是「' + pubSeg[2] + '」');
+  }
+  await clickSel(page, '#view .seg-item[data-pseg="calib"]', '发布 → 写校准');
+  const calibTxt = flat(await page.locator('#view').innerText());
+  if (calibTxt.indexOf('怎么处理') < 0) bad('[v40] 「写校准」那一屏没有「怎么处理」');
+  if (!(await page.locator('#view #cKid').count())) bad('[v40] 「写校准」没有选孩子的下拉');
+  if (!(await page.locator('#view .chip[data-ce="fine"]').count())) {
+    bad('[v40] 「写校准」少了罚款那条处理方式');
+  }
+  // 写任务：挂大厅 / 派给某个孩子，两个开关要真的动态
+  await clickSel(page, '#view .seg-item[data-pseg="new"]', '发布 → 写任务');
+  if (!(await page.locator('#view .chip[data-to="kid"]').count())) {
+    bad('[v40] 「写任务」没有「派给一个孩子」这个开关');
+  }
+  if (!(await page.locator('#view #pIcon').count())) bad('[v40] 「写任务」没有配图那一格');
+  const kidHiddenBefore = await page.locator('#view #pKidBox:not([hidden])').count();
+  await page.locator('#view .chip[data-to="kid"]').click();
+  await page.waitForTimeout(500);
+  const kidShown = await page.locator('#view #pKidBox').count();
+  const hallShown = await page.locator('#view #pHallOnly').count();
+  say('   派给谁: 前 ' + kidHiddenBefore + ' -> 后 ' + kidShown + ' 可见，接取行还在 ' + hallShown);
+  if (!kidShown) bad('[v40] 选「派给一个孩子」之后没有出现选孩子的框');
+  if (await page.locator('#view [data-to="hall"].on').count()) {
+    bad('[v40] 选了「派给一个孩子」，还高亮着「挂大厅」');
+  }
+
   // 家长端「我发出的」活（原任务页）：三个分组 + 撤销的边界。
   // 换皮后它并进「发布」这个 tab 的第二个分段，不再单独占一格。
   await tabTo(page, '发布');
@@ -1336,28 +1402,79 @@ async function walkTabs(page, tag) {
   if (!pendSeen) bad('[v17] 演示库里没有挂起的心愿，这条路径没被验到');
   await page.screenshot({ path: path.join(SHOT, 'dad-wish-list.png'), fullPage: true });
 
-  // 家长端快捷弹层：换皮后它们收在「我的 → 设置」那一行里的小清单。
+  await tabTo(page, '我的');
+  await page.waitForTimeout(900);
+  /* v40：「我的」页最底下两行 —— 软件名与版本号一行、项目地址一行，都居中。
+     它们原来挂在设置弹层最底下，而设置又套在「更多」弹层里：出问题要找
+     「跑的是哪一版」时，得先记得它在哪儿。 */
+  const meFoot = flat(await page.locator('#view .p-about').innerText().catch(() => ''));
+  say('   「我的」页脚: ' + meFoot.slice(0, 40));
+  if (!/家庭积分\s*v\d/.test(meFoot)) bad('[v40] 「我的」页底没有软件名与版本号');
+  if (meFoot.indexOf('github.com/WW-Ares/FamilyPoints') < 0) {
+    bad('[v40] 「我的」页底没有项目地址');
+  }
+
+  /* v40：设置从弹层改成独立页，13 组收成 7 组并分两级 ——
+     先列七件事（带项数），点进去才看见这一组的项。
+     一级 >>> 二级 >>> 返回一级 >>> 返回「我的」，四步每一步都要落在正确的地方。 */
+  await clickSel(page, '#view [data-go="settings"]', '我的 → 设置');
+  const setTxt = await flat(await page.locator('#view').innerText());
+  const grpRows = await page.locator('#view [data-setgrp]').count();
+  say('   设置页一级: ' + grpRows + ' 组 | ' + setTxt.slice(0, 46));
+  if (grpRows !== 7) bad('[v40] 设置页一级不是 7 组，是 ' + grpRows);
+  for (const want of ['每天的七分', '周期与假期', '任务与心愿', '奖励与道具',
+    '校准与钱', '红线与运维', '通知与推送']) {
+    if (setTxt.indexOf(want) < 0) bad('[v40] 设置页一级缺组「' + want + '」');
+  }
+  // 每条红线都该还在，只是不再单独占一组
+  if (!(await page.locator('#view [data-setgrp="红线与运维"]').count())) {
+    bad('[v40] 找不到「红线与运维」这一组');
+  }
+  await clickSel(page, '#view [data-setgrp="校准与钱"]', '设置 → 校准与钱');
+  const subTxt = flat(await page.locator('#view').innerText());
+  const subItems = await page.locator('#view .item').count();
+  say('   设置页二级「校准与钱」: ' + subItems + ' 项');
+  if (subItems < 10) bad('[v40] 「校准与钱」这一组的项太少：' + subItems);
+  if (subTxt.indexOf('补差通道') >= 0) bad('[v40] 设置里还留着「补差通道」那条墓碑');
+  await clickSel(page, '#view #pSetBack', '设置二级 返回');
+  if ((await page.locator('#view [data-setgrp]').count()) !== 7) {
+    bad('[v40] 二级页返回没回到设置页一级');
+  }
+  await clickSel(page, '#view [data-back]', '设置 返回');
+  const backMe = flat(await page.locator('#view').innerText());
+  if (backMe.indexOf('退出登录') < 0) bad('[v40] 设置页返回没回到「我的」');
+
+  // 家长端快捷弹层：换皮后它们收在「我的 → 更多」那一行里的清单。
   say('');
   say('6. 家长端快捷弹层:');
   await tabTo(page, '我的');
   await page.waitForTimeout(700);
-  await clickSel(page, '#view [data-act="more"]', '我的 → 设置');
+  await clickSel(page, '#view [data-act="more"]', '我的 → 更多');
   // 先只把入口名字抄下来。别存 ElementHandle —— 每开一次弹层，弹层内的
   // 节点都会重画一遍，上一轮的句柄会变成「已脱离文档」，下一轮读它的
   // innerText 就一直等到超时。
   const labels = (await page.locator('#sheetBody [data-qa]').allInnerTexts())
     .map(t => flat(t).slice(0, 16));
-  say('   设置小清单: ' + labels.length + ' 个入口');
-  if (labels.length < 8) bad('[快捷入口] 家长端「设置」里的入口太少：' + labels.length);
+  say('   更多小清单: ' + labels.length + ' 个入口');
+  /* v40：这条清单从 8 条压到 5 条。设置成了独立页（搬到「我的」第一行），
+     「发星星时刻」的正经入口一直在打分页（「今天有额外表现」），
+     「发一个任务」与「记一次校准」挪进发布页（前者并进「写任务」，
+     后者是发布胶囊第三格）。同一件事留三个入口，改一处另两处必漂。 */
+  if (labels.length < 5) bad('[快捷入口] 家长端「更多」里的入口太少：' + labels.length);
+  for (const gone of ['发星星时刻', '发一个任务', '记一次校准', '设置']) {
+    if (labels.join('|').indexOf(gone) >= 0) {
+      bad('[v40] 「更多」里还留着已经挪走的「' + gone + '」');
+    }
+  }
   // 上面这一次已经把小清单开着了，先关掉：循环里每一轮自己重开，
-  // 不然第一轮去点「我的 → 设置」时会被还开着的弹层挡住。
+  // 不然第一轮去点「我的 → 更多」时会被还开着的弹层挡住。
   await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
   await page.waitForTimeout(320);
   for (let i = 0; i < labels.length; i++) {
     const label = labels[i];
     if (!label) continue;
     // 每点一次都要重新开小清单：点开一个入口会把它自己关掉
-    await clickSel(page, '#view [data-act="more"]', '我的 → 设置');
+    await clickSel(page, '#view [data-act="more"]', '我的 → 更多');
     const rows = page.locator('#sheetBody [data-qa]');
     if (i >= await rows.count()) break;
     await rows.nth(i).click();
