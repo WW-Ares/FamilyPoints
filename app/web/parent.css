@@ -347,9 +347,15 @@ body.grown .field input:focus, body.grown .field select:focus, body.grown .field
 body.grown .field textarea { min-height: 68px; resize: vertical; }
 
 /* ------------------------------------------------------------------ 月历 */
-body.grown .cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .cal-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 body.grown .cal-nav { display: flex; align-items: center; gap: 10px; }
-body.grown .cal-nav .month { font-size: calc(15 * var(--u)); font-weight: 700; color: var(--ink-title); font-family: var(--font-num); }
+/* 年月不用数字字体：那套字体里没有「年」「月」这两个字，会回退到另一个字族，
+   一行里中文和数字高低不齐；再被两侧箭头一挤就折成三行。
+   不换行是硬要求 —— 折成「2026 年 / 9 / 月」没人读得懂。 */
+body.grown .cal-nav .month {
+  font-size: calc(15 * var(--u)); font-weight: 700;
+  color: var(--ink-title); white-space: nowrap;
+}
 body.grown .cal-nav button {
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
   border-radius: 9px; border: 1px solid var(--card-line); background: #fff;
@@ -726,4 +732,61 @@ body.grown .dr-row .dr-v.no { color: var(--warn); }
   body.grown .nav-pill { height: calc(48 * var(--u)); padding: calc(4 * var(--u)); }
   body.grown .nav-item { gap: calc(2 * var(--u)); }
   body.grown .nav-item .ico { width: calc(19 * var(--u)); height: calc(19 * var(--u)); }
+}
+
+
+/* ------------------------------------------------- 家人账号 · 行拆三层 ----- */
+/* 原来头像、名字、账号、四颗按钮全挤在一条横线上：.wact 撑得很宽，把 .txt
+   挤到只剩几个字宽，名字被压成一字一行。账号位数只是让它更显眼 —— 短名一样
+   坏。拆成三层之后，长账号自己折行，压不到名字，也压不到按钮。 */
+body.grown .mem-row { flex-direction: column; align-items: stretch; gap: 7px; }
+body.grown .mem-line { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
+body.grown .mem-line .txt { flex: 1; min-width: 0; }
+body.grown .mem-line .nm { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+body.grown .mem-pw { flex: none; white-space: nowrap; font-size: calc(10.5 * var(--u)); }
+body.grown .mem-line--acc { padding-left: calc(44 * var(--u)); gap: 6px; }
+body.grown .mem-key { flex: none; font-size: calc(11 * var(--u)); color: var(--ink-3); }
+body.grown .mem-acc {
+  flex: 1; min-width: 0; font-size: calc(12 * var(--u));
+  color: var(--ink-2); word-break: break-all;
+}
+body.grown .mem-row .wact { margin-top: 0; }
+
+/* ------------------------------------------------- 发布页 · 胶囊 / 步进器 --- */
+/* 三格切换做成真胶囊：底衬是浅色圆角槽，选中那格橙底白字。
+   原来只给选中格加白底，三格之间没有底衬，看着像三个并排的按钮，
+   看不出「这是一组、只能选一个」。 */
+body.grown .seg--pill { gap: 3px; padding: 3px; border: 0; }
+body.grown .seg--pill .seg-item { border-radius: var(--r-pill); }
+body.grown .seg--pill .seg-item.on { background: var(--brand); color: #fff; box-shadow: none; }
+/* 「我发出的 18」那个数字做成小牌：数变了只换牌上的字，
+   不至于让整格宽度跟着变。 */
+body.grown .seg-n {
+  flex: none; min-width: 17px; padding: 0 5px; border-radius: 8px;
+  background: var(--brand-soft); color: var(--brand);
+  font-family: var(--font-num); font-size: calc(10 * var(--u)); font-weight: 700;
+}
+body.grown .seg--pill .seg-item.on .seg-n { background: rgba(255, 255, 255, .28); color: #fff; }
+
+/* 数量步进器。手机上 type=number 那个框会顶起数字键盘，还容易留成 0 或空，
+   发出去的活孩子领了才发现奖励是空的。点加减不会错。 */
+body.grown .stepper { display: flex; align-items: center; gap: 12px; }
+body.grown .st-btn {
+  width: 30px; height: 30px; flex: none; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--card-line); background: var(--card);
+  font-size: calc(16 * var(--u)); color: var(--ink-2); line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+body.grown .st-val {
+  width: 56px; flex: none; text-align: center; padding: 6px 0;
+  border: 1px solid var(--card-line); border-radius: 10px; background: var(--card);
+  font-family: var(--font-num); font-size: calc(14 * var(--u));
+  font-weight: 700; color: var(--ink);
+}
+
+/* 「发出去」贴在屏幕底边：这一屏填的东西多，按钮压在最下面要滚到底才
+   看得见，填完还得往回滚确认一遍。 */
+body.grown .pub-foot {
+  position: sticky; bottom: 0; z-index: 3; padding: 10px 0 6px; margin-top: 2px;
+  background: var(--bg);
 }

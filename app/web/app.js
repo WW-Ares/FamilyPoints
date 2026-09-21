@@ -188,7 +188,9 @@ function iconLabel(icon, kind) {
 }
 
 /* 唯一的图标渲染出口。凡是显示一张图的地方都调它，别就地拼 img。 */
-function glyph(icon, kind, size, cls) {
+/* eager=true 时不加 loading="lazy"。选图面板里那 120 个格子是面板一开就要
+   看见的东西，懒加载会把首屏留成一片空底色，家长以为「图没加载出来」。 */
+function glyph(icon, kind, size, cls, eager) {
   const px = size || 20;
   const c = cls ? ' ' + cls : '';
   const tok = String(icon == null ? '' : icon).trim() || (ICON_DEFAULT[kind] || '');
@@ -202,7 +204,7 @@ function glyph(icon, kind, size, cls) {
     // gly-svg 是给外面那层容器（.dic / .dr-ic 这些）看的：自带的糖果色圆底
     // 已经够看了，别再给它垫一层淡绿背景，方角会从圆的四个角露出来。
     return '<img class="gly gly-svg' + c + '" src="icons/' + encodeURIComponent(tok) + '.svg" alt="" ' +
-      'width="' + px + '" height="' + px + '" loading="lazy">';
+      'width="' + px + '" height="' + px + '"' + (eager ? '' : ' loading="lazy"') + '>';
   }
   return '<span class="gly gly-t' + c + '" style="width:' + px + 'px;height:' + px +
     'px;font-size:' + Math.round(px * 0.58) + 'px">' + esc(tok) + '</span>';
@@ -259,17 +261,24 @@ function ipItems(g, q) {
   return out;
 }
 
+/* 「不要图」原来是一颗占满整行的格子（grid-column:1/-1），面板一开先看见
+   它，图标被推到下面那片限高 232px 的滚动区里 —— 家长以为「没图」。
+   现在它缩成头部右上角一颗小按钮，格子从第一行就开始铺。 */
 function ipGrid(id) {
   const st = IP[id];
   const items = ipItems(st.g, st.q);
   const shown = items.slice(0, IP_LIMIT);
-  let h = '<div class="ip-grid">' +
-    '<button type="button" class="ip-cell ip-none" data-ipv="' + id + '" data-v="">不要图</button>' +
-    shown.map(function (it) {
-      return '<button type="button" class="ip-cell' + (st.v === it.t ? ' on' : '') +
-        '" data-ipv="' + id + '" data-v="' + esc(it.t) + '" title="' + esc(it.l) + '">' +
-        glyph(it.t, st.kind, 30) + '</button>';
-    }).join('') + '</div>';
+  const cnt = st.q ? '找到 ' + items.length + ' 张' : '共 ' + items.length + ' 张';
+  let h = '<div class="ip-stat">' + cnt + (st.g ? '　·　' + esc(st.g) : '') + '</div>';
+  if (!items.length) {
+    return h + '<div class="ip-more">没找到，换个词试试，或者点「重置」看全部。</div>';
+  }
+  h += '<div class="ip-grid">' + shown.map(function (it) {
+    return '<button type="button" class="ip-cell' + (st.v === it.t ? ' on' : '') +
+      '" data-ipv="' + id + '" data-v="' + esc(it.t) + '" title="' + esc(it.l) + '">' +
+      // eager：这一屏是打开就要看的，别让懒加载把首屏留成一片空底色
+      glyph(it.t, st.kind, 30, '', true) + '</button>';
+  }).join('') + '</div>';
   if (items.length > shown.length) {
     h += '<div class="ip-more">还有 ' + (items.length - shown.length) + ' 个，搜个字再挑</div>';
   }
@@ -281,6 +290,9 @@ function ipRender(id) {
   if (!box) return;
   const st = IP[id];
   box.innerHTML =
+    '<div class="ip-head"><span class="ip-title">配一张图 · 当前：' +
+    esc(iconLabel(st.v, st.kind)) + '</span>' +
+    '<button type="button" class="ip-clear" data-ipv="' + id + '" data-v="">不要图</button></div>' +
     '<div class="ip-top"><input class="ip-q" id="ipq-' + id + '" placeholder="搜：钥匙、星星、宝箱…" ' +
     'value="' + esc(st.q) + '">' +
     '<button type="button" class="ip-cl" data-ipc="' + id + '">重置</button></div>' +
@@ -591,7 +603,7 @@ const LG_PARENT_BTN = '<button type="button" class="lg-parent" id="lgPar">家长
 function lgWall(onId, slim) {
   const kids = KIDS();
   if (!kids.length) {
-    return '<div class="lg-none">还没有孩子的账号。<br>' +
+    return '<div class="lg-empty">还没有孩子的账号。<br>' +
       '让管理员在「我的 → 家人账号」里加一个，再回来登录。</div>';
   }
   return '<div class="lg-wall' + (slim ? ' slim' : '') + '">' + kids.map(k =>
@@ -997,12 +1009,18 @@ async function membersSheet() {
       notYet.map(m => esc(m.name)).join('、') + '）。没设密码的人进不来。</div>';
   }
 
+  /* 一行拆三层：名字 / 账号 / 按钮。
+     原来这四样挤在同一条横线上，按钮一多就把名字压成一字一行 —— 跟账号
+     长短无关，短名也一样坏。拆开之后账号再长也只是自己折行，压不到别人。 */
   h += '<div class="card">' + lists.map(m =>
-    '<div class="item">' + avatarHTML(m, 34) +
+    '<div class="item mem-row">' +
+    '<div class="mem-line">' + avatarHTML(m, 34) +
     '<div class="txt"><div class="nm">' + esc(m.name) + ' ' + memberTag(m) +
-    (m.id === me.id ? ' <span class="tag blue">我自己</span>' : '') + '</div>' +
-    '<div class="ds">账号　' + esc(m.username || '—') + '　' +
-    (m.has_password ? '密码已设' : '<span class="no-t">还没设密码</span>') + '</div></div>' +
+    (m.id === me.id ? ' <span class="tag blue">我自己</span>' : '') + '</div></div>' +
+    '<div class="mem-pw">' + (m.has_password ? '<span class="ds">密码已设</span>'
+      : '<span class="no-t">还没设密码</span>') + '</div></div>' +
+    '<div class="mem-line mem-line--acc"><span class="mem-key">账号</span>' +
+    '<span class="mem-acc">' + esc(m.username || '—') + '</span></div>' +
     '<div class="wact">' +
     (canResetPassword(me, m) && m.id !== me.id
       ? '<button class="btn sm' + (m.has_password ? ' line' : '') +
@@ -2240,24 +2258,35 @@ function effectCode(key) {
 /* 三维筛选。孩子 / 类型 / 日期各一行，可以叠加。
    「自定义」是唯一会弹日期选择器的入口，所以它是虚线描边 ——
    一排筹码里长一个样子，点之前就知道它会开东西。 */
-const LOG_FILTER = { member_id: '', group: '', date: 'month', limit: 40, mine: false };
+/* since / until 是「自定义」那一档挑出来的起止两天，跟着 LOG_FILTER 走，
+   切回别的档位不用清 —— 再点「自定义」还是上次那段。 */
+const LOG_FILTER = {
+  member_id: '', group: '', date: 'month', limit: 40, mine: false,
+  since: '', until: '',
+};
 const LOG_DATES = [
   ['today', '今天'], ['yesterday', '昨天'], ['last7', '近七天'],
   ['month', '本月'], ['all', '全部'], ['custom', '自定义'],
 ];
 /* 日期档位换算成接口的 days（天数往回数）。昨天要多取一天再筛，
-   不然「昨天」会把今天也算进去。 */
+   不然「昨天」会把今天也算进去。
+   自定义那档不走这条路 —— 它按日历切（since/until），换算成天数会多带半天。 */
 function logDays() {
   const t = LOG_FILTER;
   if (t.date === 'today') return 1;
   if (t.date === 'yesterday') return 2;
   if (t.date === 'last7') return 7;
   if (t.date === 'month') return 30;
-  if (t.date === 'custom' && t.since) {
-    const ms = Date.now() - new Date(t.since.replace(/-/g, '/') + ' 00:00:00').getTime();
-    return Math.max(1, Math.min(3650, Math.round(ms / 86400000) + 1));
-  }
-  return null;   // 全部时间
+  return null;   // 全部时间 / 自定义
+}
+/* 筹码上写区间，不写「自定义」四个字 —— 挑完再看这一排，
+   一眼就知道现在看的是哪一段，不用再点开弹层确认。 */
+function logRangeText() {
+  const t = LOG_FILTER;
+  if (!t.since || !t.until) return '自定义';
+  const a = t.since.slice(5), b = t.until.slice(5);
+  return t.since.slice(0, 4) === t.until.slice(0, 4) ? a + ' ~ ' + b
+    : t.since.slice(2) + ' ~ ' + t.until.slice(2);
 }
 /* 分组在前端的观感：颜色与图标都按「来源」走 —— 谁动的手，看圆点颜色就知道。
    分组文字用后端给的那一份（组名只有一处定义，前端不另起一套）。 */
@@ -2296,7 +2325,10 @@ async function renderAdminLogs(v) {
   let q = '/api/activity?limit=' + (f.mine ? 200 : f.limit);
   if (f.member_id) q += '&member_id=' + f.member_id;
   if (f.group) q += '&group=' + f.group;
-  if (days) q += '&days=' + days;
+  if (f.date === 'custom' && f.since && f.until) {
+    // 按日历切：接口收的是起止两天，两头都算在内
+    q += '&since=' + f.since + '&until=' + f.until;
+  } else if (days) q += '&days=' + days;
   const d = await api('GET', q);
   const kids = KIDS();
   const multi = !f.member_id;
@@ -2338,7 +2370,8 @@ async function renderAdminLogs(v) {
   h += '<div class="chip-row"><span class="dim-label">日期</span><div class="chips">' +
     LOG_DATES.map(x => '<button class="chip' + (f.date === x[0] ? ' on' : '') +
       (x[0] === 'custom' && f.date !== 'custom' ? ' chip--dashed' : '') +
-      '" data-lf="date" data-lv="' + x[0] + '">' + x[1] + '</button>').join('') +
+      '" data-lf="date" data-lv="' + x[0] + '">' +
+      (x[0] === 'custom' ? esc(logRangeText()) : x[1]) + '</button>').join('') +
     '</div></div>';
   h += '</div>';
 
@@ -2372,7 +2405,7 @@ async function renderAdminLogs(v) {
   $$('#view button[data-go]').forEach(b => b.addEventListener('click', () => pGo(b.dataset.go)));
   $$('#view .chip[data-lf]').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.lf, val = b.dataset.lv;
-    if (k === 'date' && val === 'custom') return askLogSince();
+    if (k === 'date' && val === 'custom') return askLogRange();
     LOG_FILTER[k] = val;
     LOG_FILTER.limit = 40;              // 换了筛选条件，翻页从头开始
     render();
@@ -2384,19 +2417,41 @@ async function renderAdminLogs(v) {
   });
 }
 
-/* 自定义日期的唯一入口。接口只认「往回数多少天」，所以这里只问一个起始日，
-   把它换算成天数 —— 让家长填一个区间、后端却按天数筛，那就是在骗人。 */
-function askLogSince() {
-  sheet('<h3>从哪天看起</h3>' +
-    '<p class="muted">选一天，日志就从这天翻到现在。想按月份翻，直接点「本月」。</p>' +
-    '<div class="field"><label>起始日期</label><input id="ls" type="date" value="' +
-    shiftDay(todayStr(), -13) + '"></div>' +
+/* 自定义日期的唯一入口。接口现在认起止两天（since / until），所以这里就问两个：
+   只给一个起始日、后端却按「往回数几天」筛，家长挑的区间和看到的账对不上，
+   那是在骗人。快捷那三颗只是替家长把两栏填好，不是另一套筛法。 */
+function askLogRange() {
+  const f = LOG_FILTER;
+  sheet('<h3>看哪一段</h3>' +
+    '<p class="muted">选开始和结束，日志只翻这一段，两头都算在内。</p>' +
+    '<div class="field"><label>开始</label><input id="ls" type="date" value="' +
+    (f.since || shiftDay(todayStr(), -13)) + '"></div>' +
+    '<div class="field"><label>结束</label><input id="le" type="date" value="' +
+    (f.until || todayStr()) + '"></div>' +
+    '<div class="chip-row"><span class="dim-label">快捷</span><div class="chips">' +
+    '<button type="button" class="chip" data-rg="month">本月</button>' +
+    '<button type="button" class="chip" data-rg="lastmonth">上月</button>' +
+    '<button type="button" class="chip" data-rg="last30">最近 30 天</button>' +
+    '</div></div>' +
     '<button class="btn wide btn--primary" id="go">看这一段</button>', box => {
+      const qs = $('#ls', box), qe = $('#le', box);
+      $$('[data-rg]', box).forEach(b => b.addEventListener('click', () => {
+        const t = todayStr(), p = t.split('-').map(Number);
+        if (b.dataset.rg === 'month') {
+          qs.value = p[0] + '-' + String(p[1]).padStart(2, '0') + '-01'; qe.value = t;
+        } else if (b.dataset.rg === 'lastmonth') {
+          const q = new Date(p[0], p[1] - 2, 1);
+          const ym = q.getFullYear() + '-' + String(q.getMonth() + 1).padStart(2, '0');
+          const lastDay = new Date(p[0], p[1] - 1, 0).getDate();
+          qs.value = ym + '-01';
+          qe.value = ym + '-' + String(lastDay).padStart(2, '0');
+        } else { qs.value = shiftDay(t, -29); qe.value = t; }
+      }));
       $('#go', box).addEventListener('click', () => {
-        const val = $('#ls', box).value;
-        if (!val) return err({ message: '先挑一天' });
-        LOG_FILTER.date = 'custom';
-        LOG_FILTER.since = val;
+        const a = qs.value, b = qe.value;
+        if (!a || !b) return err({ message: '开始和结束都要选' });
+        if (a > b) return err({ message: '开始的日子要在结束之前' });
+        f.date = 'custom'; f.since = a; f.until = b;
         closeSheet(); render();
       });
     });
@@ -3314,6 +3369,34 @@ function pPubRewards() {
       '" data-d="' + o[2] + '">' + esc(o[1]) + '</button>').join('') + '</div></div>';
 }
 
+/* 数量用步进器，不用数字输入框：手机上那个框会顶起数字键盘，还容易留成
+   0 或者空着 —— 孩子领了活才发现奖励是空的。点加减，最小 1，改不错。 */
+function amtStepper(id, val) {
+  return '<div class="stepper">' +
+    '<button type="button" class="st-btn" data-st="-1" data-for="' + id +
+    '" aria-label="少一个">−</button>' +
+    '<input id="' + id + '" class="st-val" value="' + val +
+    '" inputmode="numeric" autocomplete="off">' +
+    '<button type="button" class="st-btn" data-st="1" data-for="' + id +
+    '" aria-label="多一个">+</button></div>';
+}
+/* 每行底下那句小注跟着所选的按钮走。写死的那一句只对一种选择成立，
+   家长换了按钮，那句就成了错的话。 */
+const REWARD_TIP = {
+  stardust: '星尘一周合计不超过 20 · 花掉不掉等级',
+  energy: '周能量只在这一个周期里有效，周末结算清零',
+  ticket: '娱乐券发出去就开始计时，用掉才算',
+  box: '宝箱只发到银箱 · 稀有卡不发',
+};
+const TO_TIP = {
+  hall: '谁先点谁拿 · 时限内没人接自动下线',
+  kid: '直接派给他，不用抢，也不会自动下线',
+};
+const SLOT_TIP = {
+  1: '一个人接走，别人就领不到了',
+  2: '两个人都能领到，各一份',
+};
+
 /* 「写校准」这一格用的几张表。校准原来是一层弹窗，现在它是发布胶囊的第三格。 */
 const CALIB_TPL = [
   ['apology', '道歉修复（24 小时）'],
@@ -3340,15 +3423,20 @@ async function renderAdminPublish(v) {
   const mine = (all.items || []).filter(t => t.kind !== 'repair' && t.created_by === S.me.id);
 
   let h = pHead({ title: '发布', sub: '发个任务，谁做到谁拿' });
-  h += '<div class="seg">' +
+  // 三格做成真胶囊（底衬 + 选中橙底白字），数字单独一个小牌，
+  // 数变了只换牌上的字，整格宽度不跟着抖。
+  h += '<div class="seg seg--pill">' +
     '<button type="button" class="seg-item' + (seg === 'new' ? ' on' : '') +
     '" data-pseg="new">写任务</button>' +
     '<button type="button" class="seg-item' + (seg === 'calib' ? ' on' : '') +
     '" data-pseg="calib">写校准</button>' +
     '<button type="button" class="seg-item' + (seg === 'mine' ? ' on' : '') +
-    '" data-pseg="mine">我发出的 ' + mine.length + '</button></div>';
+    '" data-pseg="mine">我发出的<span class="seg-n">' + mine.length +
+    '</span></button></div>';
 
   if (seg === 'new') {
+    /* 两张卡，卡里不再写「① 什么事」这种编号标题 —— 标题占一行、说明又占一行，
+       说明比输入框还高，一屏装不下。现在每张卡第一行就是能填的东西。 */
     h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
       '<div class="field"><span class="field-label">标题</span>' +
       '<input id="pT" placeholder="例如：整理书架"></div>' +
@@ -3360,36 +3448,37 @@ async function renderAdminPublish(v) {
     h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
       pPubRewards() +
       '<div class="field" id="pAmtBox"><span class="field-label">数量</span>' +
-      '<input id="pAmt" type="number" value="5" min="1"></div>' +
-      '<p class="caption">星尘一周合计不超过 20 · 宝箱只发到银箱 · 稀有卡不发</p>' +
+      amtStepper('pAmt', 5) + '</div>' +
+      '<p class="caption" id="pRwTip">' + esc(REWARD_TIP.stardust) + '</p>' +
       iconField('pIcon', '', 'task', '配一张图') +
       '<p class="caption">他在大厅里先看见的就是这张图。不挑也行，系统会按类型给默认的。</p>' +
-      '</div>';
-
-    // 给谁。原来「直接派给某个孩子」只躲在我的 → 更多 → 发一个任务那条路上，
-    // 比挂大厅深两层，于是几乎没人走；那条路撤掉之后，这个开关就是它的替代。
-    h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
+      // 给谁：原来分两层（先选挂大厅还是派给孩子，再选哪个孩子），
+      // 一层就够 —— 点孩子名字就是派给他，点挂大厅就是谁都能接。
       '<div class="field" style="gap:7px"><span class="field-label">给谁</span>' +
       '<div class="chips">' +
-      '<button type="button" class="chip on" data-to="hall">挂大厅，谁都能接</button>' +
-      '<button type="button" class="chip" data-to="kid">派给一个孩子</button></div>' +
-      '<div class="field" id="pKidBox" hidden><span class="field-label">派给谁</span>' +
-      '<div class="chips">' + KIDS().map((m, i) =>
-        '<button type="button" class="chip' + (i ? '' : ' on') + '" data-kid="' + m.id + '">' +
-        esc(m.name) + '</button>').join('') + '</div></div></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="pHallOnly">' +
+      '<button type="button" class="chip on" data-to="hall">挂大厅</button>' +
+      KIDS().map(m => '<button type="button" class="chip" data-to="' + m.id + '">' +
+        esc(m.name) + '</button>').join('') + '</div></div>' +
+      '<p class="caption" id="pToTip">' + esc(TO_TIP.hall) + '</p>' +
+      // 这两问只对挂大厅有意义：派给某个孩子就没有「谁来抢」和「多久下线」
+      '<div id="pHallOnly" style="display:flex;flex-direction:column;gap:12px">' +
       '<div class="field" style="gap:7px"><span class="field-label">接取</span>' +
       '<div class="chips">' +
-      '<button type="button" class="chip on" data-s="1">单人</button>' +
-      '<button type="button" class="chip" data-s="2">多人 2 人</button></div></div>' +
-      '<div class="field" style="gap:7px"><span class="field-label">接取时限</span>' +
+      '<button type="button" class="chip on" data-s="1">单人接取</button>' +
+      '<button type="button" class="chip" data-s="2">多人接取</button></div></div>' +
+      '<div class="field" style="gap:7px"><span class="field-label">时限</span>' +
       '<div class="chips">' +
       '<button type="button" class="chip on" data-dl="1">今天内</button>' +
       '<button type="button" class="chip" data-dl="2">24 小时</button></div></div>' +
+      '<p class="caption" id="pSlotTip">' + esc(SLOT_TIP[1]) + '</p>' +
       '</div></div>';
 
-    h += '<button class="btn btn--primary btn--block" id="pSend">发出去</button>' +
-      '<p class="footnote">挂出去就进任务大厅 · 时限内没人接会自动下线，不罚任何人</p>';
+    /* 「发出去」贴在屏幕底边：这一屏填的东西多，按钮压在最下面要滚到底才
+       看得见，填完还得往回滚确认一遍。 */
+    h += '<div class="pub-foot">' +
+      '<button class="btn btn--primary btn--block" id="pSend">发出去</button>' +
+      '<p class="caption" style="text-align:center">挂出去就进任务大厅 · ' +
+      '时限内没人接会自动下线，不罚任何人</p></div>';
 
     v.innerHTML = h;
     bindPublishForm();
@@ -3434,36 +3523,47 @@ async function renderAdminPublish(v) {
 
 function bindPublishForm() {
   let rt = 'stardust', defaultAmt = 5, slots = 1, dl = 1;
-  let to = 'hall';   // hall = 挂大厅谁都能接；kid = 直接派给某个孩子
-  // 派给谁原来是下拉，现在是按钮。孩子就四个以内的数，下拉要多点一次才看得见
-  // 有谁，还得对准那一行；按钮摊平在那儿，一眼点名。
-  let kid = (KIDS()[0] || {}).id || 0;
+  // 'hall' 挂大厅谁都能接；其余是孩子的 id —— 点谁的名字就是派给谁。
+  // 原来分两层（先选挂大厅还是派人，再选哪个孩子），一层就够。
+  let to = 'hall';
   // 选图面板的交互（开合 / 挑图 / 换组 / 搜索）是委托绑在 #view 上的，
   // bindIconField 自己认门牌去重：这个容器不重画，绑一次就够。
   bindIconField($('#view'));
+  const tip = (id, s) => { const t = $(id); if (t) t.textContent = s; };
+  const amtEl = () => $('#pAmt');
+
   $$('#view .chip[data-r]').forEach(c => c.addEventListener('click', () => {
     rt = c.dataset.r;
     defaultAmt = +c.dataset.d;
     $$('#view .chip[data-r]').forEach(x => x.classList.remove('on'));
     c.classList.add('on');
-    $('#pAmt').value = defaultAmt;
+    amtEl().value = defaultAmt;
     // 银箱是整档的，填数量没有意义
     $('#pAmtBox').style.display = rt === 'box' ? 'none' : '';
+    tip('#pRwTip', REWARD_TIP[rt] || '');
+  }));
+  $$('#view .st-btn').forEach(b => b.addEventListener('click', () => {
+    const inp = $('#' + b.dataset.for);
+    if (!inp) return;
+    inp.value = Math.max(1, (parseInt(inp.value, 10) || 0) + (+b.dataset.st));
+  }));
+  $$('#view .st-val').forEach(inp => inp.addEventListener('input', () => {
+    const v = parseInt(String(inp.value).replace(/[^\d]/g, ''), 10);
+    // 打了一半的空值就让它空着，别在人家手底下把内容改掉
+    if (v >= 1) inp.value = v;
   }));
   $$('#view .chip[data-to]').forEach(c => c.addEventListener('click', () => {
     to = c.dataset.to;
     $$('#view .chip[data-to]').forEach(x => x.classList.remove('on')); c.classList.add('on');
-    // 派给某个孩子之后，没有「谁能来领」和「多久没人领就下线」这两问
-    $('#pKidBox').hidden = to !== 'kid';
-    $('#pHallOnly').style.display = to === 'kid' ? 'none' : '';
-  }));
-  $$('#view .chip[data-kid]').forEach(c => c.addEventListener('click', () => {
-    kid = +c.dataset.kid;
-    $$('#view .chip[data-kid]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    // 派给某个孩子之后，没有「谁来抢」和「多久没人领就下线」这两问
+    const hall = to === 'hall';
+    $('#pHallOnly').style.display = hall ? '' : 'none';
+    tip('#pToTip', hall ? TO_TIP.hall : TO_TIP.kid);
   }));
   $$('#view .chip[data-s]').forEach(c => c.addEventListener('click', () => {
     slots = +c.dataset.s;
     $$('#view .chip[data-s]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    tip('#pSlotTip', SLOT_TIP[slots] || '');
   }));
   $$('#view .chip[data-dl]').forEach(c => c.addEventListener('click', () => {
     dl = +c.dataset.dl;
@@ -3472,7 +3572,7 @@ function bindPublishForm() {
   $('#pSend').addEventListener('click', async () => {
     const title = $('#pT').value, std = $('#pS').value;
     if (!title.trim() || !std.trim()) return err({ message: '标题和完成标准都要写' });
-    const amt = +$('#pAmt').value;
+    const amt = Math.max(1, parseInt(amtEl().value, 10) || defaultAmt);
     const reward = rt === 'stardust' || rt === 'energy' ? { amount: amt } :
       rt === 'ticket' ? { code: 'ticket_fun', qty: amt } : { tier: 3 };
     const body = {
@@ -3483,11 +3583,11 @@ function bindPublishForm() {
       body.open_to_all = true; body.slots = slots;
       body.deadline = dl === 1 ? todayStr() : shiftDay(todayStr(), 1);
     } else {
-      body.assignee_id = kid;
+      body.assignee_id = +to;
     }
     try {
       await api('POST', '/api/tasks', body);
-      const who = KIDS().filter(m => m.id === kid)[0];
+      const who = KIDS().filter(m => m.id === +to)[0];
       toast(to === 'hall' ? '挂到大厅了' : '派给' + (who ? who.name : '') + '了');
       P_PUBSEG = 'mine';
       await render();
@@ -4045,15 +4145,17 @@ function pCalHTML(m, sel) {
   m.rows.forEach(r => cells.push(r));
   while (cells.length % 7) cells.push(null);
 
-  let h = '<div class="cal-head">' +
-    '<div class="cal-nav">' +
+  /* 年月和翻月箭头就长在卡片标题这一行（左边），「点一格看当天七项」
+     挪到同一行的右边 —— 跟孩子端那张月历一个长相。
+     原来年月是卡片外面独立的一行，和标题、说明三层叠着，家长看到的是
+     「9 月打分日历」下面又来一个「2026 年 9 月」，同一件事说两遍。 */
+  let h = '<div class="card"><div class="cal-bar">' +
+    '<span class="cal-nav">' +
     '<button type="button" data-mv="-1" aria-label="上个月">' + pic('i-chevron-left', 16) + '</button>' +
     '<span class="month">' + Y + ' 年 ' + M + ' 月</span>' +
     '<button type="button" data-mv="1"' + (ym >= ymOf(today) ? ' disabled' : '') +
-    ' aria-label="下个月">' + pic('i-chevron-right-dead', 16) + '</button></div>' +
-    '<span class="caption">点一格看当天七项</span></div>';
-
-  h += '<div class="card"><span class="card-title">' + M + ' 月打分日历</span>' +
+    ' aria-label="下个月">' + pic('i-chevron-right-dead', 16) + '</button></span>' +
+    '<span class="caption">点一格看当天七项</span></div>' +
     '<div class="cal-grid" style="margin-top:10px">' +
     CAL_WD.map(d => '<span class="cal-wd">' + d + '</span>').join('');
   cells.forEach(r => {

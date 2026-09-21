@@ -620,7 +620,8 @@ async function walkTabs(page, tag) {
     await tapPerf.first().click();
     await page.waitForTimeout(900);
     const recTxt = await kidText();
-    if (recTxt.indexOf('本月小结') < 0) bad('[v13] 点「本月完美日」没跳到成长报告');
+    // 小结标题跟着月份写（9 月小结），不能按「本月小结」找
+    if (recTxt.indexOf('月小结') < 0) bad('[v13] 点「本月完美日」没跳到成长报告');
     await kidGo('mine');
     await page.waitForTimeout(600);
   }
@@ -763,8 +764,13 @@ async function walkTabs(page, tag) {
   await kidGo('report');
   const cal = await kidText();
   say('   成长报告底部: ' + cal.slice(0, 46));
-  for (const want of ['打分日历', '本月小结']) {
+  // v1.6：月历标题从「9 月打分日历」改成能翻月的「9 月」，小结跟着走成
+  // 「9 月小结」。两个标题都随月份变，所以按「月小结」找，另外单独验翻月按钮在。
+  for (const want of ['月小结']) {
     if (cal.indexOf(want) < 0) bad('[v13] 成长报告底部缺少「' + want + '」');
+  }
+  if (!(await page.locator('#view .kcal-mv').count())) {
+    bad('[v13] 月历没有翻月的箭头');
   }
   if (cal.indexOf('不是一件事') < 0) bad('[v13] 月历没说清「0 分」和「没打分」不是一回事');
   const kpiCells = await page.locator('#view .kkpi').count();
@@ -1122,34 +1128,55 @@ async function walkTabs(page, tag) {
   if (!(await page.locator('#view .chip[data-ce="fine"]').count())) {
     bad('[v40] 「写校准」少了罚款那条处理方式');
   }
-  // 写任务：挂大厅 / 派给某个孩子，两个开关要真的动态
+  /* 写任务：「给谁」原来分两层（先选「派给一个孩子」，再在这一层里选哪个孩子），
+     多点一次、多占一排。现在一层：挂大厅 + 每个孩子各一颗按钮，点谁就是派给谁。 */
   await clickSel(page, '#view .seg-item[data-pseg="new"]', '发布 → 写任务');
-  if (!(await page.locator('#view .chip[data-to="kid"]').count())) {
-    bad('[v40] 「写任务」没有「派给一个孩子」这个开关');
-  }
   if (!(await page.locator('#view #pIcon').count())) bad('[v40] 「写任务」没有配图那一格');
-  const kidHiddenBefore = await page.locator('#view #pKidBox:not([hidden])').count();
-  await page.locator('#view .chip[data-to="kid"]').click();
-  await page.waitForTimeout(500);
-  const kidShown = await page.locator('#view #pKidBox').count();
-  const hallShown = await page.locator('#view #pHallOnly').count();
-  say('   派给谁: 前 ' + kidHiddenBefore + ' -> 后 ' + kidShown + ' 可见，接取行还在 ' + hallShown);
-  if (!kidShown) bad('[v40] 选「派给一个孩子」之后没有出现选孩子的框');
-  if (await page.locator('#view [data-to="hall"].on').count()) {
-    bad('[v40] 选了「派给一个孩子」，还高亮着「挂大厅」');
-  }
-  // 选孩子这排也是按钮，不是下拉；点第二个要真把它选上
-  const kidChips = (await page.locator('#view #pKidBox .chip[data-kid]').allInnerTexts()).map(flat);
-  say('   派给谁那排按钮: ' + kidChips.join(' / '));
-  if (kidChips.length < 2) bad('[v42] 「派给谁」的按钮少于 2 个：' + kidChips.length);
-  if (await page.locator('#view #pKid').count()) bad('[v42] 「派给谁」还留着下拉');
-  await page.locator('#view #pKidBox .chip[data-kid]').nth(1).click();
+  const toChips = (await page.locator('#view .chip[data-to]').allInnerTexts()).map(flat);
+  say('   给谁那排按钮: ' + toChips.join(' / '));
+  if (toChips.length < 3) bad('[v1.6] 「给谁」按钮少于 3 颗（挂大厅 + 2 个孩子）：' + toChips.length);
+  if (toChips[0] !== '挂大厅') bad('[v1.6] 「给谁」第一颗不是「挂大厅」，是「' + toChips[0] + '」');
+  if (await page.locator('#view #pKid').count()) bad('[v1.6] 「给谁」还留着下拉');
+  const kidChips = toChips.slice(1);
+  /* 底下那句小注要跟着按钮走。写死的一句只对一种选择成立，换了按钮就成了错话
+     （选了娱乐券还写着「星尘一周不超过 20」）。三句各验一次换没换。 */
+  const rwTip0 = flat(await page.locator('#view #pRwTip').innerText());
+  await page.locator('#view .chip[data-r="ticket"]').click();
   await page.waitForTimeout(300);
-  const kidOn = flat(await page.locator('#view #pKidBox .chip[data-kid].on').first().innerText());
-  const kidOnCnt = await page.locator('#view #pKidBox .chip[data-kid].on').count();
+  const rwTip1 = flat(await page.locator('#view #pRwTip').innerText());
+  say('   报酬小注: 「' + rwTip0 + '」→「' + rwTip1 + '」');
+  if (rwTip1 === rwTip0) bad('[v1.6] 换了报酬，底下的小注没跟着换');
+  if (rwTip1.indexOf('星尘') >= 0) bad('[v1.6] 选了娱乐券，小注还在说星尘');
+  await page.locator('#view .chip[data-r="stardust"]').click();
+  await page.waitForTimeout(200);
+  // 接取那句只在挂大厅时看得见，先把派孩子之前的原话留着
+  const toTip0 = flat(await page.locator('#view #pToTip').innerText());
+  const slotTip0 = flat(await page.locator('#view #pSlotTip').innerText());
+  await page.locator('#view .chip[data-s="2"]').click();
+  await page.waitForTimeout(300);
+  const slotTip1 = flat(await page.locator('#view #pSlotTip').innerText());
+  say('   接取小注: 「' + slotTip0 + '」→「' + slotTip1 + '」');
+  if (slotTip1 === slotTip0) bad('[v1.6] 换了接取方式，底下的小注没跟着换');
+  await page.locator('#view .chip[data-s="1"]').click();
+  await page.waitForTimeout(200);
+  // 点孩子的名字：直接派给他，同时「接取 / 时限」这两问没有意义，要收起来
+  const hallDisp0 = await page.locator('#view #pHallOnly').evaluate(el => el.style.display);
+  await page.locator('#view .chip[data-to]').nth(1).click();
+  await page.waitForTimeout(500);
+  const hallDisp1 = await page.locator('#view #pHallOnly').evaluate(el => el.style.display);
+  const toTip1 = flat(await page.locator('#view #pToTip').innerText());
+  say('   派给孩子后: 接取/时限 display ' + (hallDisp0 || '(空)') + ' → ' + hallDisp1 +
+    '；小注「' + toTip0 + '」→「' + toTip1 + '」');
+  if (hallDisp1 !== 'none') bad('[v1.6] 派给孩子之后，「接取 / 时限」没有收起来');
+  if (toTip1 === toTip0) bad('[v1.6] 换了「给谁」，底下的小注没跟着换');
+  if (await page.locator('#view [data-to="hall"].on').count()) {
+    bad('[v1.6] 选了某个孩子，还高亮着「挂大厅」');
+  }
+  const kidOn = flat(await page.locator('#view .chip[data-to].on').first().innerText());
+  const kidOnCnt = await page.locator('#view .chip[data-to].on').count();
   say('   选中的孩子: ' + kidOn + '（高亮 ' + kidOnCnt + ' 个）');
-  if (kidOn !== kidChips[1] || kidOnCnt !== 1) {
-    bad('[v42] 点第二个孩子没选中它（选中的是「' + kidOn + '」，高亮 ' + kidOnCnt + ' 个）');
+  if (kidOn !== kidChips[0] || kidOnCnt !== 1) {
+    bad('[v1.6] 点第一个孩子没选中它（选中的是「' + kidOn + '」，高亮 ' + kidOnCnt + ' 个）');
   }
 
   /* 配图那一格：这不是「在不在」的问题，是「点得开吗」的问题。
@@ -1199,6 +1226,13 @@ async function walkTabs(page, tag) {
 
   // 真发一个任务出去，核对它落到的是刚点的那个人。
   // 光看按钮高亮不算数：点下去到底把谁传给了后端，只有真发一次才知道。
+  /* 奖励换成娱乐券再发：直接派给某个孩子的任务，发出那一刻就占本周任务星尘
+     额度；挂大厅的等有人领了才占。演示库走到这一步，女儿那 20 的额度往往
+     已经用掉大半，发星尘会撞上「本周任务星尘已达上限」——那是规则在起作用，
+     不是派活坏了，但它会把这条断言变成假报错。券不走那条额度，正好只测
+     「派给了谁」这一件事。 */
+  await page.locator('#view .chip[data-r="ticket"]').click();
+  await page.waitForTimeout(200);
   const ttl = 'e2e 派活 ' + Date.now();
   await page.locator('#view #pT').fill(ttl);
   await page.locator('#view #pS').fill('e2e 自己发的，看它落到谁手上');
@@ -1213,8 +1247,8 @@ async function walkTabs(page, tag) {
   }, ttl);
   say('   真发一个任务: ' + (sent ? (sent.who || '（没名字）') + ' / ' + sent.status : '没找到'));
   if (!sent) bad('[v42] 派出去的任务在大厅清单里找不到');
-  else if (sent.who !== kidChips[1]) {
-    bad('[v42] 派给「' + kidChips[1] + '」的任务落到了「' + sent.who + '」');
+  else if (sent.who !== kidChips[0]) {
+    bad('[v1.6] 派给「' + kidChips[0] + '」的任务落到了「' + sent.who + '」');
   }
 
   // 家长端「我发出的」活（原任务页）：三个分组 + 撤销的边界。
@@ -1348,13 +1382,13 @@ async function walkTabs(page, tag) {
     bad('[月度统计] 小结的「打过分的天」和图上非虚线格数对不上：' + daysTxt + ' vs ' + scoredN);
   }
   // 上/下月
-  const calNow = flat(await page.locator('#view .cal-head .month').innerText());
+  const calNow = flat(await page.locator('#view .cal-bar .month').innerText());
   if (await page.locator('#view .cal-nav button').nth(1).isEnabled()) {
     bad('[月度统计] 已经在当月，「下个月」不该能点');
   }
   // v23：翻月不许把页面顶回最上面。月历在打分页最底部，
   // 翻一次就要重新往下滚一遍的话，等于没法连着看几个月。
-  await page.locator('#view .cal-head .month').scrollIntoViewIfNeeded();
+  await page.locator('#view .cal-bar .month').scrollIntoViewIfNeeded();
   await page.waitForTimeout(300);
   const scrollBefore = await page.evaluate(() => window.scrollY);
   await page.locator('#view .cal-nav button').first().click();
@@ -1364,7 +1398,7 @@ async function walkTabs(page, tag) {
   if (scrollBefore > 200 && scrollAfter < scrollBefore / 2) {
     bad('[月度统计] 翻月把页面顶回去了（' + scrollBefore + ' -> ' + scrollAfter + '）');
   }
-  const calPrev = flat(await page.locator('#view .cal-head .month').innerText());
+  const calPrev = flat(await page.locator('#view .cal-bar .month').innerText());
   say('   切月份: ' + calNow + ' -> ' + calPrev);
   if (calNow === calPrev) bad('[月度统计] 点「上个月」月份没变');
   await page.locator('#view .cal-nav button').nth(1).click();

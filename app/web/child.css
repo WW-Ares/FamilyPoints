@@ -800,3 +800,17 @@ body.kid .pill--gold { background: #FFC93C; color: #fff; font-weight: 700; }
      内容已经能把整页撑高之后，这一层内部滚动就没有存在理由了，直接放掉。 */
   body.kid .content { overflow-y: visible; overscroll-behavior: auto; }
 }
+
+
+/* ------------------------------------------------- 月历 · 翻月箭头 --------- */
+/* 孩子自己也能往回看 —— 「我上个月是不是更好」是个真问题，
+   不该只有家长能翻账。两个箭头到头就变成灰块：往右是还没发生的日子，
+   往左只留一年，再往前都是空的，翻过去一整月空格比不给按钮更让人糊涂。 */
+body.kid .kcal-nav { display: flex; align-items: center; gap: 7px; }
+body.kid .kcal-nav .card-title { font-size: calc(15 * var(--u)); }
+body.kid .kcal-mv {
+  width: 24px; height: 24px; border-radius: 12px; flex: none;
+  display: grid; place-items: center; font-size: calc(14 * var(--u)); line-height: 1;
+  background: var(--orange-light); color: var(--wood-deep);
+}
+body.kid .kcal-mv.is-off { background: var(--line); color: var(--ink-3); }

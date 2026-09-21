@@ -133,7 +133,7 @@ body.lg #view { padding: 0; padding-bottom: 0; flex: 1; display: flex; }
 .lg-pick:active .lg-frame { transform: scale(.97); }
 
 /* 家里一个孩子都没有（还没建过号）：给一句能读懂的话，不留空白页 */
-.lg-none {
+.lg-empty {
   margin-top: 30px; text-align: center; font-size: calc(13 * var(--u)); line-height: 1.8;
   color: var(--ink-2); background: #fff; border: 2px solid var(--card-line);
   border-radius: 20px; padding: 20px 18px;
