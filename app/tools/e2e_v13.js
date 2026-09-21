@@ -1114,7 +1114,11 @@ async function walkTabs(page, tag) {
   await clickSel(page, '#view .seg-item[data-pseg="calib"]', '发布 → 写校准');
   const calibTxt = flat(await page.locator('#view').innerText());
   if (calibTxt.indexOf('怎么处理') < 0) bad('[v40] 「写校准」那一屏没有「怎么处理」');
-  if (!(await page.locator('#view #cKid').count())) bad('[v40] 「写校准」没有选孩子的下拉');
+  // 选孩子从下拉改成按钮（v42）：跟同一屏别的选择题一个样子，一眼看见有谁。
+  if (!(await page.locator('#view .chip[data-ckid]').count())) {
+    bad('[v42] 「写校准」没有选孩子的按钮');
+  }
+  if (await page.locator('#view #cKid').count()) bad('[v42] 「写校准」还留着选孩子的下拉');
   if (!(await page.locator('#view .chip[data-ce="fine"]').count())) {
     bad('[v40] 「写校准」少了罚款那条处理方式');
   }
@@ -1133,6 +1137,84 @@ async function walkTabs(page, tag) {
   if (!kidShown) bad('[v40] 选「派给一个孩子」之后没有出现选孩子的框');
   if (await page.locator('#view [data-to="hall"].on').count()) {
     bad('[v40] 选了「派给一个孩子」，还高亮着「挂大厅」');
+  }
+  // 选孩子这排也是按钮，不是下拉；点第二个要真把它选上
+  const kidChips = (await page.locator('#view #pKidBox .chip[data-kid]').allInnerTexts()).map(flat);
+  say('   派给谁那排按钮: ' + kidChips.join(' / '));
+  if (kidChips.length < 2) bad('[v42] 「派给谁」的按钮少于 2 个：' + kidChips.length);
+  if (await page.locator('#view #pKid').count()) bad('[v42] 「派给谁」还留着下拉');
+  await page.locator('#view #pKidBox .chip[data-kid]').nth(1).click();
+  await page.waitForTimeout(300);
+  const kidOn = flat(await page.locator('#view #pKidBox .chip[data-kid].on').first().innerText());
+  const kidOnCnt = await page.locator('#view #pKidBox .chip[data-kid].on').count();
+  say('   选中的孩子: ' + kidOn + '（高亮 ' + kidOnCnt + ' 个）');
+  if (kidOn !== kidChips[1] || kidOnCnt !== 1) {
+    bad('[v42] 点第二个孩子没选中它（选中的是「' + kidOn + '」，高亮 ' + kidOnCnt + ' 个）');
+  }
+
+  /* 配图那一格：这不是「在不在」的问题，是「点得开吗」的问题。
+     v1.5 报上来的坏就是点了没反应 —— 面板的开合按钮当时是快照绑定：
+     进这一屏时绑一次，而 #view 这个容器不重画（只换里面的 innerHTML），
+     所以第二次进来，新画出来的那颗按钮身上一个监听都没有。
+     所以这里要真点、并且点两次。 */
+  await clickSel(page, '#view button[data-ip="pIcon"]', '写任务 → 配一张图');
+  if (!(await page.locator('#view #ipb-pIcon:not([hidden])').count())) {
+    bad('[v42] 点「配一张图」没打开选图面板');
+  }
+  const ipCells = await page.locator('#view #ipb-pIcon .ip-cell').count();
+  const ipChips = (await page.locator('#view #ipb-pIcon .ip-chips .chip').allInnerTexts()).map(flat);
+  const ipOn = flat(await page.locator('#view #ipb-pIcon .ip-chips .chip.on').first().innerText());
+  say('   配图面板: ' + ipCells + ' 个格子；分组 ' + ipChips.slice(0, 4).join(' / ') + '…；停在「' + ipOn + '」');
+  if (ipCells < 6) bad('[v42] 配图面板里格子太少：' + ipCells);
+  if (ipOn !== '任务') bad('[v42] 配图面板没停在「任务」那一组，停在「' + ipOn + '」');
+  // 任务这一组就是这一版新画的 17 张：挑一张，看它落没落进隐藏字段
+  const questCells = await page.locator('#view #ipb-pIcon .ip-cell[data-v^="quest_"]').count();
+  say('   任务图标候选: ' + questCells + ' 张');
+  if (questCells < 12) bad('[v42] 配图面板里任务图标只有 ' + questCells + ' 张');
+  await page.locator('#view #ipb-pIcon .ip-cell[data-v="quest_scroll"]').click();
+  await page.waitForTimeout(400);
+  const ipVal = await page.locator('#view #pIcon').inputValue();
+  if (ipVal !== 'quest_scroll') bad('[v42] 挑了悬赏令，隐藏字段里是「' + ipVal + '」');
+  // 第二次点开：老毛病就坏在这一下
+  await clickSel(page, '#view button[data-ip="pIcon"]', '再点一次配一张图');
+  if (!(await page.locator('#view #ipb-pIcon:not([hidden])').count())) {
+    bad('[v42] 配图面板第二次点不开了（快照绑定的老毛病）');
+  }
+  // 搜索框也是点开之后才生成的，同样要真敲一次。敲一个只在这组里存在的词，
+  // 命中谁就是谁 —— 「什么都没搜出来」也算它有反应，那证明不了它在按词筛。
+  await page.locator('#view #ipq-pIcon').fill('钥匙');
+  await page.waitForTimeout(600);
+  const ipHits = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#view #ipb-pIcon .ip-cell'))
+    .map(c => c.dataset.v || '').filter(Boolean));
+  say('   搜「钥匙」之后命中: ' + (ipHits.join(' ') || '（空）'));
+  if (ipHits.length !== 1 || ipHits[0] !== 'quest_key') {
+    bad('[v42] 配图面板搜「钥匙」没搜出 quest_key，命中 ' + JSON.stringify(ipHits));
+  }
+  await clickSel(page, '#view button[data-ipc="pIcon"]', '配图 → 重置');
+  const ipBack = await page.locator('#view #ipb-pIcon .ip-cell').count();
+  say('   重置之后格子: ' + ipBack + ' 个');
+  if (ipBack < 18) bad('[v42] 点了「重置」没回到整组：' + ipBack);
+  await clickSel(page, '#view button[data-ip="pIcon"]', '把配图面板合上');
+
+  // 真发一个任务出去，核对它落到的是刚点的那个人。
+  // 光看按钮高亮不算数：点下去到底把谁传给了后端，只有真发一次才知道。
+  const ttl = 'e2e 派活 ' + Date.now();
+  await page.locator('#view #pT').fill(ttl);
+  await page.locator('#view #pS').fill('e2e 自己发的，看它落到谁手上');
+  await page.locator('#view #pSend').click();
+  await page.waitForTimeout(1600);
+  const sent = await page.evaluate(async t => {
+    const r = await fetch('/api/tasks/hall', { headers: { 'Accept': 'application/json' } });
+    const d = await r.json();
+    const all = [].concat(d.doing || [], d.hall || []);
+    const x = all.filter(v => v.title === t)[0];
+    return x ? { who: x.who || '', status: x.status || '' } : null;
+  }, ttl);
+  say('   真发一个任务: ' + (sent ? (sent.who || '（没名字）') + ' / ' + sent.status : '没找到'));
+  if (!sent) bad('[v42] 派出去的任务在大厅清单里找不到');
+  else if (sent.who !== kidChips[1]) {
+    bad('[v42] 派给「' + kidChips[1] + '」的任务落到了「' + sent.who + '」');
   }
 
   // 家长端「我发出的」活（原任务页）：三个分组 + 撤销的边界。

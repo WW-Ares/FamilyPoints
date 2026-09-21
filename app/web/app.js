@@ -177,7 +177,7 @@ const ICON_TOKENS = {};
   ICONS.forEach(function (i) { ICON_TOKENS[i.t] = i.l; });
 })();
 const ICON_DEFAULT = {
-  task: 'task_help', repair: 'sys_repair', wish: 'sys_wish', box: 'rw_box',
+  task: 'quest_scroll', repair: 'sys_repair', wish: 'sys_wish', box: 'rw_box',
   ticket: 'rw_ticket', card: 'rw_card', dim: 'dim_study', pool: 'sys_pool', item: 'rw_card',
 };
 
@@ -215,7 +215,9 @@ const IP = {};                 // 每个实例一份状态：当前值 / 当前�
 const IP_LIMIT = 120;          // 一次最多画这么多格子，再多选的同学靠滚动加载没必要
 
 function iconField(id, cur, kind, label) {
-  IP[id] = { v: cur || '', g: '', q: '', kind: kind || '' };
+  // 配任务的图先落在「任务」那一组（悬赏卷轴 / 勋章 / 钥匙 / 藏宝图这些），
+  // 家长发活时找的就是这一类；一上来铺「全部」，得从七个维度那儿开始往下划。
+  IP[id] = { v: cur || '', g: kind === 'task' ? '任务' : '', q: '', kind: kind || '' };
   return '<div class="field">' + (label ? '<label>' + label + '</label>' : '') +
     '<div class="ip"><button type="button" class="ip-btn" data-ip="' + id + '">' +
     glyph(cur, kind, 26) + '<span class="ip-n">' + esc(iconLabel(cur, kind)) + '</span>' +
@@ -279,7 +281,7 @@ function ipRender(id) {
   if (!box) return;
   const st = IP[id];
   box.innerHTML =
-    '<div class="ip-top"><input class="ip-q" id="ipq-' + id + '" placeholder="搜：洗澡、星星、钱…" ' +
+    '<div class="ip-top"><input class="ip-q" id="ipq-' + id + '" placeholder="搜：钥匙、星星、宝箱…" ' +
     'value="' + esc(st.q) + '">' +
     '<button type="button" class="ip-cl" data-ipc="' + id + '">重置</button></div>' +
     '<div class="ip-chips">' + ipGroups().map(function (g) {
@@ -290,22 +292,31 @@ function ipRender(id) {
     '<div id="ipg-' + id + '">' + ipGrid(id) + '</div>';
 }
 
+/* 面板里所有交互都走事件委托，绑在 root 上，一个 root 只绑一次。
+   原来开合按钮和搜索框是逐个 addEventListener 的，那是**快照**：发布页的容器
+   #view 不重画（每次切页只换里面的 innerHTML），加上 dataset.ipBound 那道
+   「只绑一次」的守卫，第二次进「发布 → 写任务」时，新画出来的那颗「配一张图」
+   身上一个监听都没有，点下去毫无反应。搜索框更早就坏了 —— 它是点开之后才
+   生成的，绑的那会儿它还不存在。
+   委托之后，谁在场上谁生效，root 只绑一次也不怕。 */
 function bindIconField(root) {
   const r = root || document;
-  $$('button[data-ip]', r).forEach(function (b) {
-    b.addEventListener('click', function () {
-      const id = b.dataset.ip;
+  if (r.dataset && r.dataset.ipBound) return;
+  if (r.dataset) r.dataset.ipBound = '1';
+  r.addEventListener('click', function (e) {
+    const t = e.target && e.target.closest
+      ? e.target.closest('[data-ip],[data-ipv],[data-ipg],[data-ipc]') : null;
+    if (!t) return;
+    const id = t.dataset.ip || t.dataset.ipv || t.dataset.ipg || t.dataset.ipc;
+    if (!id || !IP[id]) return;
+    if (t.dataset.ip) {                    // 开 / 合这一格的面板
       const box = $('#ipb-' + id);
       if (!box) return;
       box.hidden = !box.hidden;
       if (!box.hidden) ipRender(id);
-    });
-  });
-  r.addEventListener('click', function (e) {
-    const t = e.target.closest ? e.target.closest('[data-ipv],[data-ipg],[data-ipc]') : null;
-    if (!t) return;
-    if (t.dataset.ipv) {
-      const id = t.dataset.ipv;
+      return;
+    }
+    if (t.dataset.ipv) {                   // 挑一张
       IP[id].v = t.dataset.v || '';
       const inp = $('#' + id);
       if (inp) inp.value = IP[id].v;
@@ -316,24 +327,25 @@ function bindIconField(root) {
         if (old) old.outerHTML = glyph(IP[id].v, IP[id].kind, 26);
       }
       const box = $('#ipb-' + id);
-      if (box) { box.hidden = true; }
+      if (box) box.hidden = true;
       e.stopPropagation();
       return;
     }
-    if (t.dataset.ipg) { IP[t.dataset.ipg].g = t.dataset.g; ipRender(t.dataset.ipg); return; }
-    if (t.dataset.ipc) { IP[t.dataset.ipc].g = ''; IP[t.dataset.ipc].q = ''; ipRender(t.dataset.ipc); return; }
+    if (t.dataset.ipg) { IP[id].g = t.dataset.g; ipRender(id); return; }
+    if (t.dataset.ipc) { IP[id].g = ''; IP[id].q = ''; ipRender(id); return; }
   });
-  $$('.ip-q', r).forEach(function (i) {
-    i.addEventListener('input', function () {
-      const id = i.id.slice(4);
-      IP[id].q = i.value.trim();
-      clearTimeout(IP[id].tm);
-      // 只重画格子，不重画整个面板。连着整个重画的话每敲一个字输入框就失焦一次
-      IP[id].tm = setTimeout(function () {
-        const g = $('#ipg-' + id);
-        if (g) g.innerHTML = ipGrid(id);
-      }, 200);
-    });
+  r.addEventListener('input', function (e) {
+    const i = e.target;
+    if (!i || !i.classList || !i.classList.contains('ip-q')) return;
+    const id = i.id.slice(4);
+    if (!IP[id]) return;
+    IP[id].q = i.value.trim();
+    clearTimeout(IP[id].tm);
+    // 只重画格子，不重画整个面板。连着整个重画的话每敲一个字输入框就失焦一次
+    IP[id].tm = setTimeout(function () {
+      const g = $('#ipg-' + id);
+      if (g) g.innerHTML = ipGrid(id);
+    }, 200);
   });
 }
 
@@ -3361,9 +3373,10 @@ async function renderAdminPublish(v) {
       '<div class="chips">' +
       '<button type="button" class="chip on" data-to="hall">挂大厅，谁都能接</button>' +
       '<button type="button" class="chip" data-to="kid">派给一个孩子</button></div>' +
-      '<div class="field" id="pKidBox" hidden><span class="field-label">哪一个</span>' +
-      '<select id="pKid">' + KIDS().map(m => '<option value="' + m.id + '">' +
-      esc(m.name) + '</option>').join('') + '</select></div></div>' +
+      '<div class="field" id="pKidBox" hidden><span class="field-label">派给谁</span>' +
+      '<div class="chips">' + KIDS().map((m, i) =>
+        '<button type="button" class="chip' + (i ? '' : ' on') + '" data-kid="' + m.id + '">' +
+        esc(m.name) + '</button>').join('') + '</div></div></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="pHallOnly">' +
       '<div class="field" style="gap:7px"><span class="field-label">接取</span>' +
       '<div class="chips">' +
@@ -3385,8 +3398,9 @@ async function renderAdminPublish(v) {
       '选「挂一条修复任务」的，系统会自己把修复清单挂到他的任务上，做完由你确认。</p>';
     h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
       '<div class="field"><span class="field-label">谁的事</span>' +
-      '<select id="cKid">' + KIDS().map(m => '<option value="' + m.id + '">' +
-      esc(m.name) + '</option>').join('') + '</select></div>' +
+      '<div class="chips">' + KIDS().map((m, i) =>
+        '<button type="button" class="chip' + (i ? '' : ' on') + '" data-ckid="' + m.id + '">' +
+        esc(m.name) + '</button>').join('') + '</div></div>' +
       '<div class="field"><span class="field-label">哪件事</span>' +
       '<input id="cWhy" placeholder="例如：说好 8 点回家，9 点半才回"></div>' +
       '<div class="field" style="gap:7px"><span class="field-label">怎么处理</span>' +
@@ -3421,10 +3435,12 @@ async function renderAdminPublish(v) {
 function bindPublishForm() {
   let rt = 'stardust', defaultAmt = 5, slots = 1, dl = 1;
   let to = 'hall';   // hall = 挂大厅谁都能接；kid = 直接派给某个孩子
-  // 选图面板是一次事件委托绑在祖先上，而 #view 这个容器不会重画，
-  // 每渲染一次发布页就绑一次，第五次点下去会同时开合五个盒子。
-  const view = $('#view');
-  if (!view.dataset.ipBound) { bindIconField(view); view.dataset.ipBound = '1'; }
+  // 派给谁原来是下拉，现在是按钮。孩子就四个以内的数，下拉要多点一次才看得见
+  // 有谁，还得对准那一行；按钮摊平在那儿，一眼点名。
+  let kid = (KIDS()[0] || {}).id || 0;
+  // 选图面板的交互（开合 / 挑图 / 换组 / 搜索）是委托绑在 #view 上的，
+  // bindIconField 自己认门牌去重：这个容器不重画，绑一次就够。
+  bindIconField($('#view'));
   $$('#view .chip[data-r]').forEach(c => c.addEventListener('click', () => {
     rt = c.dataset.r;
     defaultAmt = +c.dataset.d;
@@ -3440,6 +3456,10 @@ function bindPublishForm() {
     // 派给某个孩子之后，没有「谁能来领」和「多久没人领就下线」这两问
     $('#pKidBox').hidden = to !== 'kid';
     $('#pHallOnly').style.display = to === 'kid' ? 'none' : '';
+  }));
+  $$('#view .chip[data-kid]').forEach(c => c.addEventListener('click', () => {
+    kid = +c.dataset.kid;
+    $$('#view .chip[data-kid]').forEach(x => x.classList.remove('on')); c.classList.add('on');
   }));
   $$('#view .chip[data-s]').forEach(c => c.addEventListener('click', () => {
     slots = +c.dataset.s;
@@ -3463,11 +3483,11 @@ function bindPublishForm() {
       body.open_to_all = true; body.slots = slots;
       body.deadline = dl === 1 ? todayStr() : shiftDay(todayStr(), 1);
     } else {
-      body.assignee_id = +$('#pKid').value;
+      body.assignee_id = kid;
     }
     try {
       await api('POST', '/api/tasks', body);
-      const who = KIDS().filter(m => m.id === +$('#pKid').value)[0];
+      const who = KIDS().filter(m => m.id === kid)[0];
       toast(to === 'hall' ? '挂到大厅了' : '派给' + (who ? who.name : '') + '了');
       P_PUBSEG = 'mine';
       await render();
@@ -3479,7 +3499,12 @@ function bindPublishForm() {
    level 不再写死 3，按选的处理方式从 CALIB_LEVEL 取，理由写在那个常数上。 */
 function bindCalibForm() {
   let eff = 'task';
+  let kid = (KIDS()[0] || {}).id || 0;
   const hint = $('#cHint'), tplBox = $('#cTplBox'), go = $('#cGo');
+  $$('#view .chip[data-ckid]').forEach(c => c.addEventListener('click', () => {
+    kid = +c.dataset.ckid;
+    $$('#view .chip[data-ckid]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+  }));
   $$('#view .chip[data-ce]').forEach(c => c.addEventListener('click', () => {
     eff = c.dataset.ce;
     $$('#view .chip[data-ce]').forEach(x => x.classList.remove('on')); c.classList.add('on');
@@ -3492,7 +3517,7 @@ function bindCalibForm() {
     if (!reason) return err({ message: '写清楚是哪件事，空着记不下来' });
     try {
       const r = await api('POST', '/api/calibration', {
-        member_id: +$('#cKid').value, level: CALIB_LEVEL[eff] || 1, reason: reason,
+        member_id: kid, level: CALIB_LEVEL[eff] || 1, reason: reason,
         effect_type: eff, template: ($('#cTpl') || {}).value || 'apology',
       });
       toast(r.task_id ? '记下了，修复任务已进他的清单' : '记下了');

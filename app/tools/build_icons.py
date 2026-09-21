@@ -22,6 +22,13 @@ viewBox 忘记改这类肉眼挑不出来的问题。这里把「底座 + 颜色
 孩子端宝箱页那七只，和家长在「给它们换张图」里挑的，必须长得一样 ——
 不同步的话，家长挑的箱子跟孩子看到的就不是同一个东西。
 
+「任务」那一组（quest_*）是给发活时配的那张图用的，18 张，走的不是
+「读书 / 洗碗」这种具体行为，而是游戏里认的那套符号：悬赏令、目标靶、
+钥匙、勋章、沙漏、行囊。理由是大厅里孩子先看见的就是这张图，一张
+「今天有什么活」的告示，比一张「洗碗」更配得上那个位置；真要具体到
+某一件事，隔壁「日常」那 24 张随时能挑。这一组排在 ICONS 最前面，
+配图面板一打开就先看到它。
+
 SVG 全部为本项目自绘，不引用任何第三方素材，没有授权问题。
 """
 import io
@@ -43,6 +50,9 @@ PALETTE = {
     "green": "#82c8a6", "mint": "#71b69c", "teal": "#7fc4c9",
     "sky": "#8ec9e8", "blue": "#6fa8dc", "indigo": "#8fa5e0",
     "purple": "#b58bd9", "brown": "#c9905f", "grey": "#9aa5b1",
+    # 任务那一组比别的组张数多（18 张），底色不够分会撞成一片，
+    # 借一支介于紫与蓝之间的补上。
+    "violet": "#a98be0",
     # 宝箱七档的底色。比箱子本体浅一档，箱子压在上面才看得出来；
     # 数值照孩子端那七只箱盖的颜色。
     "wood": "#E7C79E", "copper": "#EFD3B4", "silver": "#DFE5EC",
@@ -121,6 +131,114 @@ def ticket_body(emblem):
 # 图形坐标范围：圆心 (60,60)、半径 46，主体尽量落在 26~94 这一段里。
 # body 里三个占位符：{w} 白、{bg} 底色（挖空用）、{d} 深蓝灰。
 ICONS = [
+    # 零、任务（发活时配的那张图，走游戏里那一套语汇） ----------------------
+    # 大厅里孩子先看见的就是这张图，所以这一组排在最前面，配图面板一打开
+    # 先看到的是它。默认那张是悬赏令 —— 一张贴出来的活的本来面目。
+    ("quest_scroll", "悬赏令", "任务", "red", "任务 悬赏 卷轴 布告",
+     '<rect x="36" y="34" width="48" height="52" fill="{w}"/>'
+     '<rect x="30" y="26" width="60" height="12" rx="6" fill="{w}"/>'
+     '<rect x="30" y="82" width="60" height="12" rx="6" fill="{w}"/>'
+     '<path d="M46 50h28M46 62h28M46 74h18" stroke="{bg}" stroke-width="4" '
+     'stroke-linecap="round"/>'),
+
+    ("quest_board", "任务板", "任务", "brown", "布告栏 板子 张贴 接活",
+     '<rect x="28" y="28" width="64" height="64" rx="9" fill="{d}" opacity=".22"/>'
+     '<rect x="38" y="40" width="44" height="34" rx="4" fill="{w}"/>'
+     '<path d="M46 50h28M46 60h28M46 68h16" stroke="{d}" stroke-width="3.5" '
+     'stroke-linecap="round" opacity=".45"/>'
+     '<circle cx="60" cy="36" r="4.5" fill="{w}"/>'),
+
+    ("quest_target", "目标", "任务", "rose", "靶心 达标 命中 完成",
+     '<circle cx="60" cy="60" r="30" fill="{w}"/>'
+     '<circle cx="60" cy="60" r="19" fill="{bg}"/>'
+     '<circle cx="60" cy="60" r="9" fill="{w}"/>'),
+
+    ("quest_flag", "旗帜", "任务", "orange", "终点 插旗 达成 目标点",
+     '<path d="M38 26v68" stroke="{w}" stroke-width="7" stroke-linecap="round"/>'
+     '<path d="M44 32h42l-11 12 11 12H44z" fill="{w}"/>'
+     '<rect x="28" y="88" width="40" height="8" rx="4" fill="{w}"/>'),
+
+    ("quest_map", "藏宝图", "任务", "yellow", "地图 冒险 寻路 宝",
+     '<path d="M28 36l22-8v56l-22 8z" fill="{w}" opacity=".8"/>'
+     '<path d="M50 28l20 8v56l-20-8z" fill="{w}"/>'
+     '<path d="M70 36l22-8v56l-22 8z" fill="{w}" opacity=".8"/>'
+     '<path d="M40 68c8-10 18-4 24-12" stroke="{bg}" stroke-width="3.5" fill="none" '
+     'stroke-dasharray="5 5"/>'
+     '<path d="M74 62l10 10M84 62l-10 10" stroke="{d}" stroke-width="4" '
+     'stroke-linecap="round"/>'),
+
+    ("quest_compass", "罗盘", "任务", "teal", "方向 指南针 探索 找路",
+     '<circle cx="60" cy="60" r="30" fill="{w}"/>'
+     '<path d="M60 34l12 26H48z" fill="{d}" opacity=".72"/>'
+     '<path d="M60 86l-12-26h24z" fill="{bg}"/>'
+     '<circle cx="60" cy="60" r="5" fill="{w}"/>'),
+
+    ("quest_key", "钥匙", "任务", "grey", "钥匙 解锁 开启 通关",
+     '<circle cx="45" cy="45" r="16" fill="none" stroke="{w}" stroke-width="9"/>'
+     '<path d="M56 56l24 24" stroke="{w}" stroke-width="9" stroke-linecap="round"/>'
+     '<path d="M67 67l-9 9M76 76l-9 9" stroke="{w}" stroke-width="8" '
+     'stroke-linecap="round"/>'),
+
+    ("quest_medal", "勋章", "任务", "blue", "奖章 授勋 表现 表扬",
+     '<path d="M46 26l14 30-10 8-14-30z" fill="{w}" opacity=".7"/>'
+     '<path d="M74 26L60 56l10 8 14-30z" fill="{w}" opacity=".7"/>'
+     '<circle cx="60" cy="74" r="18" fill="{w}"/>'
+     '<path d="M60 64l3.5 7 8 1-6 6 1.5 8-7-4-7 4 1.5-8-6-6 8-1z" fill="{bg}"/>'),
+
+    ("quest_crown", "皇冠", "任务", "purple", "冠军 第一 王者 厉害",
+     '<path d="M32 78V40l16 14 12-20 12 20 16-14v38z" fill="{w}"/>'
+     '<rect x="30" y="78" width="60" height="11" rx="5" fill="{w}"/>'
+     '<circle cx="60" cy="46" r="4" fill="{bg}"/>'),
+
+    ("quest_gem", "宝石", "任务", "sky", "钻石 稀有 珍贵 结晶",
+     '<path d="M48 28h24l12 20-24 40-24-40z" fill="{w}"/>'
+     '<path d="M48 28l-12 20h48L72 28z" fill="{w}" opacity=".72"/>'
+     '<path d="M36 48h48M60 28v60" stroke="{bg}" stroke-width="3"/>'),
+
+    ("quest_coin", "金币", "任务", "gold", "金币 报酬 赏钱 攒",
+     '<circle cx="60" cy="60" r="30" fill="{w}"/>'
+     '<circle cx="60" cy="60" r="21" fill="none" stroke="{bg}" stroke-width="4"/>'
+     '<path d="M60 46l4 9 10 1-7.5 7 2 10-8.5-5-8.5 5 2-10-7.5-7 10-1z" fill="{bg}"/>'),
+
+    ("quest_potion", "药水", "任务", "green", "补血 能量 补给 恢复",
+     '<rect x="48" y="24" width="24" height="10" rx="4" fill="{w}"/>'
+     '<rect x="52" y="30" width="16" height="24" fill="{w}"/>'
+     '<circle cx="60" cy="70" r="24" fill="{w}"/>'
+     '<path d="M44 74a16 16 0 0 0 32 0z" fill="{bg}"/>'
+     '<circle cx="52" cy="62" r="3.5" fill="{bg}"/>'
+     '<circle cx="66" cy="56" r="3" fill="{bg}" opacity=".7"/>'),
+
+    ("quest_sword", "剑", "任务", "indigo", "挑战 对决 打怪 勇气",
+     '<path d="M60 24l8 14v34H52V38z" fill="{w}"/>'
+     '<rect x="38" y="66" width="44" height="9" rx="4.5" fill="{w}"/>'
+     '<rect x="55" y="75" width="10" height="20" rx="4" fill="{w}"/>'),
+
+    ("quest_torch", "火把", "任务", "blush", "火把 照路 引路 点亮",
+     '<rect x="55" y="64" width="10" height="28" rx="5" fill="{w}"/>'
+     '<rect x="45" y="58" width="30" height="9" rx="4" fill="{w}"/>'
+     '<path d="M60 20c10 12 17 20 17 27 0 10-8 17-17 17s-17-7-17-17c0-7 7-15 17-27z" fill="{w}"/>'
+     '<path d="M60 44c5 6 8 10 8 14 0 5-4 8-8 8s-8-3-8-8c0-4 3-8 8-14z" fill="{bg}" '
+     'opacity=".45"/>'),
+
+    ("quest_hourglass", "沙漏", "任务", "mint", "限时 倒计时 计时 时间",
+     '<rect x="34" y="26" width="52" height="9" rx="4" fill="{w}"/>'
+     '<rect x="34" y="85" width="52" height="9" rx="4" fill="{w}"/>'
+     '<path d="M44 35h32v9c0 8-16 12-16 16s16 8 16 16v9H44v-9c0-8 16-12 16-16'
+     's-16-8-16-16z" fill="{w}"/>'
+     '<path d="M50 78h20l-10-14z" fill="{bg}" opacity=".65"/>'),
+
+    ("quest_bag", "行囊", "任务", "brown", "背包 准备 出门 带上",
+     '<path d="M34 46h52v34a12 12 0 0 1-12 12H46a12 12 0 0 1-12-12z" fill="{w}"/>'
+     '<path d="M48 46c0-8 5-14 12-14s12 6 12 14" fill="none" stroke="{w}" '
+     'stroke-width="6"/>'
+     '<rect x="34" y="56" width="52" height="7" fill="{bg}" opacity=".45"/>'
+     '<circle cx="60" cy="74" r="6" fill="{bg}"/>'),
+
+    ("quest_door", "下一关", "任务", "violet", "传送门 关卡 通过 进入",
+     '<path d="M36 86V50a24 24 0 0 1 48 0v36z" fill="{w}"/>'
+     '<rect x="28" y="84" width="64" height="9" rx="4" fill="{w}"/>'
+     '<circle cx="72" cy="68" r="5" fill="{bg}"/>'),
+
     # 一、七个维度 ----------------------------------------------------------
     ("dim_heart", "心能", "维度", "red", "心 情绪 平静",
      '<path d="M60 86C39 68 29 57 29 45c0-10 8-18 18-18 6 0 11 3 13 8 2-5 7-8 13-8 '
