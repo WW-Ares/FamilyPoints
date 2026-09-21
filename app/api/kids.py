@@ -5,6 +5,7 @@
 """
 import db
 import engine as E
+from datetime import datetime
 from . import ApiError, route
 
 
@@ -19,6 +20,23 @@ def _days(ctx, hi=365):
     except (TypeError, ValueError):
         raise ApiError("天数写个整数就行")
     return max(1, min(hi, v))
+
+
+def _ymd(ctx, key):
+    """日期入参 YYYY-MM-DD。写错了要报错，别悄悄当成「没传」——
+
+    家长在弹层里挑了 9 月 1 日到 9 月 15 日，后端却当没传、把几年的账
+    全倒出来，家长看到的是「这半个月孩子做了这么多事」，账是假的。
+    """
+    raw = ctx.p(key)
+    if raw is None or str(raw).strip() == "":
+        return None
+    v = str(raw).strip()
+    try:
+        datetime.strptime(v, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise ApiError("日期写成 2026-09-01 这样")
+    return v
 
 
 @route("GET", "/api/kids/overview")
@@ -80,6 +98,9 @@ def activity(ctx):
     「这张券哪来的」「这笔星尘怎么没了」。
 
     孩子的口径按孩子自己那份走（只能看自己）：这条线上没有「别人家的事」。
+
+    since / until 是「看哪一段」（YYYY-MM-DD，两头都算在内），
+    days 是「往回数几天」；两路都给时按日历那一路走。
     """
     me = ctx.as_member()
     limit = ctx.clamp("limit", 1, 200, 30)
@@ -88,17 +109,25 @@ def activity(ctx):
     group = (ctx.p("group") or "").strip() or None
     if group and group not in dict(E.ACTIVITY_GROUPS):
         raise ApiError("没有这一类")
+    # v1.6：按日历翻的那一路。家长在弹层里挑的是起止两天，不是「往回数几天」——
+    # 用日期切才不会多带进来半天。两头都算在内。
+    since = _ymd(ctx, "since")
+    until = _ymd(ctx, "until")
+    if since and until and since > until:
+        raise ApiError("开始的日子要在结束之前")
     mid = ctx.i("member_id")
     if me["role"] != "parent":
         # 孩子传别人的 member_id 时按自己算：这条线是「读自己」，忽略参数不会越权
         # （取回来的还是自己的账），报错反而会打断顺手带上 member_id 的调用。
         # 这条口径跟 Ctx.target_child 一致，别在这里另立一套。
-        return E.activity(me["id"], days=days, group=group, limit=limit, offset=offset)
+        return E.activity(me["id"], days=days, group=group, limit=limit, offset=offset,
+                          since=since, until=until)
     if mid is not None:
         row = db.query_one("SELECT role FROM member WHERE id=?", (mid,))
         if not row or row["role"] != "child":
             raise ApiError("家长只负责打分，不参与被打分与奖励", 403)
-    return E.activity(mid, days=days, group=group, limit=limit, offset=offset)
+    return E.activity(mid, days=days, group=group, limit=limit, offset=offset,
+                      since=since, until=until)
 
 
 @route("GET", "/api/dims")

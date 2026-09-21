@@ -2291,20 +2291,33 @@ def _act_text(kind, note, item_text, r):
     return (KINDS.get(kind, kind) + ("：" + n if n else ""))
 
 
-def activity(member_id=None, *, days=None, group=None, limit=30, offset=0):
+def activity(member_id=None, *, days=None, group=None, limit=30, offset=0,
+             since=None, until=None):
     """账本人话。member_id 传 None 是「全家」，不是「没指定」。
 
     同一次动作常常写两条流水（钱出去一条、东西进来一条），比如买券：
     一条 −10 星尘、一条 +1 张券。按「谁 + 什么时候 + 什么类型 + 那句话」
     拢成一条，家长看到的就是「花 10 星尘买了看动画 30 分钟」这一句，
     而不是两条各说一半的账。金额和东西在合并里各自求和，账还是对的。
+
+    since / until 是「按日历翻」那一路（YYYY-MM-DD，两头都算在内，
+    until 那天的 23:59:59 也算）；days 是「往回数几天」那一路。
+    两路都给了就按日历那一路走 —— 家长在弹层里挑的是起止两天，
+    换算成天数再筛会多带进来半天，不如直接用日期切。
     """
     ids = [int(member_id)] if member_id else [m["id"] for m in _kids()]
     if not ids:
         return {"items": [], "total": 0, "member_id": member_id}
     where = ["member_id IN (%s)" % ",".join("?" * len(ids)), "voided=0"]
     args = list(ids)
-    if days:
+    if since or until:
+        if since:
+            where.append("ts>=?")
+            args.append(str(since).strip() + " 00:00:00")
+        if until:
+            where.append("ts<=?")
+            args.append(str(until).strip() + " 23:59:59")
+    elif days:
         since = (_dtnow() - timedelta(days=max(1, int(days)))).strftime("%Y-%m-%d %H:%M:%S")
         where.append("ts>=?")
         args.append(since)
@@ -3768,7 +3781,15 @@ def create_task(assignee_id, title, std, reward_type="stardust", reward=None, de
         # （见 _task_reward_blocked）。发布时根本没人可以挂上限。
         # 接取时限也在这里兜底：不填就从设置里取一个，只有大厅任务需要它 ——
         # 指名派下去的任务已经有主人，没有「等着谁来接」这一层。
-        deadline = deadline or default_claim_deadline()
+        # deadline 三种取值要分开认：
+        #   None  = 家长没选，按设置给一个默认值；
+        #   ''    = 家长选了「不限时」，存 NULL（不进过期清理，前端显示成「不限」）；
+        #   其余  = 家长指定的那一天。
+        # 原来只有「有就用、没有就用默认」两路，选了「不限时」会被默认 48 小时顶回来。
+        if deadline is None:
+            deadline = default_claim_deadline()
+        elif deadline == "":
+            deadline = None
         return db.execute(
             "INSERT INTO task (kind, title, std, assignee_id, created_by, reward_type, reward_json,"
             " deadline, status, visibility, slots, icon, cooldown_key, created_at)"

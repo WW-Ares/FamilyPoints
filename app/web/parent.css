@@ -347,9 +347,15 @@ body.grown .field input:focus, body.grown .field select:focus, body.grown .field
 body.grown .field textarea { min-height: 68px; resize: vertical; }
 
 /* ------------------------------------------------------------------ 月历 */
-body.grown .cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .cal-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 body.grown .cal-nav { display: flex; align-items: center; gap: 10px; }
-body.grown .cal-nav .month { font-size: calc(15 * var(--u)); font-weight: 700; color: var(--ink-title); font-family: var(--font-num); }
+/* 年月不用数字字体：那套字体里没有「年」「月」这两个字，会回退到另一个字族，
+   一行里中文和数字高低不齐；再被两侧箭头一挤就折成三行。
+   不换行是硬要求 —— 折成「2026 年 / 9 / 月」没人读得懂。 */
+body.grown .cal-nav .month {
+  font-size: calc(15 * var(--u)); font-weight: 700;
+  color: var(--ink-title); white-space: nowrap;
+}
 body.grown .cal-nav button {
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
   border-radius: 9px; border: 1px solid var(--card-line); background: #fff;
@@ -726,4 +732,113 @@ body.grown .dr-row .dr-v.no { color: var(--warn); }
   body.grown .nav-pill { height: calc(48 * var(--u)); padding: calc(4 * var(--u)); }
   body.grown .nav-item { gap: calc(2 * var(--u)); }
   body.grown .nav-item .ico { width: calc(19 * var(--u)); height: calc(19 * var(--u)); }
+}
+
+
+/* ------------------------------------------------- 家人账号 · 行拆三层 ----- */
+/* 原来头像、名字、账号、四颗按钮全挤在一条横线上：.wact 撑得很宽，把 .txt
+   挤到只剩几个字宽，名字被压成一字一行。账号位数只是让它更显眼 —— 短名一样
+   坏。拆成三层之后，长账号自己折行，压不到名字，也压不到按钮。 */
+body.grown .mem-row { flex-direction: column; align-items: stretch; gap: 7px; }
+body.grown .mem-line { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
+body.grown .mem-line .txt { flex: 1; min-width: 0; }
+body.grown .mem-line .nm { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+body.grown .mem-pw { flex: none; white-space: nowrap; font-size: calc(10.5 * var(--u)); }
+body.grown .mem-line--acc { padding-left: calc(44 * var(--u)); gap: 6px; }
+body.grown .mem-key { flex: none; font-size: calc(11 * var(--u)); color: var(--ink-3); }
+body.grown .mem-acc {
+  flex: 1; min-width: 0; font-size: calc(12 * var(--u));
+  color: var(--ink-2); word-break: break-all;
+}
+body.grown .mem-row .wact { margin-top: 0; }
+
+/* ------------------------------------------------- 发布页 · 胶囊 / 步进器 --- */
+/* 三格切换做成真胶囊：底衬是浅色圆角槽，选中那格橙底白字。
+   原来只给选中格加白底，三格之间没有底衬，看着像三个并排的按钮，
+   看不出「这是一组、只能选一个」。 */
+body.grown .seg--pill { gap: 3px; padding: 3px; border: 0; }
+body.grown .seg--pill .seg-item { border-radius: var(--r-pill); }
+body.grown .seg--pill .seg-item.on { background: var(--brand); color: #fff; box-shadow: none; }
+/* 「我发出的 18」那个数字做成小牌：数变了只换牌上的字，
+   不至于让整格宽度跟着变。 */
+body.grown .seg-n {
+  flex: none; min-width: 17px; padding: 0 5px; border-radius: 8px;
+  background: var(--brand-soft); color: var(--brand);
+  font-family: var(--font-num); font-size: calc(10 * var(--u)); font-weight: 700;
+}
+body.grown .seg--pill .seg-item.on .seg-n { background: rgba(255, 255, 255, .28); color: #fff; }
+
+/* 数量步进器。手机上 type=number 那个框会顶起数字键盘，还容易留成 0 或空，
+   发出去的活孩子领了才发现奖励是空的。点加减不会错。 */
+body.grown .stepper { display: flex; align-items: center; gap: 12px; }
+body.grown .st-btn {
+  width: 30px; height: 30px; flex: none; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--card-line); background: var(--card);
+  font-size: calc(16 * var(--u)); color: var(--ink-2); line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+/* 特异性必须压过上面的 body.grown .field input{width:100%}（0,2,2），
+   否则数字框被撑满整行，把「+」挤出屏幕。 */
+body.grown .stepper input.st-val {
+  width: 56px; flex: none; text-align: center; padding: 6px 0;
+  border: 1px solid var(--card-line); border-radius: 10px; background: var(--card);
+  font-family: var(--font-num); font-size: calc(14 * var(--u));
+  font-weight: 700; color: var(--ink);
+}
+
+/* 「发出去」贴在屏幕底边：这一屏填的东西多，按钮压在最下面要滚到底才
+   看得见，填完还得往回滚确认一遍。 */
+body.grown .pub-foot {
+  /* 不做悬浮。试过 sticky：悬浮的那一条正好压在「接取 / 时限」和展开的
+     选图面板上，一屏看得见的东西反而少了。落回文档流，滚到底就是设计稿
+     那个样子：按钮在最下，小注贴在它脚下。 */
+  margin-top: 2px; padding: 4px 0 2px;
+}
+
+/* ------------------------------------------------------------------ 发布 · 写任务 */
+/* 卡里每一行都是「标签在左、控件在右」。原来标签和控件上下各占一行，
+   只有两个字的标签也要独占一整行，同样一屏少看见两行；摊到一行之后，
+   一张卡刚好落到拇指够得着的范围里。 */
+body.grown .pc { display: flex; flex-direction: column; gap: calc(11 * var(--u)); }
+body.grown .pin {
+  width: 100%; padding: 11px 12px; color: var(--ink);
+  background: var(--field); border: 1px solid var(--card-line);
+  border-radius: var(--r-xs); font-size: calc(13 * var(--u));
+  font-family: var(--font-cn);
+}
+body.grown .pin::placeholder { color: var(--ink-3); }
+body.grown .pin:focus {
+  outline: 2px solid rgba(255,138,61,.35); outline-offset: 1px; border-color: var(--orange);
+}
+body.grown .prow { display: flex; align-items: center; gap: calc(7 * var(--u)); flex-wrap: wrap; }
+body.grown .plab {
+  flex: none; font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2);
+}
+/* 控件那一侧吃掉剩下的宽度；chips 多了就自己换行，不挤扁标签。 */
+body.grown .prow > .chips { display: flex; gap: calc(6 * var(--u)); flex-wrap: wrap; }
+body.grown .prow > .field, body.grown .prow > .ip { flex: 1 1 auto; min-width: 0; }
+/* 派给某个孩子之后整个收起来的那两问 */
+body.grown .pgrp { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+/* 接取 / 时限两行的那一句小注挂在行尾 */
+body.grown .ptip { margin-left: auto; }
+
+/* ------------------------------------------------------------------ 我的记录 · 自定义区间 */
+/* 开始 / 结束并排两栏。原来上下各占一行，弹层里多出的一行正好把
+   「看这一段」顶到屏幕外，家长得先往上滑一下才点得到。
+   input[type=date] 自带一个不小的固有宽度，min-width:0 是它能被压进
+   半栏的前提 —— 少了这一句它宁可撑破弹层也不肯缩。 */
+body.grown .drange { display: flex; gap: calc(10 * var(--u)); }
+body.grown .dr-col {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: calc(4 * var(--u));
+}
+body.grown .dr-k { font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2); }
+body.grown .dr-col input[type="date"] {
+  width: 100%; min-width: 0; padding: 10px calc(9 * var(--u));
+  font-size: calc(12.5 * var(--u)); font-family: var(--font-cn); color: var(--ink);
+  background: var(--field); border: 1px solid var(--card-line);
+  border-radius: var(--r-xs);
+  -webkit-appearance: none; appearance: none;
+}
+body.grown .dr-col input[type="date"]:focus {
+  outline: 2px solid rgba(255,138,61,.35); outline-offset: 1px; border-color: var(--orange);
 }

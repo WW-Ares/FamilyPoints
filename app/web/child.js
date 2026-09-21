@@ -1232,8 +1232,8 @@ async function kScreenReport() {
   const rep = await kg('/api/report?member_id=' + mid + '&days=31');
   const hist = await kg('/api/score/history?member_id=' + mid + '&days=14');
   // 月度统计那一块的数据。跟家长端同一张表同一个接口，一次把整月拿回来，
-  // 点某一天不用再跑一趟。
-  const ym = todayStr().slice(0, 7);
+  // 点某一天不用再跑一趟。翻月时 K_YM 换成那一个月，取法不变。
+  const ym = K_YM || todayStr().slice(0, 7);
   const mdays = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
   const mh = await kg('/api/score/history?member_id=' + mid +
     '&until=' + ym + '-' + String(mdays).padStart(2, '0') + '&days=' + mdays);
@@ -1346,9 +1346,18 @@ async function kScreenReport() {
    只画本月，不做翻月：孩子要看的是「这个月我在哪儿」，家长才需要往回翻账。 */
 let KCAL = null;
 const K_CAL_WD = ['一', '二', '三', '四', '五', '六', '日'];
+/* 正在看哪个月。空就是本月。孩子也能往回翻 —— 只给他看本月，
+   他问「我上个月是不是更好」时没人回答。 */
+let K_YM = '';
+function shiftYM(ym, n) {
+  const Y = +String(ym).slice(0, 4), M = +String(ym).slice(5);
+  const d = new Date(Y, M - 1 + n, 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
 
 function kCalHTML(m) {
   const ym = m.ym, Y = +ym.slice(0, 4), M = +ym.slice(5);
+  const curYM = todayStr().slice(0, 7);
   const lead = (new Date(Y, M - 1, 1).getDay() + 6) % 7;   // 周一排第一列
   const today = todayStr();
   const cells = [];
@@ -1357,7 +1366,19 @@ function kCalHTML(m) {
   while (cells.length % 7) cells.push(null);
 
   let h = '<div class="card"><div class="hb" style="margin-bottom:10px">' +
-    '<span class="card-title">' + M + ' 月打分日历</span>' +
+    '<span class="kcal-nav">' +
+    // 往左只给一年：再往前是空的，翻过去是一整月没打过分的格子
+    (ym > shiftYM(curYM, -11)
+      ? '<button type="button" class="kcal-mv" data-kmv="' + shiftYM(ym, -1) +
+        '" aria-label="上个月">‹</button>'
+      : '<span class="kcal-mv is-off" aria-hidden="true">‹</span>') +
+    '<span class="card-title">' + M + ' 月</span>' +
+    // 往右只到本月为止：再往后是还没发生的日子，翻过去是一整月空格
+    (ym < curYM
+      ? '<button type="button" class="kcal-mv" data-kmv="' + shiftYM(ym, 1) +
+        '" aria-label="下个月">›</button>'
+      : '<span class="kcal-mv is-off" aria-hidden="true">›</span>') +
+    '</span>' +
     '<span class="card-note">点一格看当天七项</span></div>' +
     '<div class="kcal">' +
     K_CAL_WD.map(d => '<span class="kcal-wd">' + d + '</span>').join('');
@@ -1397,11 +1418,14 @@ function kMonthKpi(m) {
   const perfect = m.rows.filter(r => r.scored && r.score >= r.full).length;
   const first = m.rows.length ? m.rows[0].day.slice(5) : '';
   const last = m.rows.length ? m.rows[m.rows.length - 1].day.slice(5) : '';
+  // 翻月之后这三个数字说的是那一个月，标题跟着走 —— 停留在「本月小结」
+  // 会让人以为还是这个月。
+  const km = +String(m.ym || '').slice(5, 7) || (+todayStr().slice(5, 7));
   return '<div class="card"><div class="hb" style="margin-bottom:10px">' +
-    '<span class="card-title">本月小结</span>' +
+    '<span class="card-title">' + km + ' 月小结</span>' +
     '<span class="card-note">' + esc(first) + ' - ' + esc(last) + '</span></div>' +
     '<div class="kkpi-row">' +
-    '<div class="kkpi"><span class="k">本月固定分</span><span class="v">' +
+    '<div class="kkpi"><span class="k">固定分</span><span class="v">' +
     num(t.score) + ' / ' + num(t.full) + '</span></div>' +
     '<div class="kkpi"><span class="k">完美日</span><span class="v">' + num(perfect) + ' 天</span></div>' +
     '<div class="kkpi"><span class="k">打过分的天</span><span class="v">' +
@@ -1973,6 +1997,12 @@ CHILD.bind = function () {
   $$('[data-kcd]', el).forEach(b => b.addEventListener('click', () => {
     const row = KCAL && (KCAL.rows || []).filter(r => r.day === b.dataset.kcd)[0];
     if (row) kCalDaySheet(row);
+  }));
+  // 月历翻月。整屏重画而不是只换那张卡：这一屏的好几块都按「最近」
+  // 算，只换月历会让上下两截说的是两个时间段。
+  $$('[data-kmv]', el).forEach(b => b.addEventListener('click', async () => {
+    K_YM = b.dataset.kmv;
+    await render();
   }));
 
   // 任务页底部那颗「展开全部」：拉半屏列表出来看。
