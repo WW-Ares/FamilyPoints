@@ -3477,7 +3477,7 @@ async function renderAdminPublish(v) {
        看得见，填完还得往回滚确认一遍。 */
     h += '<div class="pub-foot">' +
       '<button class="btn btn--primary btn--block" id="pSend">发出去</button>' +
-      '<p class="caption" style="text-align:center">挂出去就进任务大厅 · ' +
+      '<p class="caption" id="pFootTip" style="text-align:center">挂出去就进任务大厅 · ' +
       '时限内没人接会自动下线，不罚任何人</p></div>';
 
     v.innerHTML = h;
@@ -3559,6 +3559,9 @@ function bindPublishForm() {
     const hall = to === 'hall';
     $('#pHallOnly').style.display = hall ? '' : 'none';
     tip('#pToTip', hall ? TO_TIP.hall : TO_TIP.kid);
+    // 底部那句也得跟着换：派给孩子的任务不进大厅、没时限，原话就说错了
+    tip('#pFootTip', hall ? '挂出去就进任务大厅 · 时限内没人接会自动下线，不罚任何人'
+                          : '直接派到他任务上 · 他做完你确认时发分');
   }));
   $$('#view .chip[data-s]').forEach(c => c.addEventListener('click', () => {
     slots = +c.dataset.s;
