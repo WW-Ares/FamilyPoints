@@ -1,6 +1,6 @@
-# 粗筛：找出前端里「被引用但没声明」的标识符。
+# 粗筛：找出前端里「被引用但没声明」和「跨函数误用同名局部量」的标识符。
 # 扫的是 web/ 下那几个 <script>（见下面的 FILES），不是只有一个 app.js。
-# 不是精确的 scope 分析，是启发式；输出的是候选，需要人眼看一遍。
+# 是启发式，不是正经 parser；输出的是候选，需要人眼看一遍。
 # 存在的意义：node --check 只查语法，查不出 `done is not defined` 这类运行时错误，
 # 而这类错误会让整块界面空白（跟白屏事故同一类）。
 #
@@ -11,6 +11,22 @@
 # 看着像在工作，其实等于没查 —— 这个工具存在的唯一理由就这么被抹掉了。
 # 现在：注释 / 字符串 / 模板 / 正则字面量全部换成**等长空格**（换行保留），
 # 行号不再漂移；模板里的 ${...} 还算代码，正则按前一个字符判断是除号还是正则。
+#
+# 2026-09-21 又修一次，加的是**作用域**：老版把四个 js 的 const/let/var/function
+# 全收进一个扁平集合，不区分函数。于是
+#   function pTasksHTML(){ const submitted = d.submitted; ... }
+#   function bindTaskPage(){ if (submitted.length) ... }   // 引用的是别人的局部量
+# 这种「名字在别处声明过、但此处看不见」的错，一律被判成「已声明」放过去。
+# 家长端那颗「确认 / 退回」就是这么坏的：界面在、按钮在，点了 submitted is not defined。
+# 现在分两步判：
+#   a) 哪儿都没声明过 → 未声明候选（老口径）；
+#   b) 声明过，但所有声明都在**不包含此处**的函数里 → 跨作用域引用候选（新口径）。
+# b 这类必须报出来，它就是上面那种坏。
+#
+# 作用域是近似：只认 `function ...(...) {` 和 `(...) => {` 两种函数头，
+# 类方法 / 对象字面量里的简写方法不认，块级作用域（if / for 的 {}）也不算。
+# 认不出的地方一律按**更外层**算 —— 宁可漏报，也不误报：
+# 误报会让这条自查链变噪声，噪声一多就没人看了，工具等于没有。
 import re, sys, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -19,17 +35,9 @@ WEB = os.path.join(os.path.dirname(HERE), 'web')
 # v31 起前端不是一个文件了：app.js（家长端 + 公共）、child.js（孩子端那套「糖果冒险」）、
 # candy-icons.js（孩子端的图标雪碧图）。v35 家长端换皮又多了 parent-icons.js
 # （家长端的图标雪碧图）。这几个 <script> 在同一个页面里，全局是共享的，
-# 所以声明必须合起来收集 —— 分开扫会把 S / api / CHILD / PARENT_ICONS
+# 所以**全局**声明必须合起来收集 —— 分开扫会把 S / api / CHILD / PARENT_ICONS
 # 这类跨文件的名字全报成「未声明」。
 FILES = ['candy-icons.js', 'parent-icons.js', 'app.js', 'child.js']
-
-RAW = {}
-for _fn in FILES:
-    _p = os.path.join(WEB, _fn)
-    if os.path.exists(_p):
-        RAW[_fn] = open(_p, encoding='utf-8').read()
-    else:
-        print('跳过（文件不在）：%s' % _fn)
 
 # 出现在这些字符后面的 / 是除号，不是正则开头
 _DIV_AFTER = re.compile(r'[A-Za-z0-9_$\)\]]')
@@ -38,6 +46,7 @@ _REGEX_KW = {'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete',
              'void', 'case', 'do', 'else', 'yield', 'await'}
 
 _IDENT_CH = re.compile(r'[A-Za-z0-9_$]')
+_IDENT = r'[A-Za-z_$][\w$]*'
 
 
 def _mask(chunk):
@@ -174,43 +183,145 @@ def strip_noise(s):
     return ''.join(out)
 
 
-CODES = [(fn, strip_noise(txt)) for fn, txt in RAW.items()]
-# 收集声明这一步不看行号，合成一份扫就够了。
-code = '\n'.join(c for _, c in CODES)
+# ---------------------------------------------------------------------------
+# 作用域：给每个函数体框一个区间，位置就能问「你在哪个函数里」
+# ---------------------------------------------------------------------------
 
-# 2) 收集声明过的名字
-declared = set()
-for m in re.finditer(r'\b(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)', code):
-    declared.add(m.group(1))
-# 一条 const/let 里逗号接了好几个：
-#   const go = $('#go', box), done = $('#pdone', box);
-# 只认关键字后面第一个名字的话，done 会被当成没声明，白报一次。
-for m in re.finditer(r'\b(?:const|let|var)\s+([^;\n]*)', code):
-    for name in re.findall(r'(?:^|,)\s*([A-Za-z_$][\w$]*)\s*(?==|,|$)', m.group(1)):
-        declared.add(name)
-# 函数参数、catch 参数、箭头函数参数（够用的近似）
-for m in re.finditer(r'function\s*[A-Za-z_$\w]*\s*\(([^)]*)\)', code):
-    for p in m.group(1).split(','):
-        p = p.strip().split('=')[0].strip()
-        if re.fullmatch(r'[A-Za-z_$][\w$]*', p or ''):
-            declared.add(p)
-for m in re.finditer(r'\(([^()]*)\)\s*=>', code):
-    for p in m.group(1).split(','):
-        p = p.strip().split('=')[0].strip()
-        if re.fullmatch(r'[A-Za-z_$][\w$]*', p or ''):
-            declared.add(p)
-# 单个参数的箭头函数：b => ...
-for m in re.finditer(r'(?<![\w.$])([A-Za-z_$][\w$]*)\s*=>', code):
-    declared.add(m.group(1))
-for m in re.finditer(r'\bcatch\s*\(\s*([A-Za-z_$][\w$]*)', code):
-    declared.add(m.group(1))
-# 解构赋值里的名字：const { a, b } = ... / const [x, y] = ...
-for m in re.finditer(r'\b(?:const|let|var)\s*([\[{][^\]}]*[\]}])\s*=', code):
-    for name in re.findall(r'[A-Za-z_$][\w$]*', m.group(1)):
-        declared.add(name)
-# 属性简写的对象字面量、类字段之类不处理 —— 有疑问的会以候选形式冒出来，人眼看。
+def _brace_pairs(code):
+    """开括号下标 -> 对应闭括号下标。涂过噪声之后，字符串和正则里的花括号
+    已经没了，模板里的 ${ } 是配对的，所以这份配对是可信的。"""
+    stack, pairs = [], {}
+    for i, c in enumerate(code):
+        if c == '{':
+            stack.append(i)
+        elif c == '}' and stack:
+            pairs[stack.pop()] = i
+    return pairs
 
-# 3) JS/DOM 里本来就有的全局
+
+def _body_open_after(code, i):
+    """i 是 `function` 之后，返回函数体那个 { 的下标；括号深度归零后遇到的第一个。"""
+    depth, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+        elif c == '{' and depth <= 0:
+            return i
+        i += 1
+    return -1
+
+
+def _params_before(code, j):
+    """j 是函数体 { 的下标，往回找紧挨着的 (...) 里的形参文本。"""
+    k = j - 1
+    while k >= 0 and code[k].isspace():
+        k -= 1
+    if k < 0 or code[k] != ')':
+        return ''
+    depth, end = 0, k
+    while k >= 0:
+        if code[k] == ')':
+            depth += 1
+        elif code[k] == '(':
+            depth -= 1
+            if depth == 0:
+                return code[k + 1:end]
+        k -= 1
+    return ''
+
+
+def _param_names(params):
+    """形参文本 -> 名字列表。解构的取里面所有像名字的词，宁可多收。"""
+    out = []
+    for p in (params or '').split(','):
+        p = p.strip().split('=')[0].strip()
+        if p[:1] in ('{', '['):
+            out += re.findall(_IDENT, p)
+        elif re.fullmatch(_IDENT, p or ''):
+            out.append(p)
+    return out
+
+
+def collect_scopes(code):
+    """认出每个函数体：{start, end, params}。end 是闭括号下标，闭区间。
+
+    返回 (scopes, loose)。loose 是**表达式体箭头函数**的形参 ——
+    `S.members.find(x => x.id === id)` 里的 x。那种箭头没有块，框不出区间，
+    所以它的形参只能挂到外层作用域上（宁可漏报）。
+    不这么处理会满屏误报：`x`、`b`、`i` 这类单字母回调参数全是这个形状。
+    """
+    pairs = _brace_pairs(code)
+    scopes, loose = [], []
+
+    def add(open_at, params):
+        if open_at in pairs:
+            scopes.append({'start': open_at, 'end': pairs[open_at], 'params': params})
+
+    for m in re.finditer(r'\bfunction\b', code):
+        o = _body_open_after(code, m.end())
+        if o >= 0:
+            add(o, _params_before(code, o))
+    for m in re.finditer(r'=>(?!=)', code):
+        j = m.end()
+        while j < len(code) and code[j].isspace():
+            j += 1
+        # 形参一律从 `=>` **前面**取：`(a, x) => a + x` 这种带括号的，
+        # 从后面看只能看见一个 `>`，什么都取不到。
+        back = re.search(r'(' + _IDENT + r')\s*$', code[:m.start()])
+        text = back.group(1) if back else _params_before(code, m.start())
+        if j < len(code) and code[j] == '{':
+            add(j, text)
+        else:
+            for name in _param_names(text):
+                loose.append((name, m.start()))
+    return scopes, loose
+
+
+def _innermost(scopes, pos):
+    """pos 落在哪个函数的体里；不在任何函数里就返回 None（= 文件顶层，全局）。"""
+    best, span = None, None
+    for i, s in enumerate(scopes):
+        if s['start'] <= pos <= s['end']:
+            w = s['end'] - s['start']
+            if span is None or w < span:
+                best, span = i, w
+    return best
+
+
+def _chain(scopes, pos):
+    """pos 一路往外经过的所有函数（闭包链）。"""
+    return {i for i, s in enumerate(scopes) if s['start'] <= pos <= s['end']}
+
+
+# ---------------------------------------------------------------------------
+# 收集声明与引用
+# ---------------------------------------------------------------------------
+
+def _decl_rules(code):
+    """产出 (名字, 位置)。规则与老版一致，只是多了位置。形参不在这里收，
+    它们跟着 collect_scopes 走 —— 挂在外层会把作用域放宽，容易漏报。"""
+    out = []
+    for m in re.finditer(r'\b(?:function|const|let|var|class)\s+(' + _IDENT + r')', code):
+        out.append((m.group(1), m.start(1)))
+    # 一条 const/let 里逗号接了好几个：
+    #   const go = $('#go', box), done = $('#pdone', box);
+    # 只认关键字后面第一个名字的话，done 会被当成没声明，白报一次。
+    for m in re.finditer(r'\b(?:const|let|var)\s+([^;\n]*)', code):
+        for nm in re.findall(r'(?:^|,)\s*(' + _IDENT + r')\s*(?==|,|$)', m.group(1)):
+            out.append((nm, m.start()))
+    for m in re.finditer(r'catch\s*\(\s*(' + _IDENT + r')', code):
+        out.append((m.group(1), m.start(1)))
+    # 解构赋值里的名字：const { a, b } = ... / const [x, y] = ...
+    for m in re.finditer(r'\b(?:const|let|var)\s*([\[{][^\]}]*[\]}])\s*=', code):
+        for nm in re.findall(_IDENT, m.group(1)):
+            out.append((nm, m.start()))
+    return out
+
+
+# JS/DOM 里本来就有的全局
 KNOWN = {
     'window', 'document', 'console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number',
     'Boolean', 'Date', 'RegExp', 'Error', 'Promise', 'Map', 'Set', 'Symbol', 'Proxy', 'Reflect',
@@ -231,28 +342,152 @@ KNOWN = {
     'ICONS', 'AVATARS',
 }
 
-# 4) 找被调用 / 被取属性的裸标识符
-cands = {}
+
+def analyze(raw):
+    """raw: {文件名: 源码}。返回 (未声明, 跨作用域)。
+
+    未声明：哪儿都没声明过的名字 -> [(位置, ...)]
+    跨作用域：声明过，但所有声明都在不包含此处的函数里 -> {名字: {'uses':…, 'decls':…}}
+    """
+    files = []
+    for fn, txt in raw.items():
+        code = strip_noise(txt)
+        scopes, loose = collect_scopes(code)
+        files.append((fn, code, scopes, loose))
+
+    decls = {}          # 名字 -> {作用域id}；None 表示全局（文件顶层），全局可见
+    for fn, code, scopes, loose in files:
+        for name, pos in _decl_rules(code):
+            idx = _innermost(scopes, pos)
+            decls.setdefault(name, set()).add((fn, idx) if idx is not None else None)
+        for si, sc in enumerate(scopes):
+            for name in _param_names(sc['params']):
+                decls.setdefault(name, set()).add((fn, si))
+        for name, pos in loose:
+            idx = _innermost(scopes, pos)
+            decls.setdefault(name, set()).add((fn, idx) if idx is not None else None)
+
+    refs = []           # (名字, '文件:行', 闭包链)
+
+    def note(name, fn, code, scopes, pos):
+        line = code[:pos].count('\n') + 1
+        chain = {(fn, i) for i in _chain(scopes, pos)}
+        refs.append((name, '%s:%d' % (fn, line), chain))
+
+    for fn, code, scopes, _loose in files:
+        # 被调用 / 被取属性的裸标识符
+        for m in re.finditer(r'(?<![\w.$])(' + _IDENT + r')\s*(?:\(|\.)', code):
+            note(m.group(1), fn, code, scopes, m.start())
+        # `!x.length` 这类裸读（白屏事故的形态）
+        for m in re.finditer(r'(?<![\w.$])(' + _IDENT + r')\.\s*length', code):
+            note(m.group(1), fn, code, scopes, m.start())
+
+    undeclared, cross = {}, {}
+    for name, where, chain in refs:
+        if name in KNOWN:
+            continue
+        if name not in decls:
+            undeclared.setdefault(name, []).append(where)
+            continue
+        if None in decls[name] or (chain & decls[name]):
+            continue
+        cross.setdefault(name, {'uses': [], 'decls': []})
+        cross[name]['uses'].append(where)
+
+    for name, info in cross.items():
+        seen = [loc for (f, i) in decls[name]
+                for loc in [_where_of(files, f, i)] if loc]
+        info['decls'] = list(dict.fromkeys(seen))
+        info['uses'] = list(dict.fromkeys(info['uses']))
+    return undeclared, cross
 
 
-def _add(name, where):
-    if name in declared or name in KNOWN:
-        return
-    cands.setdefault(name, []).append(where)
+def _where_of(files, fn, scope_idx):
+    """把作用域 id 说成人话：哪个文件、哪一行。全局返回 None。"""
+    if scope_idx is None:
+        return None
+    for f, code, scopes, _loose in files:
+        if f == fn:
+            return '%s:%d' % (fn, code[:scopes[scope_idx]['start']].count('\n') + 1)
+    return None
 
 
-for _fn, code in CODES:
-    for m in re.finditer(r'(?<![\w.$])([A-Za-z_$][\w$]*)\s*(?:\(|\.)', code):
-        _add(m.group(1), '%s:%d' % (_fn, code[:m.start()].count('\n') + 1))
-    # 5) 也查 `!x.length` 这类裸读（白屏事故的形态）
-    for m in re.finditer(r'(?<![\w.$])([A-Za-z_$][\w$]*)\.\s*length', code):
-        _add(m.group(1), '%s:%d' % (_fn, code[:m.start()].count('\n') + 1))
+# ---------------------------------------------------------------------------
+# 自测：假名夹具必须真报出来，干净样本必须一个都不报
+# ---------------------------------------------------------------------------
 
-if not cands:
-    print('OK：没有发现未声明的标识符候选')
-    sys.exit(0)
+_CLEAN = '''
+const shared = 1;
+function outer() {
+  const inner = 2;
+  return inner + shared;
+}
+const useShared = () => shared + outer();
+'''
 
-print('候选未声明标识符（按出现次数）：')
-for name in sorted(cands, key=lambda k: -len(cands[k])):
-    where = list(dict.fromkeys(cands[name]))       # 同一个位置只报一次
-    print('  %-22s %2d 次  %s' % (name, len(cands[name]), ' '.join(where[:10])))
+_BUG = '''
+function pTasksHTML(d) {
+  const submitted = d.submitted || [];
+  return submitted.length;
+}
+function bindTaskPage(d) {
+  if (submitted.length) { return 1; }
+  return 0;
+}
+'''
+
+
+def selftest():
+    """改这个工具的人先跑它。夹具就是当年的那个坏：两个函数各有一个 d，
+    第二个函数引了第一个函数的局部量 submitted。"""
+    bad = 0
+    un, cr = analyze({'clean.js': _CLEAN})
+    if un or cr:
+        bad = 1
+        print('[自测失败] 干净样本不该有候选：未声明=%s 跨作用域=%s' % (un, cr))
+    un, cr = analyze({'bug.js': _BUG})
+    if 'submitted' not in cr:
+        bad = 1
+        print('[自测失败] 假名夹具没被报出来：未声明=%s 跨作用域=%s' % (un, cr))
+    elif un:
+        bad = 1
+        print('[自测失败] 假名夹具不该有「未声明」：%s' % un)
+    if bad:
+        print('自测没过。')
+        return 1
+    print('自测通过：干净样本 0 候选，假名夹具报出了 submitted。')
+    return 0
+
+
+def main():
+    if '--selftest' in sys.argv:
+        return selftest()
+    raw = {}
+    for fn in FILES:
+        p = os.path.join(WEB, fn)
+        if os.path.exists(p):
+            raw[fn] = open(p, encoding='utf-8').read()
+        else:
+            print('跳过（文件不在）：%s' % fn)
+    undeclared, cross = analyze(raw)
+
+    if not undeclared and not cross:
+        print('OK：没有发现未声明的标识符，也没有跨函数误用的同名局部量')
+        return 0
+
+    if cross:
+        print('跨函数误用同名局部量（声明在别的函数里，此处根本看不见）：')
+        for name in sorted(cross, key=lambda k: -len(cross[k]['uses'])):
+            info = cross[name]
+            print('  %-18s 用在 %s；声明在 %s'
+                  % (name, ' '.join(info['uses'][:6]), ' '.join(info['decls'][:6])))
+    if undeclared:
+        print('候选未声明标识符（按出现次数）：')
+        for name in sorted(undeclared, key=lambda k: -len(undeclared[k])):
+            where = list(dict.fromkeys(undeclared[name]))
+            print('  %-22s %2d 次  %s' % (name, len(where), ' '.join(where[:10])))
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -143,6 +143,15 @@ def today():
     return fmt(_dtnow().date())
 
 
+def days_back(n):
+    """n 天前那天，含今天算第 1 天（days_back(1) 就是今天）。
+
+    走同一个可冻结的时钟：不能用 SQLite 的 date('now')，那样测试里
+    freeze_clock 就冻不住了，跨零点那种断言会变成看服务器心情。
+    """
+    return fmt(_dtnow().date() - timedelta(days=max(0, int(n) - 1)))
+
+
 def week_start_of(day):
     """按设置里的周期起点，返回 day 所属周期的第一天。"""
     d = parse_day(day)
@@ -960,10 +969,21 @@ def _settle_ticket_request(request_id, operator_id=None):
         return {"ok": False, "msg": "券不够了，核销没成"}
     start = now()
     # 排队：这一轮还没放完就接着上一张的结束时刻起算。
-    stats = _day_ticket_stats(r["member_id"], r["item_id"], r["day"],
-                              exclude_request=request_id)
-    if stats["round_end"] and stats["round_end"] > start:
-        start = stats["round_end"]
+    #
+    # 这里**不能**再走按天过滤的 _day_ticket_stats。跨零点那一段最典型：
+    # 23:50 那张 30 分钟的放到 00:20，孩子在 00:10 续（新申请的 day 已经是
+    # 第二天），按「今天」查根本查不到上一张 → round_end 是 None → 从此刻
+    # 00:10 起算，跟上一张重叠，整段还少算 10 分钟。
+    # 所以按「人 + 券」取最近一次的结束时刻，不带 day 条件。
+    # 只用 end_at 真的还没到的那些（过去的自然小于 start，条件自己就挡住了），
+    # 一天的额度、能续几张仍由 ticket_gate 管，这里只管接在哪一刻。
+    prev = db.query_one(
+        "SELECT MAX(end_at) AS last_end FROM ticket_request"
+        " WHERE member_id=? AND item_id=? AND id<>? AND end_at IS NOT NULL"
+        " AND status IN ('approved','self')",
+        (r["member_id"], r["item_id"], request_id))
+    if prev and prev["last_end"] and prev["last_end"] > start:
+        start = prev["last_end"]
     end = _plus_minutes(start, r["minutes"]) if r["minutes"] else start
     status = "approved" if operator_id else "self"
     db.execute("UPDATE ticket_request SET status=?, operator_id=?, resolved_at=?,"
@@ -1198,10 +1218,16 @@ def _ticket_segment(rows, now_ts):
     「正在玩」，倒计时还是显示上一张那点零头 —— 剩 10 分钟的时候续一张，
     屏幕上还在数那 10 分钟，孩子以为白续了。
 
-    所以口径是「这个人的娱乐时间此刻还剩多少」，按时间为轴往前串：此刻正在
-    放的那段是起点，凡是紧接在这段尾巴后面开场的（开始时刻落在已经串到的
+    所以口径是「这个人的娱乐时间此刻还剩多少」，按时间为轴**往后**串：此刻
+    正在放的那段是起点，凡是紧接在这段尾巴后面开场的（开始时刻落在已经串到的
     最晚结束时刻之前或等于它），都算同一段。一次可能续好几张，所以要绕到
     不再有新成员加进来为止。
+
+    串是单向的，两头都得卡住：只收「开始时刻不早于本段头」的行。少了这一头，
+    当天更早、**已经玩完**的那张会被吞回整段 —— 它 begin 更小，却一路通过
+    `begin <= far`，于是段头被它顶掉、张数和总时长一起撑大。ticket_playing()
+    的 SQL 已经滤掉 `end_at <= now`，不会中这一枪；传当天全部行的
+    my_ticket_list() 会。
 
     这么串越不过「一轮结束要休息」那一道：闸门在 ticket_gate 里先判过，
     冷却没走完根本核销不了，也就不会出现「正在休息却还连着算」的记录。
@@ -1212,7 +1238,9 @@ def _ticket_segment(rows, now_ts):
             if r["start_at"] and r["end_at"] and r["start_at"] <= now_ts < r["end_at"]]
     if not live:
         return None
-    ids, far = {r["id"] for r in live}, max(r["end_at"] for r in live)
+    ids = {r["id"] for r in live}
+    near = min(r["start_at"] for r in live)
+    far = max(r["end_at"] for r in live)
     changed = True
     while changed:
         changed = False
@@ -1220,7 +1248,7 @@ def _ticket_segment(rows, now_ts):
             if r["id"] in ids:
                 continue
             begin = r["start_at"] or r["ts"]
-            if begin and begin <= far:
+            if begin and near <= begin <= far:
                 ids.add(r["id"])
                 if r["end_at"] and r["end_at"] > far:
                     far = r["end_at"]
@@ -4120,6 +4148,38 @@ def task_claim(task_id, member_id):
          hall["icon"], now()))
     push_notify(None, "task_claimed", "有任务被领走了", hall["title"])
     return {"ok": True, "task_id": tid, "status": "claimed"}
+
+
+def my_task_history(member_id, days=30):
+    """孩子自己的任务底账：不管成没成、放没放下，只要经他手就在这儿。
+
+    和 /api/tasks 那条不一样：那条是家长在用的「家庭任务清单」，对孩子只回
+    kind='reward'。修复任务也是他做过的事，在那儿看不见，孩子会以为那件事
+    没发生过。状态一个不筛：待做、在做、等确认、已完成、被退回、已放弃、
+    已撤回，全都带着 —— 这份记录要回答的是「我这些活后来怎么了」。
+
+    只看近 N 天（默认 30）。「最多回溯一个月」是产品口径，不是为了省事：
+    再往前的翻起来没意义，也没人在乎三个月前放下的那件事。
+    排序按「最后一次动它的时刻」，不是创建时刻 —— 一件派下来躺了两天的活，
+    今天交上去，它应该出现在最上面。
+    """
+    archive_due_tasks()
+    since = days_back(days)
+    rows = db.query(
+        "SELECT t.*, m.name AS assignee,"
+        " COALESCE(t.confirmed_at, t.archived_at, t.submitted_at,"
+        "          t.claimed_at, t.created_at) AS touched_at"
+        " FROM task t LEFT JOIN member m ON m.id=t.assignee_id"
+        " WHERE t.assignee_id=? AND t.kind IN ('reward','repair')"
+        "   AND COALESCE(t.confirmed_at, t.archived_at, t.submitted_at,"
+        "                t.claimed_at, t.created_at) >= ?"
+        " ORDER BY touched_at DESC, t.id DESC LIMIT 300", (member_id, since))
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["reward"] = json.loads(r["reward_json"] or "{}")
+        out.append(d)
+    return {"items": out, "days": int(days), "since": since}
 
 
 def task_abandon(task_id, member_id):

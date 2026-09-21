@@ -247,11 +247,15 @@ body.grown .pill--on-parch { background: rgba(255,255,255,.7); border-color: rgb
    蓝=能改、红=锁死。颜色只做区分，判断靠旁边那句话。 */
 body.grown .pill--warn { background: #FBE3E1; color: #A03224; border-color: transparent; font-weight: 700; }
 body.grown .pill--blue { background: #E4EEF9; color: #2A5C93; border-color: transparent; font-weight: 700; }
+/* 打分页那一条状态带。它自己不再带 margin —— #view 的 gap 已经管了上下留白，
+   再叠一个 10px 就变成上面 14、下面 24，整块看着往下坠。上下留白收 10→7，
+   里面那颗状态胶囊收 5/10→3/9，这一块整体矮下去，四层提示才挤得拢。 */
 body.grown .sband {
   display: flex; align-items: flex-start; gap: 8px;
-  font-size: calc(11.5 * var(--u)); line-height: 1.55; border-radius: var(--r-xs); padding: 10px 12px;
+  font-size: calc(11.5 * var(--u)); line-height: 1.55; border-radius: var(--r-xs); padding: 7px 11px;
   background: #F2EDE5; color: var(--ink-2);
 }
+body.grown .sband .pill { padding: 3px 9px; }
 body.grown .sband.is-warn { background: var(--warn-soft); color: #A2601F; }
 body.grown .sband.is-bad  { background: #FBE3E1; color: #A03224; }
 body.grown .sband.is-info { background: #E4EEF9; color: #2A5C93; }

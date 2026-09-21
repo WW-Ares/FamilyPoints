@@ -119,6 +119,33 @@ function kDeadline(s) {
   const m = String(s == null ? '' : s).match(/^(\d{4})-(\d\d)-(\d\d)/);
   return m ? (m[2] + '-' + m[3]) : String(s == null ? '' : s);
 }
+/* 首页那三条动态的小符号。按「这条是谁做的」分色，跟全站的颜色语汇对齐：
+   金=到手的（星尘、宝箱）、橙=自己按的（买券买卡、兑零花钱）、蓝=任务、
+   粉=心愿、紫=校准。符号比文字先被看见，一眼就知道这条是进账还是被记了一笔。 */
+const K_FEED_SRC = {
+  given:       { icon: 'i-stardust', fg: 'var(--gold-deep)',   bg: 'var(--gold-pale)' },
+  box:         { icon: 'i-box',      fg: 'var(--gold-deep)',   bg: 'var(--gold-pale)' },
+  self:        { icon: 'i-coupon',   fg: 'var(--orange-deep)', bg: 'var(--warn-bg)' },
+  task:        { icon: 'i-task',     fg: 'var(--blue-deep)',   bg: 'var(--blue-bg)' },
+  wish:        { icon: 'i-wishstar', fg: 'var(--pink-deep)',   bg: 'var(--pink-bg)' },
+  calibration: { icon: 'i-info',     fg: 'var(--purple-deep)', bg: 'var(--purple-bg)' },
+};
+/* 胶囊里放不下 `2026-09-21 19:40:03`，而这三条要回答的是「多久之前」。
+   认不出格式就原样返回：宁可难看，不要瞎猜一个时间。 */
+function kAgo(ts) {
+  const s = String(ts == null ? '' : ts);
+  const m = s.match(/^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/);
+  if (!m) return s;
+  const then = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  if (isNaN(then.getTime())) return s;
+  const mins = Math.floor((Date.now() - then.getTime()) / 60000);
+  const day = m[1] + '-' + m[2] + '-' + m[3];
+  if (mins < 1) return '刚刚';
+  if (mins < 60) return mins + ' 分钟前';
+  if (day === todayStr()) return Math.floor(mins / 60) + ' 小时前';
+  if (mins < 60 * 36) return '昨天';
+  return m[2] + '-' + m[3];
+}
 
 /* ============================================================ 导航 */
 /* 每一屏归哪一个底栏格。二级页也写在这儿：底栏高亮靠它，
@@ -128,7 +155,7 @@ const K_TAB_OF = {
   task: 'task', hall: 'task',
   chest: 'chest',
   coupon: 'coupon', shop: 'coupon',
-  mine: 'mine', wish: 'mine', atlas: 'mine', record: 'mine', family: 'mine',
+  mine: 'mine', wish: 'mine', atlas: 'mine', family: 'mine',
 };
 const K_TABS = [
   ['home', 'i-home', '首页'], ['task', 'i-task', '任务'], ['chest', 'i-chest-nav', '宝箱'],
@@ -367,12 +394,21 @@ async function kScreenHome() {
       ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
   }
 
-  // ⑥ 最近发生
-  const rec = (fd && fd.recent || [])[0];
-  if (rec) {
-    h += '<div class="footnote">' + ic('i-info', 13, 'var(--ink-line)') +
-      esc(String(rec.ts || '').slice(5, 16)) + ' · ' +
-      esc((rec.who ? rec.who + ' ' : '') + rec.text) + '</div>';
+  // ⑥ 最近发生。接口本来就只回自己那一份（member_id 从会话里来），不用在这儿筛。
+  //    原来是整块只报最新那一条的灰字：看得到「刚发生了什么」，看不到「这几天
+  //    都在发生什么」。改成三条胶囊，每条前面挂一个来源小符号。
+  const rec = (fd && fd.recent || []).slice(0, 3);
+  if (rec.length) {
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-clock', 16, 'var(--purple)') + '最近发生</span>' +
+      '<span class="sect-note">和我有关的</span></div>' +
+      '<div class="card card--tight kfeed">' + rec.map(x => {
+        const s = K_FEED_SRC[x.kind] || K_FEED_SRC.given;
+        return '<div class="kfeed-row" style="background:' + s.bg + '">' +
+          '<span class="kfeed-ic">' + ic(s.icon, 16, s.fg) + '</span>' +
+          '<span class="kfeed-tx">' + esc(x.text) + '</span>' +
+          '<span class="kfeed-ts">' + esc(kAgo(x.ts)) + '</span></div>';
+      }).join('') + '</div>';
   }
   return kShell({}, h);
 }
@@ -382,6 +418,7 @@ async function kScreenTask() {
   const mid = S.me.id;
   const hl = await api('GET', '/api/tasks/hall');
   const act = await kg('/api/activity?group=given&days=1&limit=60');
+  const hs = await kg('/api/tasks/mine?days=30');
   const mine = (hl.doing || []).filter(t => t.assignee_id === mid);
   const doing = mine.filter(t => t.status !== 'submitted');   // 待做 + 在做，两种都是手上的活
   const waits = mine.filter(t => t.status === 'submitted');
@@ -444,8 +481,59 @@ async function kScreenTask() {
     });
   }
 
-  h += '<div class="footnote" data-go="record" style="cursor:pointer">看看我的全部记录 ›</div>';
+  // 任务记录。原来这儿只有一行小灰字「看看我的全部记录 ›」，点了跳到「我的记录」，
+  // 那页讲的是「哪一项这几天怎么走的」，跟任务没关系 —— 想看「我那件活后来怎么了」
+  // 反而没地方去。改成把最近三条直接摆在这儿，想看全部再展开半屏列表。
+  const hist = (hs && hs.items) || [];
+  if (hist.length) {
+    const show = hist.slice(0, 3);
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-clock', 16, 'var(--blue-deep)') + '任务记录</span>' +
+      '<span class="sect-note">最近 ' + num(show.length) + ' 条 · 近一个月</span></div>' +
+      '<div class="card">' + show.map(kTaskHistRow).join('') + '</div>';
+    if (hist.length > show.length) {
+      h += '<button class="btn wide line" id="kHistMore">展开全部 ' + num(hist.length) +
+        ' 条 ›</button>';
+    }
+  }
   return kShell({}, h);
+}
+
+/* 任务记录的一行。状态一个不藏：在做、等确认、已完成、被退回、已放弃、已撤回
+   都在这儿，颜色分得开。孩子要的是「我那些活后来怎么了」，只报成功的记录
+   等于没记 —— 放下的那件也是他做过的决定。 */
+const K_TASK_HIST = {
+  pending:   { t: '待做',   bg: 'var(--blue-bg)',   fg: 'var(--blue-deep)',   ic: 'i-task' },
+  claimed:   { t: '在做',   bg: 'var(--blue-bg)',   fg: 'var(--blue-deep)',   ic: 'i-task' },
+  submitted: { t: '等确认', bg: 'var(--purple-bg)', fg: 'var(--purple-deep)', ic: 'i-check' },
+  confirmed: { t: '已完成', bg: 'var(--ok-bg)',     fg: 'var(--ok)',          ic: 'i-check' },
+  returned:  { t: '被退回', bg: 'var(--warn-bg)',   fg: 'var(--warn)',        ic: 'i-back' },
+  abandoned: { t: '已放弃', bg: 'var(--line)',      fg: 'var(--ink-3)',       ic: 'i-back' },
+  archived:  { t: '已撤回', bg: 'var(--line)',      fg: 'var(--ink-3)',       ic: 'i-back' },
+};
+function kTaskHistRow(t) {
+  const st = K_TASK_HIST[t.status] || K_TASK_HIST.pending;
+  const when = t.touched_at || t.created_at || '';
+  return '<div class="ktrec">' +
+    '<span class="icon-box" style="background:' + st.bg + '">' + ic(st.ic, 17, st.fg) + '</span>' +
+    '<div class="row-grow"><div class="row-title">' + esc(t.title) +
+    (t.kind === 'repair' ? '<span class="kt-repair">修复</span>' : '') + '</div>' +
+    '<div class="row-sub">' + esc(kAgo(when)) +
+    (t.hall_id ? ' · 大厅领的' : ' · 派下来的') + '</div></div>' +
+    '<span class="kts" style="background:' + st.bg + ';color:' + st.fg + '">' + st.t + '</span></div>';
+}
+
+/* 任务记录全部。sheet 本来就是半屏，正好。最多回溯近一个月 ——
+   再往前的翻起来没意义，也没人在乎三个月前放下的那件事。 */
+async function kTaskHistSheet() {
+  const d = await kg('/api/tasks/mine?days=30');
+  const items = (d && d.items) || [];
+  sheet('<h3>任务记录</h3>' +
+    '<p class="muted">近一个月经你手的活，做完的、放下的都在。新的排最上面。</p>' +
+    (items.length
+      ? '<div class="card">' + items.map(kTaskHistRow).join('') + '</div>'
+      : '<p class="muted">这一个月还没有经你手的活。</p>'),
+    function () {});
 }
 
 /* ============================================================ 任务大厅 */
@@ -1107,6 +1195,12 @@ async function kScreenReport() {
   const ex = await kg('/api/explore?member_id=' + mid);
   const rep = await kg('/api/report?member_id=' + mid + '&days=31');
   const hist = await kg('/api/score/history?member_id=' + mid + '&days=14');
+  // 月度统计那一块的数据。跟家长端同一张表同一个接口，一次把整月拿回来，
+  // 点某一天不用再跑一趟。
+  const ym = todayStr().slice(0, 7);
+  const mdays = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+  const mh = await kg('/api/score/history?member_id=' + mid +
+    '&until=' + ym + '-' + String(mdays).padStart(2, '0') + '&days=' + mdays);
 
   const c = cyc.current || {};
   const tiers = c.tiers || [];
@@ -1198,9 +1292,113 @@ async function kScreenReport() {
         esc(String(n.ts || '').slice(5, 10)) + ' · ' + esc(n.dim) + '：' +
         esc(n.text || '') + '</div>').join('') + '</div>';
   }
-  h += '<div class="footnote" data-go="record" style="cursor:pointer">' +
-    '想看每一项这几天怎么走的，去「我的记录」 ›</div>';
+  // ⑤ 月度统计。放在最后：上面几块看的是「这一周」，这一块尺度更大，
+  //    拿它收尾。格子和小结必须同源 —— 两处各算一遍迟早会出现
+  //    「图上有 5 个满格，下面写完美日 4 天」。
+  if (mh && mh.days && mh.days.length) {
+    const m = { ym: ym, rows: mh.days, total: mh.total };
+    KCAL = m;
+    h += kCalHTML(m) + kMonthKpi(m);
+  }
   return kShell({}, h);
+}
+
+/* ============================================================ 月度统计（孩子端） */
+/* 从家长端「打分 · 月度统计」那一屏搬过来的两块：月历五态 + 本月小结三格。
+   色板换成孩子端这一套，0 分格走柔红不用家长端那个正红 —— 这一页是给他看的，
+   0 分是「这天没过好」，不是「你被记了一笔」。
+   只画本月，不做翻月：孩子要看的是「这个月我在哪儿」，家长才需要往回翻账。 */
+let KCAL = null;
+const K_CAL_WD = ['一', '二', '三', '四', '五', '六', '日'];
+
+function kCalHTML(m) {
+  const ym = m.ym, Y = +ym.slice(0, 4), M = +ym.slice(5);
+  const lead = (new Date(Y, M - 1, 1).getDay() + 6) % 7;   // 周一排第一列
+  const today = todayStr();
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  m.rows.forEach(r => cells.push(r));
+  while (cells.length % 7) cells.push(null);
+
+  let h = '<div class="card"><div class="hb" style="margin-bottom:10px">' +
+    '<span class="card-title">' + M + ' 月打分日历</span>' +
+    '<span class="card-note">点一格看当天七项</span></div>' +
+    '<div class="kcal">' +
+    K_CAL_WD.map(d => '<span class="kcal-wd">' + d + '</span>').join('');
+  cells.forEach(r => {
+    if (!r) return h += '<span class="kcal-blank"></span>';
+    let st;
+    if (r.future) st = 'future';
+    else if (!r.scored) st = (r.transition ? 'trans' : 'none');
+    else if (r.score >= r.full) st = 'full';
+    else if (r.score > 0) st = 'part';
+    else st = 'zero';
+    const cls = 'kcal-cell is-' + st + (r.day === today ? ' is-today' : '');
+    // 未来的日子点不开，别给一个点了只会说「还没到」的按钮
+    h += r.future
+      ? '<span class="' + cls + '">' + (+r.day.slice(8)) + '</span>'
+      : '<button type="button" class="' + cls + '" data-kcd="' + r.day + '">' +
+        (+r.day.slice(8)) + '</button>';
+  });
+  h += '</div>' +
+    '<div class="kcal-lg">' +
+    '<span><b class="lg-full"></b>满分</span>' +
+    '<span><b class="lg-part"></b>部分</span>' +
+    '<span><b class="lg-none"></b>没打分</span>' +
+    '<span><b class="lg-zero"></b>0 分</span>' +
+    '<span><b class="lg-future"></b>未来</span></div>' +
+    '<div class="t-3" style="font-size:10px;line-height:1.6;margin-top:8px">' +
+    '虚线那几天是没打过分的，不算进下面那个达成率。' +
+    '「0 分」和「没打分」不是一件事。</div></div>';
+  return h;
+}
+
+/* 本月小结。三个数字跟上面那张图同源，分开算迟早对不上。 */
+function kMonthKpi(m) {
+  const today = todayStr();
+  const t = m.total || { score: 0, full: 0, days: 0 };
+  const elapsed = m.rows.filter(r => r.day <= today).length;
+  const perfect = m.rows.filter(r => r.scored && r.score >= r.full).length;
+  const first = m.rows.length ? m.rows[0].day.slice(5) : '';
+  const last = m.rows.length ? m.rows[m.rows.length - 1].day.slice(5) : '';
+  return '<div class="card"><div class="hb" style="margin-bottom:10px">' +
+    '<span class="card-title">本月小结</span>' +
+    '<span class="card-note">' + esc(first) + ' - ' + esc(last) + '</span></div>' +
+    '<div class="kkpi-row">' +
+    '<div class="kkpi"><span class="k">本月固定分</span><span class="v">' +
+    num(t.score) + ' / ' + num(t.full) + '</span></div>' +
+    '<div class="kkpi"><span class="k">完美日</span><span class="v">' + num(perfect) + ' 天</span></div>' +
+    '<div class="kkpi"><span class="k">打过分的天</span><span class="v">' +
+    num(t.days) + ' / ' + num(elapsed) + '</span></div></div></div>';
+}
+
+/* 点一格看当天七项。数据就在 KCAL 里，不再跑接口。
+   没打分之天要说清「没记录不等于没做到」，不然孩子会以为自己被抹掉了。 */
+function kCalDaySheet(r) {
+  const p = String(r.day).split('-');
+  const wd = K_CAL_WD[(new Date(+p[0], +p[1] - 1, +p[2]).getDay() + 6) % 7];
+  let h = '<h3>' + (+p[1]) + ' 月 ' + (+p[2]) + ' 日 · 周' + wd + '</h3>';
+  if (r.transition) h += '<p class="muted">这两天是假期过渡日，不计分。</p>';
+  if (r.scored) {
+    h += '<div class="kcal-s"><span>这天拿到</span><b>' + num(r.score) + '</b>' +
+      '<span>/ ' + num(r.full) + '</span></div>' +
+      '<div class="kcal-dl">' + (r.cells || []).map(c =>
+        '<div class="kcal-d">' + glyph(c.icon, 'dim', 22) +
+        '<span class="kcal-dn">' + esc(c.name) + '</span>' +
+        '<span class="kcal-dv ' + (c.value > 0 ? 'yes' : 'no') + '">' +
+        (c.value > 0 ? '✓' : '✗') + '</span></div>').join('') + '</div>';
+    if (r.reason && r.reason.note) {
+      h += '<p class="t-2" style="font-size:11px;margin-top:10px">备注：' + esc(r.reason.note) + '</p>';
+    } else if (r.reason && r.reason.lost && r.reason.lost.length) {
+      h += '<p class="t-2" style="font-size:11px;margin-top:10px">扣的是：' +
+        esc(r.reason.lost.join('、')) + '</p>';
+    } else {
+      h += '<p class="t-2" style="font-size:11px;margin-top:10px">这天七项都拿到了。</p>';
+    }
+  } else {
+    h += '<p class="muted">这天没有打分记录。没记录不等于没做到，所以它不算进达成率。</p>';
+  }
+  sheet(h, function () {});
 }
 
 /* 本月完美日：七项全拿满的天数。「本月」按自然月算，
@@ -1307,9 +1505,15 @@ async function kScreenWish() {
     ic('i-stardust', 11, 'var(--stardust)') + '<span class="num" style="font-size:11px">' +
     num(sd) + '</span></span></span></div>';
 
-  h += '<div class="h g7" style="justify-content:center;padding:12px;border:1.6px dashed #FFC46B;' +
-    'border-radius:var(--r-md);color:var(--orange-deep);font-size:12px;font-weight:700;' +
-    'cursor:pointer" id="kWnew">' + ic('i-plus', 15, 'var(--orange-deep)') + '我想要……</div>';
+  // ⑥ 许愿的入口。原来是个橙虚线框加一句「+ 我想要……」—— 虚线框读起来像
+  //    「这儿还有东西没填」，可这一页本来就空着等他做这一件事。
+  //    改成一张入口卡，跟首页那张「想要点什么？」同形，一眼知道点哪儿。
+  h += '<div class="row wish-new" id="kWnew">' +
+    '<span class="icon-box" style="background:var(--pink-bg)">' +
+    ic('i-wishstar', 20, 'var(--pink-deep)') + '</span>' +
+    '<div class="row-grow"><div class="row-title">许个愿……</div>' +
+    '<div class="row-sub">写下来挂到心愿屋，爸爸妈妈给你定条件</div></div>' +
+    ic('i-chevron', 16, 'var(--pink-deep)') + '</div>';
 
   h += '<div class="sect-head"><span class="sect-title">' +
     ic('i-wishstar', 16, 'var(--pink-deep)') + '我的心愿</span>' +
@@ -1464,7 +1668,8 @@ async function kScreenMine() {
   }
 
   // 三宫格：星尘看余额；第二格数「券 + 卡」有多少，点了去券包；第三格是
-  // 这个月的完美日，点了去我的记录。后两格能点，标签后面挂个小箭头 ——
+  // 这个月的完美日，点了去成长报告 —— 报告底部那张月历就是它逐天摊开的样子，
+  // 两边必须是同一个数，点过去才不打架。后两格能点，标签后面挂个小箭头 ——
   // 三格长得一模一样，不给个记号就看不出「这两格能点」。
   const kGoArrow = '<span class="k-go">' + ic('i-chevron', 10, 'var(--ink-line)') + '</span>';
   h += '<div class="card" style="display:grid;grid-template-columns:1fr auto 1fr auto 1fr;' +
@@ -1477,7 +1682,7 @@ async function kScreenMine() {
     '<span class="num" style="font-size:20px;color:var(--pink-deep)">' + num(privCnt) + '</span>' +
     '<span class="t-2 k-lab" style="font-size:10px">特权道具' + kGoArrow + '</span></div>' +
     '<span style="width:1px;height:30px;background:var(--line)"></span>' +
-    '<div class="v g5 k-tap" style="text-align:center" data-go="record">' +
+    '<div class="v g5 k-tap" style="text-align:center" data-go="report">' +
     '<span class="num" style="font-size:20px;color:var(--purple-deep)">' + num(perfect) + '</span>' +
     '<span class="t-2 k-lab" style="font-size:10px">本月完美日' + kGoArrow + '</span></div></div>';
 
@@ -1495,10 +1700,10 @@ async function kScreenMine() {
     '<div class="row-sub">已收集 ' + num(catN) + ' / ' + num(catT) + ' 张卡 · 碎片 ' +
     num(hold.fragment) + '</div></div>' +
     ic('i-chevron', 16, 'var(--ink-line)') + '</div>' +
-    '<div class="row" data-go="record" style="cursor:pointer">' +
+    '<div class="row" data-go="report" style="cursor:pointer">' +
     '<span class="icon-box" style="background:var(--blue-bg)">' + ic('i-calendar', 19, 'var(--blue-deep)') + '</span>' +
-    '<div class="row-grow"><div class="row-title">我的记录</div>' +
-    '<div class="row-sub">一行一天 × 七个维度 · 只看自己的近 30 天</div></div>' +
+    '<div class="row-grow"><div class="row-title">成长报告</div>' +
+    '<div class="row-sub">星探时刻 · 七种能量 · 这一周的我 · 本月小结</div></div>' +
     ic('i-chevron', 16, 'var(--ink-line)') + '</div>' +
     '<div class="row" data-go="family" style="cursor:pointer">' +
     '<span class="icon-box" style="background:#FFEEE0">' + ic('i-family', 19, 'var(--orange)') + '</span>' +
@@ -1603,104 +1808,6 @@ async function kScreenAtlas() {
   return kShell({}, h);
 }
 
-/* ============================================================ 我的记录 */
-async function kScreenRecord() {
-  const mid = S.me.id;
-  const d = await api('GET', '/api/dims?member_id=' + mid + '&days=30');
-  const cyc = await kg('/api/cycle?member_id=' + mid);
-  const t = d.total || { score: 0, full: 0, days: 0 };
-  const wkd = ['日', '一', '二', '三', '四', '五', '六'];
-  const wdOf = ds => wkd[(new Date(ds + 'T00:00:00')).getDay()];
-
-  let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="mine">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
-    '<span class="appbar-grow"><div class="appbar-title">我的记录</div>' +
-    '<div class="appbar-sub">最近 30 天 · 只看自己的</div></span>' +
-    '<span class="appbar-right"><span class="pill" style="padding:5px 10px">' +
-    '<span class="num" style="font-size:14px">' + num(t.score) + '</span>' +
-    '<span class="t-3" style="font-size:10px"> / ' + num(t.full) + '</span></span></span></div>';
-
-  const tips = [];
-  if (d.weakest && d.weakest.total) {
-    tips.push('「' + d.weakest.name + '」拿到 ' + d.weakest.hit + '/' + d.weakest.total +
-      ' 天，是七项里最少的一项。');
-  }
-  if (d.deduct && d.deduct.times) {
-    tips.push('这几天被扣过 ' + d.deduct.times + ' 次' +
-      (d.deduct.minutes ? '，一共 ' + num(d.deduct.minutes) + ' 分钟' : '') +
-      (d.deduct.stardust ? '，扣掉 ' + num(d.deduct.stardust) + ' 星尘' : '') + '。');
-  } else if (t.days) {
-    tips.push('这几天没有被扣过。');
-  }
-  h += '<div class="card"><div class="hb">' +
-    '<span class="h g6">' + ic('i-calendar', 16, 'var(--blue-deep)') +
-    '<span style="font-size:12px;font-weight:700">' +
-    (t.days ? '有 ' + num(t.days) + ' 天打了分' : '还没有打分') + '</span></span>' +
-    (d.cycle ? '<span class="t-3" style="font-size:10px">这个周期 ' +
-      esc(String(d.cycle.start_date).slice(5)) + ' - ' +
-      esc(String(d.cycle.end_date).slice(5)) + '</span>' : '') + '</div>' +
-    (tips.length ? '<div class="t-2" style="font-size:11px;line-height:1.6;margin-top:9px">' +
-      esc(tips.join('')) + '</div>' : '') + '</div>';
-
-  h += '<div class="sect-head"><span class="sect-title">' +
-    ic('i-check', 16, 'var(--orange)') + '七项分别是什么</span>' +
-    '<span class="sect-note">每天每项 1 分</span></div>' +
-    '<div class="card">' + (d.dims || []).map(x => {
-      const all = x.total && x.hit >= x.total;
-      return '<div class="ditem">' + glyph(x.icon, 'dim', 30) +
-        '<div class="grow"><div class="h g6"><span class="row-title">' + esc(x.name) + '</span>' +
-        '<span class="pill ' + (all ? 'pill--blue' : 'pill--gray') + '" style="padding:2px 8px">' +
-        x.hit + '/' + x.total + ' 天</span>' +
-        (x.stars && x.stars.length ? '<span class="pill" style="padding:2px 8px">有星星时刻</span>' : '') +
-        '</div>' +
-        '<div class="row-sub">' + esc(x.meaning || '') + '</div>' +
-        '<div class="dgrid">' + (x.days || []).map(dd =>
-          '<i class="' + (dd.got ? 'on' : (dd.scored ? 'no' : 'lock')) + '"><b>' +
-          wdOf(dd.day) + '</b>' + (dd.got ? '✓' : (dd.scored ? '–' : '')) + '</i>').join('') +
-        '</div>' +
-        (x.fines || []).map(f => '<div class="dnote">' +
-          esc(String(f.ts).slice(5, 10)) + ' 被扣：' + esc(f.text || f.reason || '校准') +
-          '</div>').join('') +
-        (x.stars || []).map(s => '<div class="dstar">' + esc(String(s.day).slice(5)) +
-          ' 星星时刻：' + esc(s.phrase) +
-          (s.stardust ? '（星尘 +' + num(s.stardust) + '）' : '') + '</div>').join('') +
-        '</div></div>';
-    }).join('') + '</div>';
-
-  h += '<div class="sect-head"><span class="sect-title">' +
-    ic('i-plus', 16, 'var(--orange)') + '加分和扣分</span>' +
-    '<span class="sect-note">每天那七分之外</span></div>';
-  if (!d.extra || !d.extra.length) {
-    h += '<div class="card"><div class="empty">这几天只有每天那七分</div></div>';
-  } else {
-    h += '<div class="card">' + d.extra.map(e =>
-      '<div style="padding:8px 0"><div class="row-title" style="font-weight:500' +
-      (e.neg ? ';color:var(--warn)' : '') + '">' + esc(e.text) + '</div>' +
-      '<div class="row-sub">' + esc(String(e.ts).slice(5, 16)) +
-      (e.impact ? '　' + esc(e.impact) : '') + '</div></div>').join('') + '</div>';
-  }
-
-  const ch = (cyc && cyc.history) || [];
-  if (ch.length) {
-    h += '<div class="sect-head"><span class="sect-title">' +
-      ic('i-clock', 16, 'var(--purple)') + '周期记录</span>' +
-      '<span class="sect-note">分数在结算那天变成星尘</span></div>';
-    ch.forEach(x => {
-      h += '<div class="row">' +
-        '<span class="icon-box" style="background:var(--purple-bg)">' +
-        ic(kBoxIcon(x.tier || 1), 20) + '</span>' +
-        '<div class="row-grow"><div class="row-title">' + esc(x.start) + ' 那周</div>' +
-        '<div class="row-sub">周能量 ' + num(x.energy) + ' · ' +
-        (x.status === 'settled' ? '星尘 +' + num(x.stardust) : '进行中') + '</div></div>' +
-        '<span class="pill pill--gray" style="padding:3px 9px">' +
-        (x.tier ? esc(kBoxName(x.tier)) : '未达标') + '</span></div>';
-    });
-  }
-  h += '<div class="footnote">' + ic('i-info', 12, 'var(--ink-line)') +
-    '哪一项这周没拿到，明天就试那一项</div>';
-  return kShell({}, h);
-}
-
 /* ============================================================ 家庭 */
 async function kScreenFamily() {
   const pool = await kg('/api/pool');
@@ -1761,7 +1868,7 @@ async function kScreenFamily() {
 const K_SCREENS = {
   home: kScreenHome, task: kScreenTask, hall: kScreenHall, chest: kScreenChest,
   coupon: kScreenCoupon, shop: kScreenShop, report: kScreenReport, wish: kScreenWish,
-  mine: kScreenMine, atlas: kScreenAtlas, record: kScreenRecord, family: kScreenFamily,
+  mine: kScreenMine, atlas: kScreenAtlas, family: kScreenFamily,
 };
 
 const CHILD = {};
@@ -1836,6 +1943,16 @@ CHILD.bind = function () {
   if (ex) ex.addEventListener('click', () => cashSheet());
   const dp = $('#kDep', el);
   if (dp) dp.addEventListener('click', () => kDepositSheet());
+
+  // 成长报告底部那张月历：点一格看当天七项。明细就在 KCAL 里，不再跑接口。
+  $$('[data-kcd]', el).forEach(b => b.addEventListener('click', () => {
+    const row = KCAL && (KCAL.rows || []).filter(r => r.day === b.dataset.kcd)[0];
+    if (row) kCalDaySheet(row);
+  }));
+
+  // 任务页底部那颗「展开全部」：拉半屏列表出来看。
+  const hm = $('#kHistMore', el);
+  if (hm) hm.addEventListener('click', () => { kTaskHistSheet(); });
 
   // 心愿的三个动作（交一条 / 付星尘 / 登记达成）走 app.js 里那一套，
   // 同一件事在首页和心愿屋两边必须一模一样，否则孩子会以为坏了。

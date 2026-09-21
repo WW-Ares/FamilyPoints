@@ -366,6 +366,71 @@ def main():
                        created_by=dad["id"], slots=1)
     print("  大厅任务：先到先得 %s / 每人一份 %s / 没人领 %s" % (h1, h2, h3))
 
+    # 12) 任务记录。孩子端任务页底部摆「最近 3 条 + 展开全部」，回溯近一个月。
+    #     演示库原来只有今天那三条，展开按钮永远不出现 —— 一个数据一少就看不见的
+    #     功能，靠演示库是验不出来的，e2e 里那句「点一下展开」也就没法写。
+    #     这里按天往回造三周：做成的、被退回的、自己放下的各来几条。
+    #
+    #     时钟必须钉回过去。不钉的话 confirmed_at 全是「现在」，七条挤在同一秒，
+    #     「按最后动过的时刻倒序」这条规则在演示库上等同于没有。
+    #     星尘给得都小（2 至 5），是怕撞上「一周任务星尘合计 ≤20」那道护栏；
+    #     日期也刻意摊在四个自然周里。
+    def mk(assignee, title, std, reward_type, reward):
+        tid = E.create_task(assignee, title, std, reward_type=reward_type,
+                            reward=reward, created_by=dad["id"])
+        if not isinstance(tid, int):
+            raise SystemExit("演示数据造不下去 —— 发任务「%s」：%s"
+                             % (title, (tid or {}).get("msg") or tid))
+        return tid
+
+    # (几天前, 标题, 完成标准, 星尘, 结局)
+    hist = [
+        (3,  "给金鱼换水",       "换掉三分之二，缸壁擦一圈", 3, "confirmed"),
+        (5,  "自己洗袜子",       "搓到水清，晾在阳台",       3, "confirmed"),
+        (8,  "抄写生字一遍",     "一页，写在田字格里",       5, "returned"),
+        (11, "把自己的被子叠好", "铺平对折，枕头摆正",       2, "confirmed"),
+        (14, "陪弟弟搭一次积木", "搭完一起收进箱子",         4, "confirmed"),
+        (18, "浇一周的花",       "隔天一次，别浇到叶子上",   3, "abandoned"),
+        (22, "收拾自己的零食袋", "桌上不留袋子",             2, "confirmed"),
+    ]
+    tally = {"confirmed": 0, "returned": 0, "abandoned": 0}
+    base = E.parse_day(E.today())
+    # 造这段要临时把「一周任务星尘 ≤20」那道护栏放到底。
+    # 那条检查的条件是 created_at >= 当前周期起始日，没有上界：时钟一钉到过去，
+    # 今天造的那些任务也照样算进那一周，三次就顶到 20 了。这是造历史数据独有的
+    # 现象（真实使用里任务只会在「现在」发出来）。造完立刻改回去。
+    old_cap = db.query_one(
+        "SELECT value FROM setting WHERE key='task.stardust_weekly_cap'")
+    db.execute("UPDATE setting SET value='999' WHERE key='task.stardust_weekly_cap'")
+    db.settings_all(force=True)
+    for back, title, std, stardust, end in hist:
+        E.freeze_clock(E.fmt(base.fromordinal(base.toordinal() - back)) + " 17:30:00")
+        if end == "abandoned":
+            # 「不做了」只认大厅领来的那份（引擎里 task_abandon 卡 status='claimed'），
+            # 所以这一条必须先挂大厅、再领、再放下 —— 家长直接派下去的活推不掉。
+            tid = mk(None, title, std, "stardust", {"amount": stardust})
+            # 领的时候引擎会另开一行「他的那一份」，hall_id 指向大厅那条。
+            # 后面放下、提交都得用新开那行的 id —— 用大厅那条的 id 会被
+            # 「这不是你的任务」挡回来。
+            tid = must(E.task_claim(tid, kids[0]["id"]), title + " 领")["task_id"]
+        else:
+            tid = mk(kids[0]["id"], title, std, "stardust", {"amount": stardust})
+            must(E.submit_task(tid, kids[0]["id"]), title + " 交")
+        if end == "confirmed":
+            must(E.confirm_task(tid, operator_id=dad["id"]), title + " 确认")
+        elif end == "returned":
+            must(E.return_task(tid, operator_id=dad["id"],
+                               note="字写歪了，重写一遍再交"), title + " 退回")
+        else:
+            must(E.task_abandon(tid, kids[0]["id"]), title + " 放下")
+        tally[end] += 1
+    E.freeze_clock(None)
+    db.execute("UPDATE setting SET value=? WHERE key='task.stardust_weekly_cap'",
+               (old_cap["value"] if old_cap else "20",))
+    db.settings_all(force=True)
+    print("  任务记录：做成 %d / 被退回 %d / 自己放下 %d（摊在近三周，共 %d 条）"
+          % (tally["confirmed"], tally["returned"], tally["abandoned"], len(hist)))
+
     print("")
     for k in kids:
         lv = E.level_of(k["id"])

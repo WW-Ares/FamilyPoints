@@ -245,8 +245,10 @@ async function walkTabs(page, tag) {
 
   // ---------- 孩子端 ----------
   /* v31：孩子端换了整套皮（「糖果冒险」）。底栏从 7 格收成 5 格，
-     任务大厅 / 券商店 / 成长报告 / 心愿屋 / 图鉴 / 我的记录 / 家庭
+     任务大厅 / 券商店 / 成长报告 / 心愿屋 / 图鉴 / 家庭
      变成压在底栏之上的二级页，靠 hash 进、靠返回键退。
+     （「我的记录」原来也在这一串里，v13 整屏撤了：任务记录挪去任务页底部，
+     月度成绩并进成长报告底部的月历。）
 
      这一节跟着重写，但守的东西一条没少，只是改成按**文案和 data 属性**查，
      不再按 DOM 的形状查（`.sec-h h2` / `.boxtrack` 这类东西一换皮就没了）。 */
@@ -358,6 +360,40 @@ async function walkTabs(page, tag) {
   }
   if (taskTxt.indexOf('待做') < 0) bad('[v33] 待做的任务没标出「待做」');
   if (tDone < 1) bad('[v33] 待做的任务没有「交上去」按钮，孩子交不了（退回之后也回不来）');
+  /* v13：任务页底部摆「任务记录」—— 最近 3 条 + 一个「展开全部」，回溯近一个月。
+     原来那儿只有一行小灰字「看看我的全部记录 ›」，跳去的是「我的记录」，
+     那页讲「哪一项这几天怎么走的」，跟任务没关系：孩子想问「我那件活后来怎么了」
+     反而没地方去。这里要真点一次「展开全部」—— 上一版的教训就是
+     「界面在、按钮在、点了没动静」，只看文字不看反应是查不出来的。 */
+  const histRows = await page.locator('#view .ktrec').count();
+  say('   任务记录（页内）: ' + histRows + ' 行');
+  if (taskTxt.indexOf('任务记录') < 0) bad('[v13] 任务页底部没有「任务记录」那段');
+  if (!histRows) bad('[v13] 任务记录一段没内容');
+  if (histRows > 3) bad('[v13] 任务记录页内摆了 ' + histRows + ' 行，默认该只摆 3 条');
+  if (taskTxt.indexOf('看看我的全部记录') >= 0) {
+    bad('[v13] 任务页还留着「看看我的全部记录」那行小字');
+  }
+  const moreBtn = page.locator('#view #kHistMore');
+  if (!(await moreBtn.count())) {
+    bad('[v13] 任务页没有「展开全部」按钮（演示库里近一个月有 7 条记录）');
+  } else {
+    const moreLabel = flat(await moreBtn.first().innerText());
+    await moreBtn.first().click();
+    await page.waitForTimeout(800);
+    const sheetTxt = flat(await page.locator('#sheetBody').innerText());
+    const sheetRows = await page.locator('#sheetBody .ktrec').count();
+    say('   展开全部: ' + moreLabel + ' -> ' + sheetRows + ' 行 / ' + sheetTxt.slice(0, 30));
+    if (sheetRows <= histRows) {
+      bad('[v13] 点了「展开全部」，展开出来还是 ' + sheetRows + ' 行，不比页内的多');
+    }
+    if (sheetTxt.indexOf('近一个月') < 0) bad('[v13] 展开列表没说回溯范围是近一个月');
+    // 放下和退回也要列出来：只报成功的记录等于没记
+    if (!/已放弃|被退回/.test(sheetTxt)) {
+      bad('[v13] 展开列表里看不到「已放弃 / 被退回」，旧状态被筛掉了');
+    }
+    await page.evaluate(() => document.querySelector('#sheet').classList.remove('on'));
+    await page.waitForTimeout(250);
+  }
   await page.locator('#view button[data-go="hall"]').first().click();
   await page.waitForTimeout(950);
   const hall = await kidText();
@@ -524,18 +560,22 @@ async function walkTabs(page, tag) {
   say('4. 孩子端「我的」与二级页:');
   await kidGo('mine');
   const mine = kidView.mine;
-  for (const want of ['心愿屋', '图鉴', '我的记录', '家庭', '头像与皮肤']) {
+  for (const want of ['心愿屋', '图鉴', '成长报告', '家庭', '头像与皮肤']) {
     if (mine.indexOf(want) < 0) bad('[v31] 「我的」里没有「' + want + '」入口');
   }
   if (mine.indexOf('升级进度') < 0) bad('[v31] 「我的」里没有升级进度');
   if (!/Lv\.\d/.test(mine)) bad('[v31] 「我的」里没显示等级');
   /* v38：三宫格第二格从「券在手 · 张」改成「特权道具」，数的是一共多少件
-     （券 + 卡）。点它、或者点它上面那个数字，都该去券包；第三格「本月完美日」
-     点去我的记录。这两格原来只是一块不能点的文字。 */
+     （券 + 卡）。点它、或者点它上面那个数字，都该去券包。这两格原来只是
+     一块不能点的文字。
+     第三格「本月完美日」原来点去「我的记录」。那一屏后来整屏撤了 ——
+     它讲的是「哪一项这几天怎么走的」，跟「我这个月过得怎么样」不是一回事，
+     内容并进了成长报告底部那张月历。所以这一格现在点去成长报告。 */
   if (mine.indexOf('特权道具') < 0) bad('[v38] 「我的」第二格没改成「特权道具」');
   if (mine.indexOf('券在手') >= 0) bad('[v38] 「我的」里还留着「券在手」');
+  if (mine.indexOf('我的记录') >= 0) bad('[v13] 「我的」里还留着「我的记录」入口');
   const tapPriv = page.locator('#view .k-tap[data-go="coupon"]');
-  const tapPerf = page.locator('#view .k-tap[data-go="record"]');
+  const tapPerf = page.locator('#view .k-tap[data-go="report"]');
   if (!(await tapPriv.count())) bad('[v38] 「特权道具」那一格点不动');
   if (!(await tapPerf.count())) bad('[v38] 「本月完美日」那一格点不动');
   if (await tapPriv.count()) {
@@ -551,7 +591,7 @@ async function walkTabs(page, tag) {
     await tapPerf.first().click();
     await page.waitForTimeout(900);
     const recTxt = await kidText();
-    if (recTxt.indexOf('我的记录') < 0) bad('[v38] 点「本月完美日」没跳到我的记录');
+    if (recTxt.indexOf('本月小结') < 0) bad('[v13] 点「本月完美日」没跳到成长报告');
     await kidGo('mine');
     await page.waitForTimeout(600);
   }
@@ -687,18 +727,42 @@ async function walkTabs(page, tag) {
   if (atlasUse) bad('[v38] 图鉴里还挂着「用」按钮（' + atlasUse + ' 个），启用该在券包');
   await page.screenshot({ path: path.join(SHOT, 'kid-atlas.png'), fullPage: true });
 
-  await kidGo('record');
-  const rec = await kidText();
-  say('   我的记录: ' + rec.slice(0, 46));
-  if (rec.indexOf('我的记录') < 0) bad('[v31] 没有「我的记录」页');
-  if (rec.indexOf('七项分别是什么') < 0) bad('[v31] 记录页没有「七项分别是什么」');
-  const dimRows = await page.locator('#view .dgrid').count();
-  say('   七项各自的天格子: ' + dimRows + ' 行');
-  if (dimRows !== 7) bad('[v31] 记录页七项不是 7 行，是 ' + dimRows);
-  if (rec.indexOf('被扣') < 0) bad('[v31] 记录页没把扣分理由摆出来');
-  if (rec.indexOf('刷牙') < 0 && rec.indexOf('桌面') < 0) bad('[v31] 扣分理由没写具体那句话');
-  if (rec.indexOf('加分和扣分') < 0) bad('[v31] 记录页没有「加分和扣分」这一段');
-  await page.screenshot({ path: path.join(SHOT, 'kid-record.png'), fullPage: true });
+  /* 「我的记录」整屏撤了。它讲的是「哪一项这几天怎么走的」，而孩子真正会问的是
+     「我这个月过得怎么样」和「我那件活后来怎么了」—— 前者落在成长报告底部那张
+     月历，后者落在任务页底部的任务记录（见下面任务页那一段）。
+     所以这里改成验月历：三格小结在、点一格要看得到七项，还得交代这个分怎么来的。 */
+  await kidGo('report');
+  const cal = await kidText();
+  say('   成长报告底部: ' + cal.slice(0, 46));
+  for (const want of ['打分日历', '本月小结']) {
+    if (cal.indexOf(want) < 0) bad('[v13] 成长报告底部缺少「' + want + '」');
+  }
+  if (cal.indexOf('不是一件事') < 0) bad('[v13] 月历没说清「0 分」和「没打分」不是一回事');
+  const kpiCells = await page.locator('#view .kkpi').count();
+  say('   本月小结: ' + kpiCells + ' 格');
+  if (kpiCells !== 3) bad('[v13] 本月小结不是 3 格，是 ' + kpiCells);
+  // 可点的只有打过分的天；未来的日子在 HTML 里是 span，点不开
+  const dayBtns = page.locator(
+    '#view .kcal-cell[data-kcd].is-full, #view .kcal-cell[data-kcd].is-part,' +
+    ' #view .kcal-cell[data-kcd].is-zero');
+  const nDays = await dayBtns.count();
+  say('   月历可点的天: ' + nDays);
+  if (nDays < 5) bad('[v13] 月历里能点的天太少，是 ' + nDays + '（演示库这月打过分十几天）');
+  if (nDays) {
+    await dayBtns.first().click();
+    await page.waitForTimeout(600);
+    const ds = flat(await page.locator('#sheetBody').innerText());
+    const dRows = await page.locator('#sheetBody .kcal-d').count();
+    say('   点一格: ' + dRows + ' 项 / ' + ds.slice(0, 36));
+    if (dRows !== 7) bad('[v13] 单日明细不是 7 项，是 ' + dRows);
+    if (ds.indexOf('这天拿到') < 0) bad('[v13] 单日明细没写这天拿到几分');
+    if (!/这天七项都拿到了|扣的是|备注/.test(ds)) {
+      bad('[v13] 单日明细没交代这个分是怎么来的：' + ds.slice(0, 60));
+    }
+    await page.evaluate(() => document.querySelector('#sheet').classList.remove('on'));
+    await page.waitForTimeout(250);
+  }
+  await page.screenshot({ path: path.join(SHOT, 'kid-report-month.png'), fullPage: true });
 
   await kidGo('family');
   const fam = await kidText();

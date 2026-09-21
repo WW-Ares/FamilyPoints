@@ -3,9 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#157a67">
+<meta name="theme-color" content="#FF8A3D">
 <title>家庭积分</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#11088;</text></svg>">
+<!-- 图标全套由 tools/build_app_icons.py 生成，改图形改那个脚本重跑，别手改这几个文件。
+     svg 给现代浏览器（标签页里带圆角），ico 兜老浏览器，png 给添加到主屏幕。
+     theme-color 跟着图标那档橙走：登录页和孩子端顶部本来就是暖色，之前留着
+     家长端的深绿 #157a67，安卓地址栏跟页面是两截颜色。 -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="家庭积分">
 <link rel="stylesheet" href="style.css">
 <!-- v36 登录页「糖果冒险」：两态选头像 + 输密码，加家长端一屏。
      类名全挂在 body.lg 下，登录态一挂上 kid / grown 就完全不生效。 -->

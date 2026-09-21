@@ -264,6 +264,99 @@ body.kid .icon-box {
   border-radius: 50%; display: grid; place-items: center;
 }
 
+/* ============================ 首页动态胶囊 ============================ */
+/* 三条和自己有关的动态，每条一个来源色（颜色在 child.js 的 K_FEED_SRC 里，
+   跟小符号一起给）。一行截断：首页是用来「扫一眼」的，细节不该在这儿讲。 */
+body.kid .kfeed { display: flex; flex-direction: column; gap: calc(7 * var(--u)); }
+body.kid .kfeed-row {
+  display: flex; align-items: center; gap: calc(8 * var(--u));
+  border-radius: var(--r-pill);
+  padding: calc(8 * var(--u)) calc(12 * var(--u));
+  background: var(--line);
+}
+body.kid .kfeed-ic { flex: 0 0 auto; display: flex; align-items: center; }
+body.kid .kfeed-tx {
+  flex: 1; min-width: 0; font-size: calc(11.5 * var(--u)); font-weight: 500; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+body.kid .kfeed-ts { flex: 0 0 auto; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+
+/* 心愿屋那个入口。做成卡而不是虚线框 —— 虚线框读起来像「还有东西没填」，
+   而这一页本来就空着等他做这一件事。 */
+body.kid .wish-new { cursor: pointer; }
+body.kid .wish-new .row-title { color: var(--pink-deep); }
+
+/* ======================== 月度统计（成长报告底部） ======================== */
+/* 从家长端「打分 · 月度统计」搬来的两块：月历五态 + 本月小结三格。
+   色板换成孩子端这一套。0 分格走柔红，不用家长端那个正红 ——
+   这一页是给他看的，0 分是「这天没过好」，不是「你被记了一笔」。 */
+body.kid .kcal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+body.kid .kcal-wd {
+  font-size: calc(10 * var(--u-sm)); color: var(--ink-3); text-align: center; padding-bottom: 2px;
+}
+body.kid .kcal-cell {
+  position: relative; aspect-ratio: 1 / 1; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); font-size: calc(12 * var(--u)); font-weight: 700; color: var(--ink);
+  border: 1.5px solid transparent; background: transparent; cursor: pointer; padding: 0;
+}
+body.kid .kcal-cell.is-full   { background: var(--gold); color: var(--wood-deep); }
+body.kid .kcal-cell.is-part   { background: var(--orange-light); color: var(--wood-deep); }
+body.kid .kcal-cell.is-zero   { background: #E88A78; color: #fff; }
+body.kid .kcal-cell.is-none   { border: 1.5px dashed var(--ink-line); color: var(--ink-3); }
+body.kid .kcal-cell.is-future { background: var(--line); color: var(--ink-line); cursor: default; }
+body.kid .kcal-cell.is-trans  { box-shadow: inset 0 0 0 2px rgba(255,255,255,.9); }
+body.kid .kcal-cell.is-today::after {
+  content: ""; position: absolute; bottom: 3px; left: 50%; margin-left: -2px;
+  width: 4px; height: 4px; border-radius: 50%; background: var(--orange-deep);
+}
+body.kid .kcal-blank { aspect-ratio: 1 / 1; }
+body.kid .kcal-lg {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+body.kid .kcal-lg span { display: flex; align-items: center; gap: 4px; font-size: calc(9.5 * var(--u-sm)); color: var(--ink-2); }
+body.kid .kcal-lg b { width: 10px; height: 10px; border-radius: 3px; display: block; }
+body.kid .kcal-lg .lg-full { background: var(--gold); }
+body.kid .kcal-lg .lg-part { background: var(--orange-light); }
+body.kid .kcal-lg .lg-zero { background: #E88A78; }
+body.kid .kcal-lg .lg-none { border: 1.5px dashed var(--ink-line); }
+body.kid .kcal-lg .lg-future { background: var(--line); }
+
+/* 本月小结那三格。孩子端没有家长端那套 .kpi，另起一套跟着糖果色走。 */
+body.kid .kkpi-row { display: flex; gap: 10px; }
+body.kid .kkpi { flex: 1; min-width: 0; }
+body.kid .kkpi .k { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); display: block; margin-bottom: 3px; }
+body.kid .kkpi .v { font-family: var(--font-num); font-size: calc(14 * var(--u)); font-weight: 800; color: var(--ink); }
+
+/* 点一格弹出来的当天七项 */
+body.kid .kcal-s { display: flex; align-items: baseline; gap: 5px; font-size: calc(11 * var(--u)); color: var(--ink-2); }
+body.kid .kcal-s b { font-family: var(--font-num); font-size: calc(19 * var(--u)); font-weight: 800; color: var(--ink); }
+body.kid .kcal-dl { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+body.kid .kcal-d { display: flex; align-items: center; gap: 9px; }
+body.kid .kcal-dn { flex: 1; min-width: 0; font-size: calc(12 * var(--u)); color: var(--ink); }
+body.kid .kcal-dv { font-family: var(--font-num); font-size: calc(13 * var(--u)); font-weight: 800; }
+body.kid .kcal-dv.yes { color: var(--ok); }
+body.kid .kcal-dv.no  { color: #C97A66; }
+
+/* ======================== 任务记录（任务页底部那块） ======================== */
+/* 摆在任务页最后，把「我那些活后来怎么了」一次说完。
+   行自己不带卡片皮 —— 外面已经是一张卡，再套一层会看成两个盒子，靠分隔线断开。 */
+body.kid .ktrec {
+  display: flex; align-items: center; gap: calc(10 * var(--u));
+  padding: calc(9 * var(--u)) 0;
+}
+body.kid .ktrec + .ktrec { border-top: 1px solid var(--line); }
+body.kid .ktrec .kts {
+  flex: 0 0 auto; font-size: calc(10 * var(--u-sm)); font-weight: 700;
+  padding: calc(3 * var(--u)) calc(9 * var(--u)); border-radius: var(--r-pill); white-space: nowrap;
+}
+body.kid .ktrec .kt-repair {
+  display: inline-block; margin-left: 5px; padding: 1px 7px; border-radius: var(--r-pill);
+  font-size: calc(9.5 * var(--u-sm)); font-weight: 700;
+  color: var(--orange-deep); background: var(--warn-bg);
+}
+
 /* ============================ 任务卡 ============================ */
 body.kid .task-card {
   background: #fff; border: 1px solid var(--card-line); border-radius: var(--r-md);

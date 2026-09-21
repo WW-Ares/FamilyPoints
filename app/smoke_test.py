@@ -662,6 +662,33 @@ def main():
     E.freeze_clock(_at(d0, "19:00"))
     check("整段到点一起退出去", E.ticket_playing() == [], E.ticket_playing())
 
+    # D1（回归）：串段是**单向**的，只能往后面接，不能往前面吞。
+    #    已经玩完的那张 begin 更小，却一路通过 `begin <= far`，于是它顶掉段头、
+    #    「正在玩」标在它身上，张数和总时长一起去撑大。ticket_playing() 的 SQL
+    #    已经滤掉 end_at<=now，中枪的只有传当天全部行的 my_ticket_list() ——
+    #    家长端券页那张「正在玩」区块挂的就是它。
+    _wipe()
+    E.freeze_clock(_at(d0, "18:00"))
+    E.request_ticket(kid, fun_id, 1)
+    E.resolve_ticket_request(E.ticket_pending_list()[0]["id"], True, operator_id=DAD)
+    E.freeze_clock(_at(d0, "18:05"))
+    E.request_ticket(kid, fun_id, 1)
+    pl = [x for x in E.ticket_pending_list() if x["member_id"] == kid]
+    E.resolve_ticket_request(pl[0]["id"], True, operator_id=DAD)
+    E.freeze_clock(_at(d0, "18:35"))
+    gp = E.ticket_playing(kid)
+    check("D1 前面那张 18:30 已经玩完，整段只剩接在后面那 30 分钟",
+          len(gp) == 1 and gp[0]["qty"] == 1 and gp[0]["total_minutes"] == 30
+          and gp[0]["start_at"] == _at(d0, "18:30"), gp)
+    mine = E.my_ticket_list(kid, d0)
+    run = [x for x in mine if x["running"]]
+    check("D1 列表里正在玩的是后一张，报它自己的 30 分钟",
+          len(run) == 1 and run[0]["qty"] == 1 and run[0]["total_minutes"] == 30
+          and run[0]["start_at"] == _at(d0, "18:30"), run)
+    old = [x for x in mine if x["start_at"] == _at(d0, "18:00")]
+    check("D1 已经玩完的那张不再被标成「正在玩」，也不算排队",
+          bool(old) and not old[0]["running"] and not old[0]["queued"], old)
+
     # 娱乐券之外的五种券不存在「玩多久」：开始就等于结束，永远不进这一栏
     _wipe()
     for code in ("ticket_company", "ticket_choice", "ticket_exempt", "ticket_friend", "ticket_solo"):
@@ -695,6 +722,35 @@ def main():
     mine = E.my_ticket_list(kid)
     check("⑭ 玩完了就不再占着第二天那一栏",
           not any(x["running"] for x in mine), mine)
+
+    # D2（回归）：跨零点续的那张要接在上一张**结束之后**开场，不是从「此刻」起算。
+    #    判排队原来走按天过滤的 _day_ticket_stats，过了零点查不到上一张 → 从此刻起算，
+    #    和上一张叠在一起，整段还少算一截。硬停止挡住常规路径，但设置里调晚就会露出来。
+    _wipe()
+    db.execute(
+        "INSERT INTO ticket_request (member_id,item_id,qty,day,minutes,status,gate,note,ts,"
+        "start_at,end_at,resolved_at) VALUES (?,?,1,?,30,'approved','{}','',?,?,?,?)",
+        (kid, fun_id, d0, _at(d0, "23:50"), _at(d0, "23:50"), _at(nxt, "00:20"),
+         _at(d0, "23:50")))
+    E.freeze_clock(_at(nxt, "00:10"))
+    E.request_ticket(kid, fun_id, 1)
+    pl = [x for x in E.ticket_pending_list() if x["member_id"] == kid]
+    check("D2 上一张跨零点还在放，这时候续得进来", bool(pl), E.ticket_pending_list())
+    E.resolve_ticket_request(pl[0]["id"], True, operator_id=DAD)
+    mine = E.my_ticket_list(kid)
+    que = [x for x in mine if x.get("queued")]
+    check("D2 新续的那张从 00:20 开场、00:50 收工，没叠在 00:10 上",
+          len(que) == 1 and que[0]["start_at"] == _at(nxt, "00:20")
+          and que[0]["end_at"] == _at(nxt, "00:50"), que)
+    gp = E.ticket_playing(kid)
+    check("D2 整段是两张 60 分钟：23:50 起、00:50 收，此刻还剩 40",
+          len(gp) == 1 and gp[0]["qty"] == 2 and gp[0]["total_minutes"] == 60
+          and gp[0]["end_at"] == _at(nxt, "00:50") and gp[0]["left_minutes"] == 40, gp)
+    E.freeze_clock(_at(nxt, "00:30"))
+    gp = E.ticket_playing(kid)
+    check("D2 前一截放完后，接着数的还是那一整段，不是从头起算的 30",
+          len(gp) == 1 and gp[0]["start_at"] == _at(nxt, "00:20")
+          and gp[0]["left_minutes"] == 20, gp)
 
     # ⑮ v27：推送。这一版真正的病根在下面第二条 —— https 地址会抛 TypeError，
     #    而测试打的假端点全是 http 的 127.0.0.1，所以一路测过来全是绿的，

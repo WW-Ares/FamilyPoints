@@ -178,6 +178,24 @@ def get_task_hall(ctx):
     return d
 
 
+@route("GET", "/api/tasks/mine")
+def task_history_mine(ctx):
+    """孩子自己的任务记录（孩子端任务页底部那块用的就是它）。
+
+    和 GET /api/tasks 分工不同：那条是家长在用的家庭任务清单，对孩子只回
+    kind='reward'；这一条只回自己的，reward 和 repair 都要，状态一个不筛。
+    家长带 member_id 也能看 —— 同一件事两边必须同一个口径。
+    """
+    me = ctx.as_member()
+    if me["role"] == "parent":
+        mid = ctx.i("member_id")
+        if not mid:
+            raise ApiError("家长要看谁的？", 400)
+    else:
+        mid = me["id"]
+    return E.my_task_history(mid, days=ctx.i("days") or 30)
+
+
 @route("POST", "/api/tasks/:id/claim")
 def task_claim(ctx):
     me = ctx.as_member()

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img">
+<title>家庭积分</title>
+<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#FFC46B"/>
+<stop offset=".52" stop-color="#FF8A3D"/>
+<stop offset="1" stop-color="#E8722A"/>
+</linearGradient></defs>
+<rect width="64" height="64" rx="14.5" fill="url(#g)"/>
+<polygon points="32.00,10.29 38.21,25.75 54.83,26.88 42.04,37.56 46.11,53.71 32.00,44.85 17.89,53.71 21.96,37.56 9.17,26.88 25.79,25.75" fill="#fff" stroke="#fff" stroke-width="2.16" stroke-linejoin="round"/>
+</svg>

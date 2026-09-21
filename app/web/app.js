@@ -3837,7 +3837,7 @@ function pStateBand(state, sc, editing) {
   } else {
     return '';                       // 过渡日 / 未来的日子，走下面那条 notice
   }
-  return '<div class="sband' + (tone ? ' ' + tone : '') + '" style="margin-bottom:10px">' +
+  return '<div class="sband' + (tone ? ' ' + tone : '') + '">' +
     (t ? '<span class="pill ' + t[1] + '">' + t[0] + '</span>' : '') +
     '<span>' + txt + '</span></div>';
 }
@@ -4267,17 +4267,6 @@ async function renderAdminMe(v) {
     '<span class="chev">›</span></div></div></div>';
 
   h += '<button class="btn btn--block btn--quiet" id="pLogout">退出登录</button>';
-
-  if (S.data.version) {
-    h += '<p class="footnote">版本 v' + esc(S.data.version) +
-      '　这一版：项目第一版对外发布，界面跟上一轮一致，只改两处。一是家长端「发布 → 等你确认」' +
-      '里「确认 / 退回」点了没反应，根子在按钮的回调取不到那个函数里的局部名单，已改成把名单' +
-      '传进去；二是孩子端宝箱页撤掉「箱子图形跟着分数变 7 木 · 14 铜 · 21 银 · 28 金 · 35 钻' +
-      ' · 42 王 · 49 完」那一行，同样的门槛分下面七档列里已经逐列写过一遍，两处并排只是让人' +
-      '对两遍。规则、接口、库结构一条没动。此前 v3 到 v39 的内部编号作废，只作为沿革留在' +
-      '「旧版历史备份」里。' +
-      '</p>';
-  }
 
   v.innerHTML = h;
   $$('#view [data-go]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.go)));
@@ -5248,6 +5237,11 @@ async function settingsSheet() {
   });
   h += '<button class="btn wide ghost" id="pinBtn" style="margin-top:12px">改我的密码</button>';
   h += '<button class="btn wide ghost" id="iconBtn" style="margin-top:8px">给它们换张图</button>';
+  // 版本号和仓库地址落在设置页最底下：这一页就是这个 App 的「关于」，
+  // 出问题时要找的是「跑的是哪一版、代码在哪」。「我的」页原来那段一百八十字的
+  // 版本说明撤了 —— 那是在解释「这一版改了什么」，不是版本信息，看一次就够了。
+  h += '<p class="footnote" style="text-align:center;margin-top:16px">家庭积分 v' +
+    esc(S.data.version || '') + ' · github.com/WW-Ares/FamilyPoints</p>';
   sheet(h, box => {
     const ib = $('#iconBtn', box);
     if (ib) ib.addEventListener('click', iconSheet);
