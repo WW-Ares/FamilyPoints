@@ -3781,7 +3781,15 @@ def create_task(assignee_id, title, std, reward_type="stardust", reward=None, de
         # （见 _task_reward_blocked）。发布时根本没人可以挂上限。
         # 接取时限也在这里兜底：不填就从设置里取一个，只有大厅任务需要它 ——
         # 指名派下去的任务已经有主人，没有「等着谁来接」这一层。
-        deadline = deadline or default_claim_deadline()
+        # deadline 三种取值要分开认：
+        #   None  = 家长没选，按设置给一个默认值；
+        #   ''    = 家长选了「不限时」，存 NULL（不进过期清理，前端显示成「不限」）；
+        #   其余  = 家长指定的那一天。
+        # 原来只有「有就用、没有就用默认」两路，选了「不限时」会被默认 48 小时顶回来。
+        if deadline is None:
+            deadline = default_claim_deadline()
+        elif deadline == "":
+            deadline = None
         return db.execute(
             "INSERT INTO task (kind, title, std, assignee_id, created_by, reward_type, reward_json,"
             " deadline, status, visibility, slots, icon, cooldown_key, created_at)"

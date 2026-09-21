@@ -789,6 +789,56 @@ body.grown .stepper input.st-val {
 /* 「发出去」贴在屏幕底边：这一屏填的东西多，按钮压在最下面要滚到底才
    看得见，填完还得往回滚确认一遍。 */
 body.grown .pub-foot {
-  position: sticky; bottom: 0; z-index: 3; padding: 10px 0 6px; margin-top: 2px;
-  background: var(--bg);
+  /* 不做悬浮。试过 sticky：悬浮的那一条正好压在「接取 / 时限」和展开的
+     选图面板上，一屏看得见的东西反而少了。落回文档流，滚到底就是设计稿
+     那个样子：按钮在最下，小注贴在它脚下。 */
+  margin-top: 2px; padding: 4px 0 2px;
+}
+
+/* ------------------------------------------------------------------ 发布 · 写任务 */
+/* 卡里每一行都是「标签在左、控件在右」。原来标签和控件上下各占一行，
+   只有两个字的标签也要独占一整行，同样一屏少看见两行；摊到一行之后，
+   一张卡刚好落到拇指够得着的范围里。 */
+body.grown .pc { display: flex; flex-direction: column; gap: calc(11 * var(--u)); }
+body.grown .pin {
+  width: 100%; padding: 11px 12px; color: var(--ink);
+  background: var(--field); border: 1px solid var(--card-line);
+  border-radius: var(--r-xs); font-size: calc(13 * var(--u));
+  font-family: var(--font-cn);
+}
+body.grown .pin::placeholder { color: var(--ink-3); }
+body.grown .pin:focus {
+  outline: 2px solid rgba(255,138,61,.35); outline-offset: 1px; border-color: var(--orange);
+}
+body.grown .prow { display: flex; align-items: center; gap: calc(7 * var(--u)); flex-wrap: wrap; }
+body.grown .plab {
+  flex: none; font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2);
+}
+/* 控件那一侧吃掉剩下的宽度；chips 多了就自己换行，不挤扁标签。 */
+body.grown .prow > .chips { display: flex; gap: calc(6 * var(--u)); flex-wrap: wrap; }
+body.grown .prow > .field, body.grown .prow > .ip { flex: 1 1 auto; min-width: 0; }
+/* 派给某个孩子之后整个收起来的那两问 */
+body.grown .pgrp { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+/* 接取 / 时限两行的那一句小注挂在行尾 */
+body.grown .ptip { margin-left: auto; }
+
+/* ------------------------------------------------------------------ 我的记录 · 自定义区间 */
+/* 开始 / 结束并排两栏。原来上下各占一行，弹层里多出的一行正好把
+   「看这一段」顶到屏幕外，家长得先往上滑一下才点得到。
+   input[type=date] 自带一个不小的固有宽度，min-width:0 是它能被压进
+   半栏的前提 —— 少了这一句它宁可撑破弹层也不肯缩。 */
+body.grown .drange { display: flex; gap: calc(10 * var(--u)); }
+body.grown .dr-col {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: calc(4 * var(--u));
+}
+body.grown .dr-k { font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2); }
+body.grown .dr-col input[type="date"] {
+  width: 100%; min-width: 0; padding: 10px calc(9 * var(--u));
+  font-size: calc(12.5 * var(--u)); font-family: var(--font-cn); color: var(--ink);
+  background: var(--field); border: 1px solid var(--card-line);
+  border-radius: var(--r-xs);
+  -webkit-appearance: none; appearance: none;
+}
+body.grown .dr-col input[type="date"]:focus {
+  outline: 2px solid rgba(255,138,61,.35); outline-offset: 1px; border-color: var(--orange);
 }

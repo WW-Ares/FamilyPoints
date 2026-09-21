@@ -2424,10 +2424,13 @@ function askLogRange() {
   const f = LOG_FILTER;
   sheet('<h3>看哪一段</h3>' +
     '<p class="muted">选开始和结束，日志只翻这一段，两头都算在内。</p>' +
-    '<div class="field"><label>开始</label><input id="ls" type="date" value="' +
+    /* 开始和结束并排：分两行时，弹层里这一屏要往下多推一行的高度，
+       在手机上正好把「看这一段」顶出屏幕，得先滑一下才点得到。 */
+    '<div class="drange">' +
+    '<div class="dr-col"><span class="dr-k">开始</span><input id="ls" type="date" value="' +
     (f.since || shiftDay(todayStr(), -13)) + '"></div>' +
-    '<div class="field"><label>结束</label><input id="le" type="date" value="' +
-    (f.until || todayStr()) + '"></div>' +
+    '<div class="dr-col"><span class="dr-k">结束</span><input id="le" type="date" value="' +
+    (f.until || todayStr()) + '"></div></div>' +
     '<div class="chip-row"><span class="dim-label">快捷</span><div class="chips">' +
     '<button type="button" class="chip" data-rg="month">本月</button>' +
     '<button type="button" class="chip" data-rg="lastmonth">上月</button>' +
@@ -3360,14 +3363,9 @@ const TASK_STATE = { open: '等人领', pending: '待做', claimed: '在做', su
    「你到底做没做」的争论 —— 所以它跟标题并列摆在同一张卡里。 */
 let P_PUBSEG = 'new';          // 'new' 写任务 / 'mine' 我发出的
 
-function pPubRewards() {
-  const opts = [['stardust', '星尘', 5], ['energy', '周能量', 1],
-    ['ticket', '娱乐券', 1], ['box', '银箱', 3]];
-  return '<div class="field" style="gap:7px"><span class="field-label">奖励</span>' +
-    '<div class="chips">' + opts.map((o, i) =>
-      '<button type="button" class="chip' + (i ? '' : ' on') + '" data-r="' + o[0] +
-      '" data-d="' + o[2] + '">' + esc(o[1]) + '</button>').join('') + '</div></div>';
-}
+/* 奖励的四挡，第三个数是选中时quantity框里的默认值。 */
+const REWARD_OPTS = [['stardust', '星尘', 5], ['energy', '周能量', 1],
+  ['ticket', '娱乐券', 1], ['box', '银箱', 3]];
 
 /* 数量用步进器，不用数字输入框：手机上那个框会顶起数字键盘，还容易留成
    0 或者空着 —— 孩子领了活才发现奖励是空的。点加减，最小 1，改不错。 */
@@ -3380,20 +3378,10 @@ function amtStepper(id, val) {
     '<button type="button" class="st-btn" data-st="1" data-for="' + id +
     '" aria-label="多一个">+</button></div>';
 }
-/* 每行底下那句小注跟着所选的按钮走。写死的那一句只对一种选择成立，
-   家长换了按钮，那句就成了错的话。 */
-const REWARD_TIP = {
-  stardust: '星尘一周合计不超过 20 · 花掉不掉等级',
-  energy: '周能量只在这一个周期里有效，周末结算清零',
-  ticket: '娱乐券发出去就开始计时，用掉才算',
-  box: '宝箱只发到银箱 · 稀有卡不发',
-};
-const TO_TIP = {
-  hall: '谁先点谁拿 · 时限内没人接自动下线',
-  kid: '直接派给他，不用抢，也不会自动下线',
-};
+/* 「接取」那句小注跟着所选的按钮走：写死的一句只对一种选择成立，
+   选了「多人接取」还写着「谁先点谁拿」就成了错的话。 */
 const SLOT_TIP = {
-  1: '一个人接走，别人就领不到了',
+  1: '谁先点谁拿',
   2: '两个人都能领到，各一份',
 };
 
@@ -3435,42 +3423,43 @@ async function renderAdminPublish(v) {
     '</span></button></div>';
 
   if (seg === 'new') {
-    /* 两张卡，卡里不再写「① 什么事」这种编号标题 —— 标题占一行、说明又占一行，
-       说明比输入框还高，一屏装不下。现在每张卡第一行就是能填的东西。 */
-    h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
-      '<div class="field"><span class="field-label">标题</span>' +
-      '<input id="pT" placeholder="例如：整理书架"></div>' +
-      '<div class="field"><span class="field-label">完成标准</span>' +
-      '<input id="pS" placeholder="例如：书按高低排好、台面没灰"></div>' +
-      '<p class="caption">写成能核对的样子 —— 「整理房间」和「书按高低排好」不是一件事</p>' +
+    /* 两张卡，卡里不写编号标题。
+       卡里每一行都是「标签在左、控件在右」：标签和输入挤成上下两行时，
+       一屏只看得见三行；摊到一行，同样宽度能多看见两行。
+       标题和完成标准直接把示例写进框里的浅字，省掉「标题」那两个字的标签。 */
+    h += '<div class="card card--lg pc">' +
+      '<input id="pT" class="pin" placeholder="标题，例如：整理书架">' +
+      '<input id="pS" class="pin" placeholder="完成标准：书按高低排好、台面没灰">' +
+      '<p class="caption">写成能核对的样子，避免「收拾一下」这种没法验的。</p>' +
       '</div>';
 
-    h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
-      pPubRewards() +
-      '<div class="field" id="pAmtBox"><span class="field-label">数量</span>' +
+    h += '<div class="card card--lg pc">' +
+      '<div class="prow"><span class="plab">奖励</span><div class="chips">' +
+      REWARD_OPTS.map((o, i) => '<button type="button" class="chip' + (i ? '' : ' on') +
+        '" data-r="' + o[0] + '" data-d="' + o[2] + '">' + esc(o[1]) + '</button>').join('') +
+      '</div></div>' +
+      '<div class="prow" id="pAmtBox"><span class="plab">数量</span>' +
       amtStepper('pAmt', 5) + '</div>' +
-      '<p class="caption" id="pRwTip">' + esc(REWARD_TIP.stardust) + '</p>' +
-      iconField('pIcon', '', 'task', '配一张图') +
-      '<p class="caption">他在大厅里先看见的就是这张图。不挑也行，系统会按类型给默认的。</p>' +
-      // 给谁：原来分两层（先选挂大厅还是派给孩子，再选哪个孩子），
-      // 一层就够 —— 点孩子名字就是派给他，点挂大厅就是谁都能接。
-      '<div class="field" style="gap:7px"><span class="field-label">给谁</span>' +
-      '<div class="chips">' +
+      '<p class="caption">星尘一周合计不超 20 · 箱只到银 · 卡不发稀有</p>' +
+      '<div class="prow"><span class="plab">配图</span>' +
+      iconField('pIcon', '', 'task', '') + '</div>' +
+      '<p class="caption">大厅里先看到的就是它</p>' +
+      // 给谁：点孩子的名字就是派给他，点挂大厅就是谁都能接。不再分两层。
+      '<div class="prow"><span class="plab">给谁</span><div class="chips">' +
       '<button type="button" class="chip on" data-to="hall">挂大厅</button>' +
       KIDS().map(m => '<button type="button" class="chip" data-to="' + m.id + '">' +
         esc(m.name) + '</button>').join('') + '</div></div>' +
-      '<p class="caption" id="pToTip">' + esc(TO_TIP.hall) + '</p>' +
       // 这两问只对挂大厅有意义：派给某个孩子就没有「谁来抢」和「多久下线」
-      '<div id="pHallOnly" style="display:flex;flex-direction:column;gap:12px">' +
-      '<div class="field" style="gap:7px"><span class="field-label">接取</span>' +
-      '<div class="chips">' +
+      '<div id="pHallOnly" class="pgrp">' +
+      '<div class="prow"><span class="plab">接取</span><div class="chips">' +
       '<button type="button" class="chip on" data-s="1">单人接取</button>' +
-      '<button type="button" class="chip" data-s="2">多人接取</button></div></div>' +
-      '<div class="field" style="gap:7px"><span class="field-label">时限</span>' +
-      '<div class="chips">' +
+      '<button type="button" class="chip" data-s="2">多人接取</button></div>' +
+      '<span class="caption ptip" id="pSlotTip">' + esc(SLOT_TIP[1]) + '</span></div>' +
+      '<div class="prow"><span class="plab">时限</span><div class="chips">' +
       '<button type="button" class="chip on" data-dl="1">今天内</button>' +
-      '<button type="button" class="chip" data-dl="2">24 小时</button></div></div>' +
-      '<p class="caption" id="pSlotTip">' + esc(SLOT_TIP[1]) + '</p>' +
+      '<button type="button" class="chip" data-dl="2">24 小时</button>' +
+      '<button type="button" class="chip" data-dl="0">不限时</button></div>' +
+      '<span class="caption ptip">到点没人接自动下线，不罚人</span></div>' +
       '</div></div>';
 
     /* 「发出去」贴在屏幕底边：这一屏填的东西多，按钮压在最下面要滚到底才
@@ -3540,7 +3529,6 @@ function bindPublishForm() {
     amtEl().value = defaultAmt;
     // 银箱是整档的，填数量没有意义
     $('#pAmtBox').style.display = rt === 'box' ? 'none' : '';
-    tip('#pRwTip', REWARD_TIP[rt] || '');
   }));
   $$('#view .st-btn').forEach(b => b.addEventListener('click', () => {
     const inp = $('#' + b.dataset.for);
@@ -3558,7 +3546,6 @@ function bindPublishForm() {
     // 派给某个孩子之后，没有「谁来抢」和「多久没人领就下线」这两问
     const hall = to === 'hall';
     $('#pHallOnly').style.display = hall ? '' : 'none';
-    tip('#pToTip', hall ? TO_TIP.hall : TO_TIP.kid);
     // 底部那句也得跟着换：派给孩子的任务不进大厅、没时限，原话就说错了
     tip('#pFootTip', hall ? '挂出去就进任务大厅 · 时限内没人接会自动下线，不罚任何人'
                           : '直接派到他任务上 · 他做完你确认时发分');
@@ -3584,7 +3571,9 @@ function bindPublishForm() {
     };
     if (to === 'hall') {
       body.open_to_all = true; body.slots = slots;
-      body.deadline = dl === 1 ? todayStr() : shiftDay(todayStr(), 1);
+      // 不限时（dl 0）传空串，后端存 NULL，它就不进那条过期清理；
+      // 别的两档给一个具体的日子。
+      body.deadline = dl === 1 ? todayStr() : dl === 2 ? shiftDay(todayStr(), 1) : '';
     } else {
       body.assignee_id = +to;
     }
@@ -4155,7 +4144,9 @@ function pCalHTML(m, sel) {
   let h = '<div class="card"><div class="cal-bar">' +
     '<span class="cal-nav">' +
     '<button type="button" data-mv="-1" aria-label="上个月">' + pic('i-chevron-left', 16) + '</button>' +
-    '<span class="month">' + Y + ' 年 ' + M + ' 月</span>' +
+    /* 年月连着写（不带空格）：中间那两个空格一拆成三段，窄屏上「9 月」会被
+       挤到第二行去，箭头和说明就跟着错位。这一行另外也不用数字字体。 */
+    '<span class="month">' + Y + '年' + M + '月</span>' +
     '<button type="button" data-mv="1"' + (ym >= ymOf(today) ? ' disabled' : '') +
     ' aria-label="下个月">' + pic('i-chevron-right-dead', 16) + '</button></span>' +
     '<span class="caption">点一格看当天七项</span></div>' +

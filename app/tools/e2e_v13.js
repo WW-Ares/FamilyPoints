@@ -1138,37 +1138,43 @@ async function walkTabs(page, tag) {
   if (toChips[0] !== '挂大厅') bad('[v1.6] 「给谁」第一颗不是「挂大厅」，是「' + toChips[0] + '」');
   if (await page.locator('#view #pKid').count()) bad('[v1.6] 「给谁」还留着下拉');
   const kidChips = toChips.slice(1);
-  /* 底下那句小注要跟着按钮走。写死的一句只对一种选择成立，换了按钮就成了错话
-     （选了娱乐券还写着「星尘一周不超过 20」）。三句各验一次换没换。 */
-  const rwTip0 = flat(await page.locator('#view #pRwTip').innerText());
-  await page.locator('#view .chip[data-r="ticket"]').click();
-  await page.waitForTimeout(300);
-  const rwTip1 = flat(await page.locator('#view #pRwTip').innerText());
-  say('   报酬小注: 「' + rwTip0 + '」→「' + rwTip1 + '」');
-  if (rwTip1 === rwTip0) bad('[v1.6] 换了报酬，底下的小注没跟着换');
-  if (rwTip1.indexOf('星尘') >= 0) bad('[v1.6] 选了娱乐券，小注还在说星尘');
-  await page.locator('#view .chip[data-r="stardust"]').click();
-  await page.waitForTimeout(200);
-  // 接取那句只在挂大厅时看得见，先把派孩子之前的原话留着
-  const toTip0 = flat(await page.locator('#view #pToTip').innerText());
+  /* 四句静态小注：有些只对某一种选择成立，就让它跟着按钮走；四条上限那种
+     一次说得完的，写死一句反而清楚，不用拆。差别在于「换了之后会不会变成错话」。 */
+  const cardTxt0 = flat(await page.evaluate(() => Array.from(
+    document.querySelectorAll('#view .pc')).map(c => c.innerText).join(' ᛁ ')));
+  for (const s of ['星尘一周合计不超20·箱只到银·卡不发稀有', '大厅里先看到的就是它',
+    '写成能核对的样子']) {
+    if (cardTxt0.indexOf(s) < 0) bad('[v1.6] 卡里少了这句小注：' + s);
+  }
+  if (cardTxt0.indexOf('给谁') < 0) bad('[v1.6] 卡里找不到「给谁」那一行');
+  // 「给谁」那一行不该带小注：选谁就是派给谁，六个字说得清的事不用再注一遍
+  const toRowTxt = flat(await page.locator('#view .chip[data-to="hall"]')
+    .evaluate(el => el.closest('.prow') ? el.closest('.prow').innerText : ''));
+  say('   给谁那一行: ' + toRowTxt);
+  if (/接不走|谁先点|直接派/.test(toRowTxt)) bad('[v1.6] 「给谁」那行还挂着小注：' + toRowTxt);
+  /* 接取那句跟着所选走：写死的「谁先点谁拿」在「多人接取」那一档就成了错话。 */
   const slotTip0 = flat(await page.locator('#view #pSlotTip').innerText());
   await page.locator('#view .chip[data-s="2"]').click();
   await page.waitForTimeout(300);
   const slotTip1 = flat(await page.locator('#view #pSlotTip').innerText());
   say('   接取小注: 「' + slotTip0 + '」→「' + slotTip1 + '」');
+  if (slotTip0 !== '谁先点谁拿') bad('[v1.6] 单人接取那句是「' + slotTip0 + '」');
   if (slotTip1 === slotTip0) bad('[v1.6] 换了接取方式，底下的小注没跟着换');
+  if (slotTip1.indexOf('各一份') < 0) bad('[v1.6] 多人接取那句没说各一份：' + slotTip1);
   await page.locator('#view .chip[data-s="1"]').click();
   await page.waitForTimeout(200);
   // 点孩子的名字：直接派给他，同时「接取 / 时限」这两问没有意义，要收起来
+  const footTip0 = flat(await page.locator('#view #pFootTip').innerText());
   const hallDisp0 = await page.locator('#view #pHallOnly').evaluate(el => el.style.display);
   await page.locator('#view .chip[data-to]').nth(1).click();
   await page.waitForTimeout(500);
   const hallDisp1 = await page.locator('#view #pHallOnly').evaluate(el => el.style.display);
-  const toTip1 = flat(await page.locator('#view #pToTip').innerText());
+  const footTip1 = flat(await page.locator('#view #pFootTip').innerText());
   say('   派给孩子后: 接取/时限 display ' + (hallDisp0 || '(空)') + ' → ' + hallDisp1 +
-    '；小注「' + toTip0 + '」→「' + toTip1 + '」');
+    '；底部「' + footTip0 + '」→「' + footTip1 + '」');
   if (hallDisp1 !== 'none') bad('[v1.6] 派给孩子之后，「接取 / 时限」没有收起来');
-  if (toTip1 === toTip0) bad('[v1.6] 换了「给谁」，底下的小注没跟着换');
+  if (footTip1 === footTip0) bad('[v1.6] 换了「给谁」，底部那句没跟着换');
+  if (footTip1.indexOf('任务大厅') >= 0) bad('[v1.6] 派给孩子了，底部还在说进大厅');
   if (await page.locator('#view [data-to="hall"].on').count()) {
     bad('[v1.6] 选了某个孩子，还高亮着「挂大厅」');
   }
@@ -1224,6 +1230,13 @@ async function walkTabs(page, tag) {
   if (ipBack < 18) bad('[v42] 点了「重置」没回到整组：' + ipBack);
   await clickSel(page, '#view button[data-ip="pIcon"]', '把配图面板合上');
 
+  /* 三个时限按钮都得在，「不限时」这一档是新加的：后端原来只有「有就用、
+     没有就用默认 48 小时」两路，选了不限时会被默认值顶回来。 */
+  const dlChips = (await page.locator('#view .chip[data-dl]').allInnerTexts()).map(flat);
+  say('   时限按钮: ' + dlChips.join(' / '));
+  if (dlChips.length !== 3) bad('[v1.6] 时限只有 ' + dlChips.length + ' 档（要有 3 档）：' + dlChips.join('/'));
+  if (dlChips.indexOf('不限时') < 0) bad('[v1.6] 时限少了「不限时」那一档');
+
   // 真发一个任务出去，核对它落到的是刚点的那个人。
   // 光看按钮高亮不算数：点下去到底把谁传给了后端，只有真发一次才知道。
   /* 奖励换成娱乐券再发：直接派给某个孩子的任务，发出那一刻就占本周任务星尘
@@ -1236,7 +1249,17 @@ async function walkTabs(page, tag) {
   const ttl = 'e2e 派活 ' + Date.now();
   await page.locator('#view #pT').fill(ttl);
   await page.locator('#view #pS').fill('e2e 自己发的，看它落到谁手上');
+  /* 后端拒了也要看得出它为什么拒。只报「找不到」排查不到根上 ——
+     额度顶住、参数改名、孩子被人停用，页面上的表现一模一样。 */
+  let postTxt = '';
+  const p = page.waitForResponse(r => r.url().indexOf('/api/tasks') >= 0 &&
+    (r.request().method() || '') === 'POST', { timeout: 8000 }).catch(() => null);
   await page.locator('#view #pSend').click();
+  const pres = await p;
+  if (pres) {
+    postTxt = pres.status() + ' ';
+    try { postTxt += JSON.stringify(await pres.json()); } catch (e) { postTxt += '(no body)'; }
+  } else { postTxt = '(没等到 POST /api/tasks)'; }
   await page.waitForTimeout(1600);
   const sent = await page.evaluate(async t => {
     const r = await fetch('/api/tasks/hall', { headers: { 'Accept': 'application/json' } });
@@ -1246,7 +1269,8 @@ async function walkTabs(page, tag) {
     return x ? { who: x.who || '', status: x.status || '' } : null;
   }, ttl);
   say('   真发一个任务: ' + (sent ? (sent.who || '（没名字）') + ' / ' + sent.status : '没找到'));
-  if (!sent) bad('[v42] 派出去的任务在大厅清单里找不到');
+  say('   后端回的: ' + postTxt);
+  if (!sent) bad('[v42] 派出去的任务在大厅清单里找不到（后端回的是 ' + postTxt + '）');
   else if (sent.who !== kidChips[0]) {
     bad('[v1.6] 派给「' + kidChips[0] + '」的任务落到了「' + sent.who + '」');
   }
