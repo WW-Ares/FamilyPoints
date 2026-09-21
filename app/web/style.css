@@ -1,0 +1,803 @@
+/* 家庭积分 · 移动优先样式。无外部字体、无 CDN。
+   配色与版式参考 RewardHub（深绿 #157a67），家长端和孩子端是两套导航。 */
+:root {
+  --bg: #f4f7f5;
+  --card: #ffffff;
+  --ink: #17241f;
+  --ink-2: #4f635a;
+  --ink-3: #74827c;
+  --line: #e3ebe7;
+
+  --brand: #157a67;
+  --brand-dark: #0f5d50;
+  --brand-soft: #e7f5ef;
+  --brand-line: #b7daca;
+
+  --blue: #35689d;
+  --blue-soft: #eaf1fb;
+  --gold: #c47b27;
+  --gold-soft: #fff2df;
+  --ok: #157a67;
+  --warn: #c9534c;
+  --warn-soft: #fceceb;
+
+  --radius: calc(14 * var(--u));
+  --shadow: 0 1px 2px rgba(23, 36, 31, .04), 0 10px 30px rgba(25, 58, 48, .06);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+
+  /* ---------------- 响应式基准（三端共用） ----------------
+     只放 --u 与外壳宽度这两组。各端自己的（--pad / --gap-card / --h-tabbar）在
+     body.kid 与 body.grown 下，两边互不污染，别往这里搬。
+
+     --u 是「1 个设计稿 px」：390 宽（孩子端设计基准）处正好 1px，
+     窄到 366、宽到 437 之后不再跟着变。全站换算写成 calc(N * var(--u))，
+     N 直接照抄设计稿上的 px 值，读代码不用二次换算。
+     形状必须是长度，不能是纯数字 —— calc() 只允许「长度 × 数字」，
+     var(--u) 若是纯数字，calc(16px * var(--u)) 整条会因为类型不匹配作废。
+     --u-sm 是小字专用，不跟着往下缩：9.5px 一档缩到 8.9px 就没法看了。 */
+  --u:    clamp(0.94px, 100vw / 390, 1.12px);
+  --u-sm: clamp(1px,    100vw / 390, 1.12px);
+
+  /* 外壳宽度：全站只认这四个名字，别处不许再写死。默认值来自换皮之前那套
+     （没挂 kid / grown 时用，比如初始化页）；两端各自的 480 在各自 tokens 里。 */
+  --shell-w: 560px;             /* 页面外壳 */
+  --bar-w:   var(--shell-w);    /* 底部固定栏：默认跟外壳同宽，宽屏下单独限宽 */
+  --sheet-w: 560px;             /* 弹层骨架 */
+  --login-w: 440px;             /* 登录页 */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101815; --card: #182420; --ink: #ecf3ef; --ink-2: #a9bdb4; --ink-3: #7e9089;
+    --line: #26352f; --brand: #4fc4a5; --brand-dark: #2f9c81; --brand-soft: #172c26;
+    --brand-line: #29564a; --blue: #7fb2e6; --blue-soft: #1b2634; --gold: #e0ab5c;
+    --gold-soft: #2c271a; --ok: #4fc4a5; --warn: #e0857e; --warn-soft: #2d1c1b;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.28);
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  /* 原来是 font 简写。拆成三条是为了让基准字号也跟着 --u 走：
+     简写里塞 calc() 做「字号/行高」容易解析歧义，拆开最省事。
+     其余几条（字重、字形、行高）保持简写时的取值。 */
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  font-size: calc(15 * var(--u));
+  line-height: 1.55;
+  overscroll-behavior-y: none;
+}
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+input, select, textarea { font: inherit; color: inherit; }
+img { max-width: 100%; }
+#app { max-width: var(--shell-w); margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ---------- 顶栏 ---------- */
+#topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 13px; padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: saturate(1.6) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 7px; font-weight: 800; letter-spacing: .01em; }
+.brand .mark {
+  width: 26px; height: 26px; border-radius: 8px; flex: none;
+  color: #fff; font-size: calc(15 * var(--u));
+  background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+  display: grid; place-items: center;
+}
+/* 顶栏左：家长在这里切看哪个孩子 */
+.child-select {
+  appearance: none; -webkit-appearance: none;
+  padding: 6px 24px 6px 11px; border-radius: 999px;
+  border: 1px solid var(--brand-line); background: var(--brand-soft);
+  color: var(--brand-dark); font-size: calc(12.5 * var(--u)); font-weight: 650;
+  background-image: linear-gradient(45deg, transparent 50%, var(--brand-dark) 50%),
+    linear-gradient(135deg, var(--brand-dark) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 54%, calc(100% - 9px) 54%;
+  background-size: 4px 4px; background-repeat: no-repeat;
+}
+/* 顶栏右：现在是谁，点一下换人 */
+.who {
+  margin-left: auto; display: flex; align-items: center; gap: 7px; text-align: left;
+  padding: 4px 11px 4px 4px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.who .av { width: 26px; height: 26px; border-radius: 50%; flex: none;
+  background: var(--brand-soft); color: var(--brand);
+  display: grid; place-items: center; font-weight: 700; font-size: calc(11 * var(--u)); }
+.who .nm { display: block; font-size: calc(12.5 * var(--u)); font-weight: 700; line-height: 1.2; }
+.who .cr { display: block; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); line-height: 1.2; }
+.balance { margin-left: 8px; flex: none; text-align: right; }
+.balance b { display: block; font-size: calc(17 * var(--u)); font-weight: 750; line-height: 1.1;
+  font-variant-numeric: tabular-nums; }
+.balance span { display: block; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+
+/* 主内容区。底部导航是固定的，会盖住最后一屏内容，所以留出它的高度 */
+#view {
+  padding: 13px;
+  padding-bottom: 92px; }
+.sec { margin-bottom: 13px; }
+.sec-h { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 8px; }
+.sec-h h2 { font-size: calc(15 * var(--u)); margin: 0; font-weight: 750; }
+.sec-h .sub { font-size: calc(12 * var(--u)); color: var(--ink-3); }
+.eyebrow { display: block; color: var(--ink-3); font-size: calc(10 * var(--u-sm)); font-weight: 800;
+  letter-spacing: .13em; text-transform: uppercase; }
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.card + .card { margin-top: 10px; }
+.pad { padding: 14px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row + .row { margin-top: 8px; }
+.between { justify-content: space-between; }
+.muted { color: var(--ink-3); font-size: calc(12 * var(--u)); }
+.dim { color: var(--ink-2); font-size: calc(13 * var(--u)); }
+.big { font-size: calc(26 * var(--u)); font-weight: 750; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.empty { color: var(--ink-3); text-align: center; padding: 26px 14px; font-size: calc(13 * var(--u)); }
+.hr { height: 1px; background: var(--line); margin: 12px 0; }
+.tag {
+  display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: calc(11 * var(--u));
+  background: var(--brand-soft); color: var(--brand-dark); font-weight: 650;
+}
+.tag.gold { background: var(--gold-soft); color: var(--gold); }
+.tag.ok { background: var(--brand-soft); color: var(--brand-dark); }
+.tag.warn { background: var(--warn-soft); color: var(--warn); }
+.tag.blue { background: var(--blue-soft); color: var(--blue); }
+
+/* ---------- 英雄面板（孩子端星球等级） ---------- */
+.hero {
+  position: relative; overflow: hidden; margin-bottom: 13px; padding: 17px;
+  color: #fff; border-radius: 16px;
+  background: linear-gradient(135deg, #157a67, #165c62);
+  box-shadow: 0 16px 38px rgba(21, 122, 103, .22);
+}
+.hero::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 88% 6%, rgba(255,255,255,.18), transparent 42%);
+}
+.hero-top { position: relative; display: flex; align-items: center; gap: 12px; }
+.hero-av {
+  width: 46px; height: 46px; border-radius: 50%; flex: none; font-size: calc(17 * var(--u)); font-weight: 700;
+  background: rgba(255,255,255,.16); border: 2px solid rgba(255,255,255,.5);
+  display: grid; place-items: center; overflow: hidden;
+}
+.hero-id { min-width: 0; flex: 1; }
+.hero-id h2 { margin: 0; font-size: calc(19 * var(--u)); }
+.hero-id .sub { color: rgba(255,255,255,.75); font-size: calc(11.5 * var(--u)); }
+.hero-bal { text-align: right; flex: none; }
+.hero-bal b { display: block; font-size: calc(30 * var(--u)); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.hero-bal span { color: rgba(255,255,255,.75); font-size: calc(11 * var(--u)); }
+.lv-line { position: relative; display: flex; align-items: center; justify-content: space-between;
+  gap: 9px; margin-top: 15px; }
+.lv-line .lv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: calc(16 * var(--u)); font-weight: 700; }
+.lv-line .lv-xp { flex: none; color: rgba(255,255,255,.8); font-size: calc(11 * var(--u)); font-weight: 700;
+  font-variant-numeric: tabular-nums; }
+.lv-chip {
+  display: inline-flex; align-items: baseline; gap: 4px; padding: 5px 9px;
+  color: #fff4c7; background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.28);
+  border-radius: 8px; font-size: calc(10 * var(--u-sm)); font-weight: 800; letter-spacing: .04em;
+}
+.lv-chip strong { font-size: calc(17 * var(--u)); }
+.xp-track {
+  position: relative; height: 9px; margin-top: 9px; overflow: hidden; border-radius: 99px;
+  background: rgba(255,255,255,.16);
+}
+.xp-track > i {
+  display: block; height: 100%; width: 0; border-radius: inherit;
+  background: linear-gradient(90deg, #71d7bb, #f8d77a); transition: width .3s ease;
+}
+.hero-note { position: relative; margin-top: 9px; color: rgba(255,255,255,.72); font-size: calc(11.5 * var(--u));
+  line-height: 1.55; }
+.hero-stats { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-top: 13px; }
+.hero-stats > div { padding: 9px 10px; background: rgba(255,255,255,.09); border-radius: 9px; }
+.hero-stats span { display: block; color: rgba(255,255,255,.62); font-size: calc(10 * var(--u-sm)); }
+.hero-stats strong { display: block; margin-top: 3px; color: #f8d77a; font-size: calc(19 * var(--u));
+  font-variant-numeric: tabular-nums; }
+
+/* ---------- 按钮 ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 14px; border-radius: 10px; background: var(--brand); color: #fff;
+  font-weight: 700; font-size: calc(14 * var(--u));
+}
+.btn.ghost { background: var(--brand-soft); color: var(--brand-dark); }
+.btn.line { background: transparent; border: 1px solid var(--line); color: var(--ink-2); font-weight: 550; }
+.btn.wide { width: 100%; }
+.btn.sm { padding: 6px 11px; font-size: calc(13 * var(--u)); border-radius: 8px; }
+.btn:disabled { opacity: .45; }
+.btn.danger { background: var(--warn); }
+.btn.dark { background: var(--brand-dark); }
+
+/* 并排的按钮对。两头各有一套更细的规则（列表行、弹层），这里只管
+   别让它们粘在一起 —— 孩子端原先没有这条，两个胶囊贴成一颗。 */
+.act-row { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* ---------- 底部导航 ---------- */
+#tabs {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: var(--bar-w); z-index: 20;
+  display: flex; justify-content: center; gap: 4px;
+  background: color-mix(in srgb, var(--card) 96%, transparent);
+  backdrop-filter: blur(12px); border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 24px rgba(20, 49, 40, .05);
+  padding: 7px 6px calc(7px + var(--safe-b));
+}
+#tabs button {
+  flex: 1; max-width: 118px; min-height: 50px; border-radius: 11px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; font-size: calc(11 * var(--u)); color: var(--ink-3);
+}
+#tabs button .ic { font-size: calc(19 * var(--u)); line-height: 1; }
+#tabs button.on { color: var(--brand-dark); background: var(--brand-soft); font-weight: 800; }
+
+/* ---------- 打分 ---------- */
+.dims { display: grid; gap: 8px; }
+.dim-item {
+  display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+  border: 1px solid var(--line); border-radius: 11px; background: var(--card);
+  transition: opacity .12s, transform .06s;
+}
+.dim-item.off { opacity: .48; }
+.dim-item.off .dname { text-decoration: line-through; }
+.dim-item .dic {
+  width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: calc(13 * var(--u)); flex: none;
+}
+.dim-item .dtxt { flex: 1; min-width: 0; }
+.dim-item .dname { font-weight: 650; font-size: calc(14 * var(--u)); }
+.dim-item .dm { font-size: calc(11.5 * var(--u)); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dim-item .dval { font-weight: 700; color: var(--brand); font-variant-numeric: tabular-nums; }
+.switch { flex: none; width: 44px; height: 26px; border-radius: 999px; background: var(--line); position: relative; }
+.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: left .16s;
+}
+.switch.on { background: var(--brand); }
+.switch.on::after { left: 21px; }
+.daystrip { display: flex; gap: 6px; overflow-x: auto; padding: 2px; }
+.daycell {
+  flex: none; width: 42px; text-align: center; padding: 7px 0; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card); font-size: calc(11 * var(--u)); color: var(--ink-3);
+}
+.daycell b { display: block; font-size: calc(14 * var(--u)); color: var(--ink); font-variant-numeric: tabular-nums; }
+.daycell.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.daycell.on b { color: #fff; }
+.daycell.done { border-color: var(--brand-line); }
+.daycell.lock { opacity: .5; }
+/* v28：孩子端「分数」页里，七项各一行、每行七个小格子（周一到周日）。
+   和上面的 .daycell 是两回事：那个是一周一天的大格子，这个是每天都画、
+   小到能塞进一行里。 */
+.dgrid { display: flex; gap: 4px; margin-top: 7px; }
+.dgrid i {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  font-style: normal; font-size: calc(12 * var(--u)); line-height: 1.25; padding: 3px 0 2px;
+  border-radius: 7px; background: var(--line); color: var(--ink-3);
+}
+.dgrid i b { font-size: calc(10 * var(--u-sm)); font-weight: 500; }
+.dgrid i.on { background: var(--brand-soft); color: var(--brand-dark); font-weight: 700; }
+.dgrid i.no { background: var(--warn-soft); color: var(--warn); }
+.dgrid i.lock { opacity: .5; }
+.dnote { font-size: calc(11.5 * var(--u)); color: var(--warn); margin-top: 6px; }
+.dstar { font-size: calc(11.5 * var(--u)); color: var(--brand-dark); margin-top: 6px; }
+
+/* ---------- 进度条 ---------- */
+.bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--brand); border-radius: 999px; }
+.bar > i.gold { background: linear-gradient(90deg, #e0ab5c, var(--gold)); }
+.ladder { display: flex; gap: 4px; margin-top: 8px; }
+.ladder > div {
+  flex: 1; text-align: center; font-size: calc(10 * var(--u-sm)); color: var(--ink-3);
+  padding: 6px 0 5px; border-radius: 8px; background: var(--bg); border: 1px solid transparent;
+}
+.ladder > div b { display: block; font-size: calc(12 * var(--u)); color: var(--ink-2); }
+.ladder > div.on { background: var(--brand-soft); border-color: var(--brand); }
+.ladder > div.on b { color: var(--brand-dark); }
+
+/* 七档箱子那条横排（v24）。比老的 .ladder 多一行：每一格除了分数还写
+   「几张券 + 几张卡」。手机 360px 宽下面七格大概 46px 一格，
+   「钻石箱」三个字正好放得下，再长就会挤 —— 所以文案不许超过三个字。 */
+.boxtrack { display: flex; gap: 3px; margin-top: 10px; }
+.boxtrack > div {
+  flex: 1; min-width: 0; text-align: center; padding: 7px 1px 6px;
+  border-radius: 9px; background: var(--bg); border: 1px solid transparent;
+}
+.boxtrack > div b {
+  display: block; font-size: calc(10.5 * var(--u-sm)); font-weight: 500; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.boxtrack > div .bt-s {
+  display: block; font-size: calc(13.5 * var(--u)); font-weight: 700; color: var(--ink-2); margin-top: 1px;
+}
+.boxtrack > div .bt-c {
+  display: block; font-size: calc(9 * var(--u-sm)); color: var(--ink-3); margin-top: 2px;
+  white-space: nowrap; overflow: hidden;
+}
+.boxtrack > div.got { background: var(--brand-soft); }
+.boxtrack > div.got b, .boxtrack > div.got .bt-s { color: var(--brand-dark); }
+.boxtrack > div.on { border-color: var(--brand); background: var(--brand-soft); }
+.boxtrack > div.on .bt-c { color: var(--brand-dark); }
+
+/* ---------- 指标格 ---------- */
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.metric { padding: 11px 10px; border-radius: 11px; background: var(--bg); border: 1px solid var(--line);
+  text-align: left; }
+.metric span { display: block; color: var(--ink-3); font-size: calc(10.5 * var(--u-sm)); }
+.metric strong { display: block; margin-top: 3px; font-size: calc(20 * var(--u)); font-variant-numeric: tabular-nums; }
+.metric.alert { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.metric.alert strong { color: var(--warn); }
+
+/* ---------- 列表项 ---------- */
+.item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; }
+.item + .item { border-top: 1px solid var(--line); }
+.item .txt { flex: 1; min-width: 0; }
+.item .nm { font-weight: 650; font-size: calc(14 * var(--u)); }
+.item .ds { font-size: calc(11.5 * var(--u)); color: var(--ink-3); }
+.item .rt { text-align: right; flex: none; font-size: calc(13 * var(--u)); }
+.item.tap { }
+.qty { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+/* 券行：名字下面要挂「现在为什么不能用」，比普通 .item 高，按钮对齐顶部更好看 */
+.ticket-row { align-items: flex-start; }
+.ticket-row .btn { flex: none; margin-top: 1px; }
+/* 能用 / 不能用的原因。用 --ok / --warn 两色，扫一眼就知道该不该点 */
+.ok-t { color: var(--ok) !important; }
+.no-t { color: var(--warn) !important; }
+/* 额度快照：已用几张、晚间还剩几张、几点收工 */
+.tk-meta {
+  margin-top: 3px; font-size: calc(11 * var(--u)); color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「正在玩」：孩子端和家长端共用的一块。整块描绿边、数字放大 ——
+   这一屏要回答的是「还剩多久」，数字得是整页最显眼的东西。 */
+.tk-run { border-left: 3px solid var(--ok); }
+.tk-run .tk-big {
+  font-size: calc(19 * var(--u)); color: var(--ok); font-variant-numeric: tabular-nums;
+  letter-spacing: .3px;
+}
+/* 等审核：时限在走，用警示色，跟「正在玩」区分开 */
+.tk-pend { border-left: 3px solid var(--warn); }
+.tk-pend .tag { font-variant-numeric: tabular-nums; }
+/* 被拒的那条：理由要能一眼看见，不是灰色小字 */
+.tk-judge { border-left: 3px solid var(--line); }
+.tk-no {
+  margin-top: 7px; padding: 8px 10px; border-radius: 8px;
+  background: var(--warn-soft); color: var(--warn); font-size: calc(13 * var(--u));
+}
+.rar-common { color: var(--ink-2); }
+.rar-rare { color: #2f6fa8; }
+.rar-legend { color: var(--gold); }
+.rar-diamond { color: #8a5cc4; }
+@media (prefers-color-scheme: dark) {
+  .rar-rare { color: #7fb2e6; } .rar-diamond { color: #c39ff0; }
+}
+
+/* ---------- 快捷宫格 ---------- */
+.qa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.qa-cell {
+  display: flex; align-items: center; gap: 9px; padding: 12px;
+  text-align: left; border-radius: 11px; background: var(--card);
+  border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.qa-cell .qi { font-size: calc(17 * var(--u)); line-height: 1; flex: none; }
+.qa-cell .qt { min-width: 0; }
+.qa-cell .qt b { display: block; font-size: calc(13.5 * var(--u)); font-weight: 650; }
+.qa-cell .qt span { display: block; color: var(--ink-3); font-size: calc(10.5 * var(--u-sm)); }
+
+/* ---------- 弹层 ---------- */
+.sheet {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  background: rgba(16, 20, 30, .42); align-items: flex-end;
+}
+.sheet.on { display: flex; }
+.sheet-body {
+  width: 100%; max-width: var(--sheet-w); margin: 0 auto; background: var(--card);
+  border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + var(--safe-b));
+  max-height: 86vh; overflow-y: auto; animation: up .18s ease-out;
+}
+@keyframes up { from { transform: translateY(14px); opacity: .6; } to { transform: none; opacity: 1; } }
+.sheet h3 { margin: 0 0 4px; font-size: calc(16 * var(--u)); }
+
+/* 弹层底部那一排动作。左边那个是「真做事」的按钮，右边永远是取消：
+   两个各按自己的宽度，一个贴左一个贴右，中间留空。
+   挤在一起的两颗胶囊，手指按错的那个代价比多点一次取消大得多。
+   这条写在 #sheetBody 下，是为了压过 parent.css 里那条 body.grown .act-row，
+   两端都吃同一套排布。 */
+#sheetBody .act-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-top: 12px;
+}
+#sheetBody .act-row .btn { flex: none; min-width: 84px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: calc(12 * var(--u)); color: var(--ink-2); margin-bottom: 4px; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--ink);
+}
+.field input:focus, .field select:focus, .field textarea:focus {
+  outline: none; border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.field textarea { min-height: 68px; resize: vertical; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--card); font-size: calc(13 * var(--u)); color: var(--ink-2);
+}
+.chip.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+
+/* ---------- 提示 ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 90px; transform: translate(-50%, 12px);
+  background: #17241f; color: #fff; padding: 9px 15px; border-radius: 10px; font-size: calc(13.5 * var(--u));
+  opacity: 0; pointer-events: none; transition: .2s; z-index: 90; max-width: 88vw; text-align: center;
+}
+.toast.on { opacity: .96; transform: translate(-50%, 0); }
+.notice {
+  padding: 10px 12px; border-radius: 11px; font-size: calc(12.5 * var(--u)); line-height: 1.5;
+  background: var(--gold-soft); color: var(--gold); margin-bottom: 10px;
+}
+.notice.info { background: var(--brand-soft); color: var(--brand-dark); }
+.notice.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* ---------- 登录 ---------- */
+/* v36 起登录页整套搬到 login.css（糖果色板 + 三态路由）。这里一条不留：
+   留着老规则，登出时 style.css 的深绿会和 login.css 的暖橙抢同一批类名。 */
+.kv { display: flex; justify-content: space-between; padding: 7px 0; font-size: calc(13.5 * var(--u)); }
+.kv + .kv { border-top: 1px solid var(--line); }
+.kv .k { color: var(--ink-2); }
+.kv .v { font-weight: 650; font-variant-numeric: tabular-nums; }
+.catalog { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cat-cell {
+  padding: 9px 6px; border-radius: 10px; background: var(--bg); text-align: center;
+  font-size: calc(11 * var(--u)); color: var(--ink-3); border: 1px solid var(--line);
+}
+.cat-cell b { display: block; font-size: calc(12 * var(--u)); color: var(--ink-2); margin-bottom: 2px; }
+.cat-cell.have { background: var(--card); border-color: var(--brand); }
+.cat-cell.have b { color: var(--brand-dark); }
+
+/* ---------- v15 · 孩子总览（家长端） ---------- */
+/* .lv-chip / .lv-line / .xp-track 那一套是给深色英雄面板配的：
+   文字是奶黄色、轨道是半透明白。原样搬进白卡片会变成白字白底，
+   什么都看不见。所以浅色底上另给一版配色。 */
+.kcard .lv-chip, .lv-plain .lv-chip {
+  color: var(--brand-dark); background: var(--brand-soft);
+  border-color: var(--brand-line);
+}
+.lv-plain { margin-top: 13px; }
+.lv-plain .lv-line { margin-top: 0; }
+.lv-plain .lv-line .lv-title { color: var(--ink); }
+.lv-plain .lv-line .lv-xp { color: var(--ink-3); }
+.lv-plain .lv-chip strong { font-size: calc(15 * var(--u)); }
+.lv-plain .xp-track { background: var(--line); }
+.lv-plain .xp-track > i { background: linear-gradient(90deg, var(--brand), #71d7bb); }
+.lv-plain .hero-note { color: var(--ink-3); margin-top: 7px; }
+
+/* 一张卡一个孩子。整卡可点，进详细页，所以给 active 反馈和光标 */
+.kcard {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 14px; margin-top: 10px; cursor: pointer;
+  border: 1px solid transparent; transition: border-color .15s;
+}
+.kcard:active { border-color: var(--brand-line); }
+.khead { display: flex; align-items: center; gap: 10px; }
+.kav {
+  width: 36px; height: 36px; border-radius: 11px; flex: none;
+  background: var(--brand-soft); color: var(--brand);
+  display: grid; place-items: center; font-weight: 700; font-size: calc(13 * var(--u));
+}
+.kid-id { flex: 1; min-width: 0; }
+.kid-id .nm { font-weight: 700; font-size: calc(15 * var(--u)); }
+.kid-id .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 星尘、欠款、券、卡、碎片、在做 —— 三列两行，数字用等宽字形对齐 */
+.kstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 6px; }
+.kstats > div { min-width: 0; }
+.kstats span { display: block; font-size: calc(10.5 * var(--u-sm)); color: var(--ink-3); }
+.kstats strong {
+  display: block; font-size: calc(14 * var(--u)); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 详细页 / 记录页顶部的返回条 */
+.backbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.backbar .btn { flex: none; }
+.backbar .bt { min-width: 0; }
+.backbar .bt b { display: block; font-size: calc(15 * var(--u)); font-weight: 750; }
+.backbar .bt span { display: block; font-size: calc(11.5 * var(--u)); color: var(--ink-3); }
+
+/* 记录页的范围切换 */
+.rangepick {
+  display: flex; gap: 6px; padding: 4px; border-radius: 11px;
+  background: var(--brand-soft); border: 1px solid var(--brand-line);
+}
+.rangepick button {
+  flex: 1; padding: 8px 4px; border-radius: 8px; font-size: calc(12.5 * var(--u));
+  color: var(--brand-dark); font-weight: 650;
+}
+.rangepick button.on { background: var(--card); box-shadow: var(--shadow); }
+
+/* 天 × 维度 矩阵。九列在手机上挤，横向滚动比压小字号更好读 */
+.mx-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.mx { width: 100%; border-collapse: collapse; font-size: calc(12 * var(--u)); }
+table.mx th {
+  font-weight: 650; color: var(--ink-3); font-size: calc(10.5 * var(--u-sm));
+  padding: 0 0 7px; text-align: center; white-space: nowrap;
+}
+table.mx th:first-child, table.mx td:first-child { text-align: left; padding-left: 0; }
+table.mx td { padding: 5px 0; text-align: center; border-top: 1px solid var(--line); }
+.mx-day { color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 6px; }
+.mx-ic { font-size: calc(12 * var(--u)); }
+.mx-c { font-variant-numeric: tabular-nums; font-size: calc(13 * var(--u)); line-height: 1; }
+.mx-c.yes { color: var(--ok); font-weight: 700; }
+.mx-c.no { color: var(--warn); }
+.mx-sum { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 6px; }
+/* 过渡日和未来：灰掉，别让人以为漏打了分 */
+table.mx tr.trans td, table.mx tr.fut td { opacity: .42; }
+table.mx tr.trans .mx-day::after { content: " ·"; }
+/* 有「为什么」可看的那天，日期后面点一个小点，告诉人能点开 */
+table.mx tr.haswhy { cursor: pointer; }
+table.mx tr.haswhy .mx-day::after { content: " ›"; color: var(--ink-3); }
+.mx-why td {
+  padding: 0 0 7px; border-top: 0; text-align: left;
+  font-size: calc(11 * var(--u)); color: var(--ink-3);
+}
+.mx-why:not(:last-child) td { padding-bottom: 9px; }
+tr.mx-why[hidden] { display: none; }
+
+/* 各维度达成率 */
+.rate-row + .rate-row { margin-top: 11px; }
+.rr-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.rr-h span { font-size: calc(13 * var(--u)); }
+.rr-h b { font-size: calc(12 * var(--u)); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ---------- 月度统计（打分页底部那张日历） ---------- */
+.cal-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.cal-h b { font-size: calc(15 * var(--u)); font-variant-numeric: tabular-nums; }
+.cal-nav {
+  width: 34px; height: 34px; border-radius: 10px; flex: none;
+  display: grid; place-items: center; font-size: calc(21 * var(--u)); line-height: 1;
+  color: var(--brand-dark); background: var(--brand-soft);
+}
+.cal-nav:disabled { opacity: .3; }
+table.cal { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.cal th {
+  font-weight: 650; color: var(--ink-3); font-size: calc(10.5 * var(--u-sm));
+  padding: 0 0 6px; text-align: center;
+}
+table.cal td { padding: 2px; }
+.cal-d {
+  width: 100%; min-height: 46px; border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; border: 1px solid transparent; font-variant-numeric: tabular-nums;
+  transition: transform .06s;
+}
+.cal-d .cd { font-size: calc(12.5 * var(--u)); color: var(--ink-2); line-height: 1.15; }
+.cal-d .cs { font-size: calc(12 * var(--u)); font-weight: 700; line-height: 1.1; }
+/* 满分：底色托起来，扫一眼就知道哪几天是完整的 */
+.cal-d.full { background: var(--brand-soft); border-color: var(--brand-line); }
+.cal-d.full .cs { color: var(--brand-dark); }
+/* 拿到一部分：只染数字，底色不抢 */
+.cal-d.part { background: var(--gold-soft); border-color: #f0dcbd; }
+.cal-d.part .cs { color: var(--gold); }
+.cal-d.zero { background: var(--warn-soft); }
+.cal-d.zero .cs { color: var(--warn); }
+/* 没打分：虚线空框。它不是 0 分，别画得跟 0 分一样 */
+.cal-d.none { border-style: dashed; border-color: var(--line); }
+.cal-d.none .cs { color: var(--ink-3); font-weight: 400; }
+.cal-d.trans, .cal-d.fut { opacity: .32; }
+.cal-d.today { box-shadow: inset 0 0 0 2px var(--brand); }
+.cal-d.sel { outline: 2px solid var(--brand-dark); outline-offset: 1px; }
+.cal-sum {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: calc(11.5 * var(--u)); color: var(--ink-3);
+}
+.cal-sum b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* 点某一天弹出的明细 */
+.dr-sum { font-size: calc(13 * var(--u)); color: var(--ink-2); margin-bottom: 8px; }
+.dr-sum b { font-size: calc(16 * var(--u)); color: var(--ink); font-variant-numeric: tabular-nums; }
+.dr-list { display: grid; }
+.dr-row {
+  display: flex; align-items: center; gap: 9px; padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.dr-row:first-child { border-top: 0; padding-top: 0; }
+.dr-ic {
+  width: 26px; height: 26px; border-radius: 8px; flex: none;
+  display: grid; place-items: center; font-size: calc(12 * var(--u));
+  background: var(--brand-soft); color: var(--brand-dark);
+}
+.dr-nm { flex: 1; min-width: 0; font-size: calc(13.5 * var(--u)); }
+.dr-v { flex: none; font-weight: 700; font-size: calc(14 * var(--u)); }
+.dr-v.yes { color: var(--ok); }
+.dr-v.no { color: var(--warn); }
+.dr-v.nil { color: var(--ink-3); }
+.callout-line {
+  margin-top: 10px; padding: 9px 11px; border-radius: 10px;
+  background: var(--bg); font-size: calc(12 * var(--u)); color: var(--ink-2);
+}
+
+/* 任务行字多，按钮跟着顶部对齐更好看 */
+.task-row { align-items: flex-start; }
+.task-row .btn { flex: none; margin-top: 1px; }
+
+/* 家长端心愿单弹层：v17 起每条心愿都有进度了，
+   wm-row 那个只放一行摘要的样式没人用了，换成下面这一组 */
+.wband {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: calc(12.5 * var(--u)); color: var(--ink-2);
+  border-bottom: 1px solid var(--line); margin: -2px -14px 2px; padding: 2px 14px 8px;
+}
+.wband b { font-size: calc(13 * var(--u)); color: var(--ink); }
+/* 心愿里的按钮行：放在说明下面，不挤在标题右边 */
+.wact { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+/* v29：心愿卡的三层。条件和进度是「现在该看什么」，提醒是「别忘了」，
+   以前三层都是同一号灰字，孩子分不清哪句是要去做的。 */
+.wcond {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--gold-soft);
+  border-left: 3px solid var(--gold);
+  border-radius: 6px;
+}
+.wcond-h { font-size: calc(11.5 * var(--u)); color: var(--muted); letter-spacing: .04em; }
+.wcond-t { font-size: calc(14 * var(--u)); font-weight: 550; line-height: 1.45; margin-top: 2px; }
+.wsub {
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.wsub + .wsub { margin-top: 6px; }
+.wsub.done { border-color: var(--ok); }
+.wsub.pend { border-color: var(--blue); background: var(--blue-soft); }
+.wsub.rej { border-color: var(--warn); }
+.wsubmit { margin-top: 7px; }
+.wsubmit .inp {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  margin-bottom: 6px;
+}
+.wnote { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.wnote-h { font-size: calc(11.5 * var(--u)); color: var(--muted); letter-spacing: .04em; }
+.wprog { margin-top: 8px; }
+.wprog .bar { margin-top: 0; }
+.wprog .ds + .ds { margin-top: 3px; }
+.ok-line { color: var(--ok); font-weight: 600; }
+
+/* 只读的字段：弹层里「他想要的是什么」，看得见但改不了 */
+.ro {
+  padding: 10px 12px; border-radius: 10px; background: var(--bg);
+  border: 1px solid var(--line); font-size: calc(14 * var(--u)); font-weight: 600; color: var(--ink);
+}
+
+/* 六格导航：比五格挤，字号和图标各收一点 */
+#tabs.many button { font-size: calc(10 * var(--u-sm)); gap: 2px; }
+#tabs.many button .ic { font-size: calc(18 * var(--u)); }
+
+/* ---------- 首页动态（v18） ---------- */
+/* 家长端一条动态里混着两个孩子的名字，所以名字做成小药丸先于标题出现；
+   孩子端只有他自己，就不画了 —— 满屏都是自己的名字，纯属噪声。 */
+.fwho {
+  display: inline-block; margin-right: 5px; padding: 1px 7px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--brand-dark);
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700; vertical-align: 1px;
+}
+/* 任务和修复任务的进度：三颗点。它比百分比诚实 ——
+   「待做 → 在做 → 交上去」没有中间刻度，画成 40% 是编出来的精度。 */
+.steps { display: flex; gap: 10px; margin-top: 7px; flex-wrap: wrap; }
+.steps .stp { display: flex; align-items: center; gap: 4px; font-size: calc(10.5 * var(--u-sm)); color: var(--ink-3); }
+.steps .stp b { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex: none; }
+.steps .stp.on { color: var(--brand-dark); font-weight: 650; }
+.steps .stp.on b { background: var(--brand); }
+
+/* 「最近发生」那一段的小标题，跟在 .item 上面 */
+.fband { padding: 11px 14px 4px; font-size: calc(12 * var(--u)); color: var(--ink-3); font-weight: 650; }
+
+/* 历史心愿的展开条。收起状态只是一个按钮，不占版面 */
+.hist-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 13px 14px; font-size: calc(13.5 * var(--u)); font-weight: 650;
+  color: var(--ink-2); text-align: left;
+}
+.hist-body[hidden] { display: none; }
+
+/* ---------- v21 · 图标 ---------- */
+/* 图标就一个 inline-flex 盒子，尺寸由调用处给的 px 决定。
+   img 和 span 共用一个类名，是为了让「换成 SVG」和「换成 emoji / 汉字」
+   在布局上完全一致，不用两处改宽度。 */
+.gly {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; vertical-align: middle; line-height: 1;
+}
+/* 占位圈：空图标画这个，跟「图没加载出来」那种灰方块区分开 */
+.gly-0 { border-radius: 50%; background: var(--line); }
+.gly-0 > i { display: block; border-radius: 50%; background: var(--card); }
+/* emoji 与汉字 */
+.gly-t { font-weight: 650; color: var(--ink-2); }
+/* SVG 自带彩色圆底，外面那层方角容器就别再垫背景了 */
+.gly-svg.dic, .gly-svg.dr-ic, .gly-svg.mx-ic { background: none; }
+
+/* ---------- v21 · 选图面板 ---------- */
+.ip-btn {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 12px;
+  border: 1px solid var(--line); border-radius: 11px; background: var(--card); text-align: left;
+}
+.ip-btn .ip-n { flex: 1; font-size: calc(13.5 * var(--u)); font-weight: 600; min-width: 0; }
+.ip-btn .ip-x { flex: none; font-size: calc(12 * var(--u)); color: var(--brand); }
+.ip-box {
+  margin-top: 8px; padding: 10px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--bg);
+}
+.ip-top { display: flex; gap: 7px; align-items: center; }
+.ip-q {
+  flex: 1; min-width: 0; padding: 7px 10px; font-size: calc(13 * var(--u));
+  border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--ink);
+}
+.ip-cl { flex: none; font-size: calc(12 * var(--u)); color: var(--ink-3); padding: 6px 4px; }
+/* 分组横着滚不换行：18 个组竖着排会把表单顶出屏幕 */
+.ip-chips {
+  display: flex; gap: 6px; margin-top: 8px; overflow-x: auto;
+  padding-bottom: 3px; scrollbar-width: none;
+}
+.ip-chips::-webkit-scrollbar { display: none; }
+.ip-chips .chip { flex: none; }
+.ip-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 6px; margin-top: 9px; max-height: 232px; overflow-y: auto; padding: 2px;
+}
+.ip-cell {
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 0; border-radius: 10px; background: var(--card); border: 1px solid transparent;
+}
+.ip-cell.on { border-color: var(--brand); background: var(--brand-soft); }
+.ip-none {
+  grid-column: 1 / -1; padding: 7px 0; font-size: calc(11 * var(--u));
+  color: var(--ink-3); border: 1px dashed var(--line);
+}
+.ip-more { margin-top: 7px; font-size: calc(11 * var(--u)); color: var(--ink-3); text-align: center; }
+
+/* 心愿条件 ·「多选条件」的勾选行：左边勾一条，右边填这条的门槛
+   （「自己写一条」那行右边是一个文本框，所以宽度不是固定的 80px）。 */
+.any-row { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+  border-bottom: 1px solid var(--line); }
+.any-row:last-child { border-bottom: 0; }
+.ar-chk { flex: 1; display: flex; align-items: center; gap: 8px; font-size: calc(13.5 * var(--u)); }
+.ar-chk input { width: 17px; height: 17px; flex: none; }
+.ar-v { width: 80px; flex: none; text-align: center; padding: 7px 8px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--card);
+  font-size: calc(14 * var(--u)); color: var(--ink); }
+.ar-v:disabled { opacity: .4; }
+.ar-txt { flex: 1 1 auto; min-width: 0; padding: 7px 9px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--card);
+  font-size: calc(13.5 * var(--u)); color: var(--ink); }
+.ar-txt:disabled { opacity: .4; }
+/* 「做到其中 N 条算达成」那一行。它跟上面的勾选行是一组，所以中间不画分隔线。 */
+.any-need { display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  font-size: calc(13.5 * var(--u)); }
+.any-need input { width: 62px; flex: none; text-align: center; padding: 7px 8px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--card);
+  font-size: calc(14 * var(--u)); color: var(--ink); }
+
+/* ------------------------------------------------------------------ 头像 */
+/* 头像有两个来源：自绘的 SVG（tools/build_avatars.py）和文字回落。
+   两种都得是圆的 —— 一个方头像混在一排圆头像里，看着像图片没加载出来。
+   .av-img 用 object-fit 而不是拉伸：SVG 是正方形，缩放在任何尺寸下都不会糊。 */
+.av-img { border-radius: 50%; display: block; flex: none; object-fit: cover; }
+.av-tx { border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: var(--brand-soft); color: var(--brand); font-weight: 700; line-height: 1; }
+/* 领头的 .who .av 里装的是头像，底色的圆还在；把它的字色底色让出来给头像用 */
+.who .av { background: transparent; padding: 0; overflow: hidden; }
+/* 挑选格：三列一行，选中的那个外面套一圈主色 */
+.av-gp { font-size: calc(12 * var(--u)); color: var(--ink-3); margin: 12px 0 7px; }
+.av-gp:first-child { margin-top: 0; }
+.av-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
+.av-pick { border: 2px solid transparent; background: transparent; border-radius: 50%;
+  padding: 2px; cursor: pointer; line-height: 0; justify-self: center; }
+.av-pick.on { border-color: var(--brand); }

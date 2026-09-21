@@ -1,0 +1,282 @@
+/* =========================================================================
+   登录页 ·「糖果冒险」
+   -------------------------------------------------------------------------
+   为什么单独一份，不塞进 child.css / parent.css：
+   登录页出现在「谁都不是」的那一刻 —— body 上既没有 kid 也没有 grown，
+   两套皮都还没挂上。而它要的是糖果色板（和家长端换皮之后是同一套）。
+
+   所以这里自带一份最小变量集，全部挂在 body.lg 下面：
+     · 不碰 :root。登出时把类名摘掉，页面立刻回到原样。
+     · 六张图走 <img> 直取 web/login/ 下的 svg，不进任何精灵图。
+
+   三条别破坏的（交付包 §9）：
+     · 首屏不出现密码框 —— 密码只在点过某个头像之后才出现
+     · 家长入口只用一行下划线文字，不加胶囊 / 按钮 / 图标
+     · 脚注不删：「数据只存在自己家里的 NAS 上 · 不外传」
+   ========================================================================= */
+
+body.lg {
+  /* 背景三段渐变（上→下） */
+  --bg-top: #FFD08A;
+  --bg-mid: #FFE9C6;
+  --bg-btm: #FFFBF3;
+
+  /* 文字：深棕系，不用纯黑、不用灰阶 */
+  --ink:     #4A3627;
+  --ink-2:   #8A7359;
+  --ink-3:   #A08E7A;
+
+  --orange:      #FF8A3D;
+  --orange-deep: #E8722A;
+  --card:        #FFFFFF;
+  --card-line:   #EFD9B4;   /* 卡 / 头像框 / 键帽的统一描边 */
+  --field-bg:    #FFFBF3;   /* 输入框底、未到的密码格 */
+  --cell-off:    #E8D5B0;   /* 未到那一格的描边 */
+  --key-alt:     #FFF3E2;   /* 退格键底色 */
+  --shade:       #C9761F;   /* 厚影统一色，radius 0 —— 硬偏移，不是模糊阴影 */
+
+  --font-cn:  "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-num: "Inter", "Noto Sans SC", sans-serif;
+
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #FFD08A 0%, #FFE9C6 45%, #FFFBF3 100%) fixed;
+  background-color: #FFFBF3;
+  color: var(--ink);
+  font-family: var(--font-cn);
+  -webkit-font-smoothing: antialiased;
+}
+/* 登录页自己占满一屏：外壳那条 560px 的居中限制会让「右下角的家长登录」
+   跑到屏幕中间去。宽屏由 .lg-inner 自己收窄居中。 */
+body.lg #app { max-width: none; min-height: 100vh; }
+body.lg #view { padding: 0; padding-bottom: 0; flex: 1; display: flex; }
+
+/* 顶部漂浮装饰。绝对定位贴顶 + pointer-events:none，高 360 之后自然渐隐，
+   不要拉伸到整屏。 */
+.lg-deco {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: var(--login-w); height: 360px;
+  pointer-events: none; z-index: 0;
+  background-repeat: no-repeat; background-position: top center;
+  background-size: 100% auto;
+}
+.lg-deco.child  { background-image: url("login/deco-child.svg"); }
+.lg-deco.parent { background-image: url("login/deco-parent.svg"); }
+
+/* 一屏的纵向骨架：内容撑开，脚注永远贴底 */
+.lg-inner {
+  position: relative; z-index: 1;
+  flex: 1; width: 100%; max-width: var(--login-w); margin: 0 auto;
+  display: flex; flex-direction: column;
+  padding: 24px 24px 20px;
+  padding-top: calc(24px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+.lg-fill { flex: 1; }
+
+/* ---------------------------------------------------------- 品牌区 */
+.lg-brand { text-align: center; padding-top: 12px; }
+.lg-brand img { width: 96px; height: 96px; display: block; margin: 0 auto 10px; }
+.lg-fam { font-size: calc(26 * var(--u)); font-weight: 700; letter-spacing: .01em; line-height: 1.25; }
+.lg-sub { font-size: calc(13 * var(--u)); color: var(--ink-2); margin-top: 5px; }
+
+/* ---------------------------------------------------------- 引导区 */
+.lg-lead { text-align: center; margin-top: 34px; }
+.lg-lead h1 { font-size: calc(28 * var(--u)); font-weight: 700; margin: 0; letter-spacing: .01em; }
+.lg-lead p { font-size: calc(13 * var(--u)); color: var(--ink-2); margin: 7px 0 0; }
+/* 输密码那一屏左上角有个返回圆钮，标题跟着左对齐就不别扭了 */
+.lg-lead.left { text-align: left; margin-top: 16px; }
+
+/* ---------------------------------------------------------- 头像墙 */
+/* 首屏谁都不是选中态。点下去那一瞬间才给高亮，作为「选中了」的即时反馈。 */
+.lg-wall {
+  display: flex; justify-content: center; align-items: flex-start;
+  gap: 32px; flex-wrap: wrap; margin-top: 30px;
+}
+.lg-group {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.lg-frame {
+  width: 108px; height: 108px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--card-line);
+  box-shadow: 4px 4px 0 0 var(--shade);
+  display: grid; place-items: center;
+  transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.lg-group.on .lg-frame {
+  border-color: var(--orange);
+  box-shadow: 5px 5px 0 0 var(--shade);
+  transform: translateY(-1px);
+}
+.lg-frame img { width: 96px; height: 96px; border-radius: 50%; display: block; }
+.lg-group.on .lg-frame img { border-radius: 50%; }
+.lg-name {
+  min-height: 28px; padding: 0 14px; border-radius: 14px;
+  display: inline-flex; align-items: center;
+  background: #fff; border: 2px solid var(--card-line);
+  font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-2);
+}
+.lg-group.on .lg-name {
+  background: linear-gradient(135deg, var(--orange), var(--orange-deep));
+  border-color: var(--orange-deep); color: #fff;
+  box-shadow: 0 3px 0 0 var(--shade);
+}
+/* 还没设过密码的孩子：头像能看见，点下去得到一句解释，不是装死 */
+.lg-group.locked .lg-frame { opacity: .55; }
+.lg-group.locked .lg-name { color: var(--ink-3); }
+
+/* 头像墙上的按钮本身不画任何东西，外壳由上面的 .lg-frame / .lg-name 出 */
+.lg-pick {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 0; border-radius: 60px;
+}
+.lg-pick:active .lg-frame { transform: scale(.97); }
+
+/* 家里一个孩子都没有（还没建过号）：给一句能读懂的话，不留空白页 */
+.lg-none {
+  margin-top: 30px; text-align: center; font-size: calc(13 * var(--u)); line-height: 1.8;
+  color: var(--ink-2); background: #fff; border: 2px solid var(--card-line);
+  border-radius: 20px; padding: 20px 18px;
+}
+
+/* ---------------------------------------------------------- 输密码态 */
+.lg-back {
+  width: 44px; height: 44px; border-radius: 50%; background: #fff;
+  border: 0; box-shadow: 3px 3px 0 0 var(--shade);
+  display: grid; place-items: center; flex: none;
+}
+.lg-back img { width: 18px; height: 18px; display: block; }
+.lg-back:active { transform: translate(1px, 1px); box-shadow: 2px 2px 0 0 var(--shade); }
+
+/* 输密码这一屏的头像墙瘦一圈：它是视觉锚点（「我在给小满输」），
+   不是再来一次的选择器。 */
+.lg-wall.slim { margin-top: 22px; gap: 20px; }
+.lg-wall.slim .lg-frame { width: 84px; height: 84px; box-shadow: none; }
+.lg-wall.slim .lg-group.on .lg-frame { box-shadow: 0 4px 0 0 var(--shade); }
+.lg-wall.slim .lg-frame img { width: 72px; height: 72px; }
+.lg-wall.slim .lg-group { gap: 8px; }
+.lg-wall.slim .lg-name { min-height: 24px; padding: 0 11px; font-size: calc(12 * var(--u)); border-radius: 12px; }
+
+.lg-pin-hint { text-align: center; font-size: calc(12 * var(--u)); color: var(--ink-2); margin-top: 22px; }
+.lg-cells { display: flex; justify-content: center; gap: 12px; margin-top: 12px; }
+.lg-cell {
+  width: 44px; height: 52px; border-radius: 14px;
+  background: #fff; border: 2px solid var(--card-line);
+  display: grid; place-items: center;
+  transition: border-color .12s, background .12s;
+}
+.lg-cell i { width: 13px; height: 13px; border-radius: 50%; background: var(--ink); display: block; }
+.lg-cell.now { border-color: var(--orange); }
+.lg-cell.now::after {
+  content: ""; width: 3px; height: 22px; border-radius: 2px;
+  background: var(--orange); animation: lgBlink 1s steps(1) infinite;
+}
+.lg-cell.off { background: rgba(255, 255, 255, .5); border-color: var(--cell-off); }
+@keyframes lgBlink { 50% { opacity: 0; } }
+/* 输错：整体左右轻抖。不做次数锁定 —— 家里用的东西，锁了添乱。 */
+.lg-cells.shake { animation: lgShake .34s ease-in-out; }
+@keyframes lgShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-9px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(3px); }
+}
+
+/* 数字键盘：1–9 九宫格 + 底行 [空位][0][退格] */
+.lg-keys {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 12px; margin-top: 26px; max-width: 360px; align-self: center; width: 100%;
+}
+.lg-key {
+  height: 54px; border-radius: 16px; background: #fff;
+  border: 2px solid var(--card-line); box-shadow: 0 3px 0 0 #E8D5B0;
+  font-family: var(--font-num); font-size: calc(24 * var(--u)); font-weight: 500; color: var(--ink);
+  display: grid; place-items: center;
+}
+.lg-key:active { transform: translateY(2px); box-shadow: 0 1px 0 0 #E8D5B0; }
+.lg-key.gap { visibility: hidden; }
+.lg-key.del { background: var(--key-alt); }
+.lg-key.del img { width: 24px; height: 20px; display: block; }
+.lg-key:disabled { opacity: .45; }
+
+/* ---------------------------------------------------------- 家长端登录 */
+.lg-badge { text-align: center; padding-top: 12px; }
+.lg-badge img { width: 76px; height: 76px; display: block; margin: 0 auto 12px; }
+.lg-badge h1 { font-size: calc(24 * var(--u)); font-weight: 700; margin: 0; }
+.lg-badge p { font-size: calc(13 * var(--u)); color: var(--ink-2); margin: 6px 0 0; }
+
+.lg-card {
+  margin-top: 26px; background: #fff; border-radius: 24px;
+  border: 2px solid var(--card-line); box-shadow: 0 5px 0 0 var(--shade);
+  padding: 18px; display: flex; flex-direction: column; gap: 18px;
+}
+.lg-f { display: flex; flex-direction: column; gap: 7px; }
+.lg-f label { font-size: calc(12 * var(--u)); font-weight: 500; color: var(--ink-2); }
+.lg-input { position: relative; display: flex; align-items: center; }
+.lg-input input {
+  width: 100%; height: 48px; border-radius: 14px;
+  background: var(--field-bg); border: 2px solid var(--card-line);
+  padding: 0 44px 0 14px; font-size: calc(15 * var(--u)); color: var(--ink); text-align: left;
+  outline: none;
+}
+.lg-input input::placeholder { color: var(--ink-3); }
+.lg-input input:focus { border-color: var(--orange); }
+.lg-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  font-size: calc(15 * var(--u)); color: var(--ink-2);
+}
+.lg-eye.on { color: var(--orange-deep); }
+
+.lg-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lg-check { display: flex; align-items: center; gap: 8px; font-size: calc(13 * var(--u)); font-weight: 500; color: var(--ink); }
+.lg-check input { width: 18px; height: 18px; accent-color: var(--orange-deep); flex: none; }
+.lg-forgot { font-size: calc(13 * var(--u)); font-weight: 500; color: var(--orange-deep); }
+
+.lg-btn {
+  height: 52px; border-radius: 16px; width: 100%;
+  background: linear-gradient(135deg, var(--orange), var(--orange-deep));
+  color: #fff; font-size: calc(17 * var(--u)); font-weight: 700;
+  box-shadow: 0 4px 0 0 var(--shade);
+}
+.lg-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 0 var(--shade); }
+.lg-btn[disabled] { opacity: .6; }
+.lg-btn.line {
+  height: 50px; border-radius: 16px; background: #fff;
+  border: 2px solid var(--card-line); box-shadow: none;
+  color: var(--orange-deep); font-size: calc(15 * var(--u)); font-weight: 600;
+}
+.lg-btn.line:active { transform: translateY(2px); box-shadow: none; }
+
+/* ---------------------------------------------------------- 底部 */
+.lg-foot { display: flex; flex-direction: column; gap: 14px; margin-top: 28px; }
+.lg-parent {
+  align-self: flex-end; font-size: calc(13 * var(--u)); font-weight: 600; color: var(--orange-deep);
+  padding-bottom: 3px; border-bottom: 2px solid var(--orange);
+}
+.lg-mid { align-self: center; }
+.lg-parent-l, .lg-kid-l {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-size: calc(12 * var(--u)); color: var(--ink-2);
+}
+.lg-note { font-size: calc(11 * var(--u)); color: var(--ink-3); text-align: center; line-height: 1.6; }
+.lg-note.wide { text-align: left; font-size: calc(12.5 * var(--u)); line-height: 1.75; color: var(--ink-2); }
+.lg-hint { text-align: center; font-size: calc(11 * var(--u)); color: var(--ink-3); margin-top: 10px; }
+
+/* ---------------------------------------------------------- 宽屏 / 横屏 */
+/* 电脑上登录卡片 440 显小，放到 520 —— 头像墙、键盘、脚注都在 .lg-inner 里，
+   只改这一个宽度就够，里面的版式不用动。
+   横屏矮屏（844x390 这类）本来就不该指望竖向排：.lg-wall 是 flex + wrap，
+   高度不够时它自己会横排；再加一条把上下留白收一收，
+   免得头像墙 + 键盘一段段挤到屏幕外。 */
+@media (min-width: 900px) {
+  body.lg { --login-w: 520px; }
+}
+@media (max-height: 560px) {
+  .lg-inner { padding: 12px 24px 10px; padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+  .lg-wall { margin-top: 10px; gap: 22px; }
+  .lg-wall.slim { margin-top: 8px; }
+  .lg-foot { margin-top: 12px; gap: 8px; }
+  .lg-cells { margin-top: 8px; }
+}

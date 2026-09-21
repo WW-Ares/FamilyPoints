@@ -1,0 +1,709 @@
+/* =========================================================================
+   孩子端 · 组件样式
+   依赖 child-tokens.css。类名与画布设计稿一一对应。
+
+   布局前提：手机竖屏占满一屏；#view 是 flex 容器，每屏一个 .screen，
+   .appbar 固定、.content 独立滚动（flex:1; min-height:0; overflow-y:auto）。
+   这是把「一屏塞不下」变成「自己滚」的唯一开关 —— 内容超了自然滚动，
+   别为省高度去砍留白。
+
+   全部选择器挂在 body.kid 下：家长端还是原来那套深绿，两套互不干扰。
+   ========================================================================= */
+
+/* ============================ 外壳 ============================ */
+body.kid #app {
+  max-width: var(--shell-w); margin: 0 auto;
+  height: 100dvh; min-height: 100dvh;
+  display: flex; flex-direction: column;
+  position: relative; z-index: 1;
+}
+/* 孩子端没有顶栏：角色条在首页，「我是谁 / 改密码 / 退出」在「我的」里 */
+body.kid #topbar { display: none !important; }
+body.kid #view { flex: 1 1 auto; min-height: 0; padding: 0; display: flex; }
+body.kid .screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* ============================ 页面标题行 ============================ */
+body.kid .appbar {
+  flex: 0 0 auto; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) var(--pad) 12px;
+}
+body.kid .appbar-back {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+  border: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(255,255,255,.78);
+  display: grid; place-items: center;
+}
+body.kid .appbar-grow { flex: 1; min-width: 0; }
+body.kid .appbar-title { font-size: calc(19 * var(--u)); font-weight: 700; color: var(--ink); }
+body.kid .appbar-sub { font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2); margin-top: 2px; }
+body.kid .appbar-right { flex: 0 0 auto; }
+
+/* ============================ 内容区 ============================ */
+body.kid .content {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  /* 底栏是 fixed、高 --h-tabbar，不留够这一截，每页最后一块都压在底栏下面点不到 */
+  padding: 0 var(--pad) calc(var(--h-tabbar) + 16px);
+  display: flex; flex-direction: column; gap: var(--gap-card);
+  scrollbar-width: none;
+}
+body.kid .content::-webkit-scrollbar { display: none; }
+/* 可滚的竖排容器：子项保持自身高度，由容器滚。
+   不关收缩的话，卡里写了 overflow:hidden（圆角裁切要用的那两张，
+   心愿页的「历史心愿」和图鉴）min-height:auto 会算成 0，
+   它们就成了唯一能被压扁的那块 —— 实测「历史心愿」被压到 2px，
+   里面的展开按钮永远点不到。 */
+body.kid .content > * { flex-shrink: 0; }
+/* 没有标题行的屏（首页 / 宝箱 / 券包），内容自己把安全区顶开 */
+body.kid .content.lead { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+
+/* ============================ 底部导航 ============================ */
+body.kid #tabs {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: var(--bar-w); z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 var(--pad) calc(10px + var(--safe-b, env(safe-area-inset-bottom, 0px)));
+  background: linear-gradient(180deg, rgba(255,251,243,0) 0%, rgba(255,251,243,.94) 46%);
+  border-top: 0; box-shadow: none;
+  backdrop-filter: none;
+}
+body.kid #tabs .tabbar-pill {
+  display: flex; align-items: center; gap: calc(2 * var(--u)); padding: calc(6 * var(--u));
+  /* 330 = 五格各 62 + 四个 2px 间隔 + 左右各 6 内边距。
+     够宽就按 330（390 屏上跟改之前一个像素都不差），
+     不够就照可用宽度收，不然两头两颗会被挤出屏幕。 */
+  width: 100%; max-width: calc(330 * var(--u));
+  border-radius: var(--r-pill);
+  background: rgba(255,255,255,.72);
+  box-shadow: 0 6px 18px -6px rgba(184,128,64,.28);
+  backdrop-filter: blur(8px);
+}
+body.kid #tabs button {
+  /* 这里原来是 width: 62px + flex: 0 0 auto，五格加内外边距一共要 354px，
+     屏宽低于 354 就横向溢出，320 上最左的「首页」和最右的「我的」各被切掉一截。
+     改成可伸可缩、上限仍是 62：宽屏像素不变，窄屏自己压缩。 */
+  flex: 1 1 0; min-width: 0; max-width: calc(62 * var(--u)); min-height: 0;
+  padding: calc(5 * var(--u)) 0 calc(4 * var(--u));
+  border-radius: var(--r-sm);
+  display: flex; flex-direction: column; align-items: center; gap: calc(3 * var(--u));
+  color: var(--ink-3); background: transparent; font-weight: 500;
+  font-family: var(--font-cn); font-size: calc(10 * var(--u-sm));
+  transition: background .18s, color .18s;
+}
+body.kid #tabs button svg { width: calc(21 * var(--u)); height: calc(21 * var(--u)); color: inherit; }
+body.kid #tabs button.on {
+  color: #fff; font-weight: 700;
+  background: linear-gradient(180deg, var(--orange-light) 0%, var(--orange-deep) 100%);
+  box-shadow: var(--sh-tab);
+}
+
+/* ============================ 卡片 ============================ */
+body.kid .card {
+  background: var(--card);
+  border: 1px solid var(--card-line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-card);
+  padding: 15px;
+  overflow: visible;
+}
+body.kid .card--tight { padding: 13px; }
+body.kid .card--plain { box-shadow: var(--sh-card-sm); }
+body.kid .card + .card { margin-top: 0; }
+
+/* 渐变 HERO 卡（橙色主卡） */
+body.kid .hero {
+  position: relative; overflow: hidden;
+  border-radius: var(--r-xl);
+  border: 1px solid rgba(255,255,255,.34);
+  box-shadow: var(--sh-hero);
+  background: linear-gradient(135deg, var(--orange-light) 0%, var(--orange) 46%, var(--orange-deep) 100%);
+  color: #fff; padding: 16px; margin-bottom: 0;
+}
+body.kid .hero .card-title, body.kid .hero .t { color: #fff; }
+/* 渐变 HERO 卡的紫色版。稿子里「正在玩」是紫的、「本周能量」是白的，
+   所以 hero 这个「显眼到发亮」的位置留给正在发生的事，进度卡走普通白卡。 */
+body.kid .hero--purple {
+  border-color: rgba(255,255,255,.30);
+  box-shadow: 0 10px 22px -5px rgba(91,63,214,.40);
+  background: linear-gradient(135deg, var(--purple) 0%, var(--purple-deep) 100%);
+}
+body.kid .hero--purple .tk-big { color: #fff; }
+/* 紫 hero 上那条进度：轨道用 bar--onhero（半透明白），条走金星色 */
+body.kid .hero--purple .bar > i {
+  background: linear-gradient(90deg, var(--gold-light), var(--gold));
+}
+body.kid .on-hero-90 { color: rgba(255,255,255,.90); }
+body.kid .on-hero-88 { color: rgba(255,255,255,.88); }
+body.kid .on-hero-82 { color: rgba(255,255,255,.82); }
+body.kid .on-hero-70 { color: rgba(255,255,255,.70); }
+
+body.kid .card-head,
+body.kid .hb { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.kid .card-title { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink); }
+body.kid .card-note  { font-size: calc(10.5 * var(--u-sm)); font-weight: 500; color: var(--ink-2); }
+
+/* 区块标题（卡外） */
+body.kid .sect-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.kid .sect-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink);
+}
+body.kid .sect-title svg { width: calc(16 * var(--u)); height: calc(16 * var(--u)); color: inherit; }
+body.kid .sect-note { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-3); }
+
+/* ============================ 通用小件 ============================ */
+body.kid .num { font-family: var(--font-num); font-weight: 800; letter-spacing: -.2px; }
+body.kid .t-2 { color: var(--ink-2); }
+body.kid .t-3 { color: var(--ink-3); }
+
+body.kid .pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: var(--r-xs);
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700;
+  background: #FFF3E2; color: var(--orange-deep);
+}
+body.kid .pill--blue   { background: var(--blue-bg);   color: var(--blue-deep); }
+body.kid .pill--purple { background: var(--purple-bg); color: var(--purple-deep); }
+body.kid .pill--pink   { background: var(--pink-bg);   color: var(--pink-dark); }
+body.kid .pill--gray   { background: #F4EFE7; color: var(--ink-3); font-weight: 500; }
+body.kid .pill--white  { background: rgba(255,255,255,.26); color: #fff; }
+
+body.kid .big-num { font-family: var(--font-num); font-size: calc(20 * var(--u)); font-weight: 800; line-height: 1; }
+body.kid .unit    { font-family: var(--font-num); font-size: calc(10 * var(--u-sm)); font-weight: 600; color: var(--ink-3); }
+
+/* ============================ 按钮 ============================ */
+body.kid .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  appearance: none; border: 0; cursor: pointer;
+  font-family: var(--font-cn); font-size: calc(12 * var(--u)); font-weight: 700;
+  padding: 9px 16px; border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--orange-light) 0%, var(--orange) 60%, var(--orange-deep) 100%);
+  color: #fff; box-shadow: var(--sh-btn);
+}
+body.kid .btn.sm, body.kid .btn--sm { padding: 7px 13px; font-size: calc(11.5 * var(--u)); }
+body.kid .btn.line, body.kid .btn.ghost,
+body.kid .btn--ghost, body.kid .btn--quiet {
+  background: #fff; color: var(--orange-deep);
+  border: 1.5px solid #FFD9B8; box-shadow: none;
+}
+body.kid .btn.blue, body.kid .btn--blue {
+  background: linear-gradient(180deg, var(--blue) 0%, var(--blue-deep) 100%);
+  box-shadow: 0 4px 10px -2px rgba(47,127,232,.42);
+}
+body.kid .btn.wide { width: 100%; }
+body.kid .btn:disabled, body.kid .btn.is-disabled {
+  background: #EFE7DB; color: var(--ink-3); box-shadow: none; cursor: not-allowed;
+}
+
+/* ============================ 进度条 / 三态点 ============================ */
+body.kid .bar {
+  height: 8px; border-radius: var(--r-pill); background: #F4EDE2; overflow: hidden;
+}
+body.kid .bar > i {
+  display: block; height: 100%; border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--orange-light), var(--orange));
+}
+body.kid .bar > i.gold, body.kid .bar--gold > i { background: linear-gradient(90deg, var(--gold-light), var(--gold)); }
+body.kid .bar > i.purple, body.kid .bar--purple > i { background: linear-gradient(90deg, var(--purple), var(--purple-deep)); }
+body.kid .bar--onhero     { background: rgba(255,255,255,.30); }
+body.kid .bar--onhero > i { background: #fff; }
+
+/* 任务三态：三颗横排小圆点（待做 → 在做 → 交上去）。
+   它比百分比诚实 —— 「待做 → 在做 → 交上去」没有中间刻度，画成 40% 是编出来的精度。 */
+body.kid .dots { display: inline-flex; align-items: center; gap: 4px; }
+body.kid .dots i {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #E4DACB; display: block;
+}
+body.kid .dots i.is-on   { background: var(--orange); }
+body.kid .dots i.is-done { background: #7BC49A; }
+
+/* ============================ 分段器（券包 / 任务页共用） ============================ */
+body.kid .seg {
+  display: flex; gap: 4px; padding: 4px;
+  background: rgba(255,255,255,.62);
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--card-line);
+}
+body.kid .seg-item {
+  flex: 1; appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 9px 0; border-radius: var(--r-xs);
+  font-family: var(--font-cn); font-size: calc(12.5 * var(--u)); font-weight: 500; color: var(--ink-2);
+}
+/* 选中那一格是白药丸 + 橙字（稿子里的样子），不是橙底白字：
+   分段器是「换个地方看」，不是一次动作，别做得比按钮还抢眼。 */
+body.kid .seg-item.is-on {
+  background: #fff; color: var(--orange-deep); font-weight: 700;
+  box-shadow: 0 3px 8px -2px rgba(184,128,64,.22);
+}
+
+/* ============================ 网格 ============================ */
+body.kid .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* minmax(0, 1fr) 而不是 1fr：1fr 的轨道下限是 min-content，窄屏上三颗按钮
+   压不到一块去，整页被撑宽（320 宽下实测多出 39px，把 appbar 和第七档都切掉了）。
+   0 下限让轨道可以随便收，内容自己换行。 */
+body.kid .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+
+/* ============================ 列表行（设置 / 入口） ============================ */
+body.kid .row {
+  display: flex; align-items: center; gap: 12px;
+  background: #fff; border: 1px solid var(--card-line);
+  border-radius: var(--r-md); box-shadow: var(--sh-card-sm);
+  padding: 13px;
+}
+body.kid .row + .row { margin-top: 0; }
+body.kid .row-grow { flex: 1; min-width: 0; }
+body.kid .row-title { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink); }
+body.kid .row-sub   { font-size: calc(10.5 * var(--u-sm)); font-weight: 500; color: var(--ink-2); margin-top: 3px; }
+body.kid .row .chev { flex: 0 0 16px; color: var(--ink-line); }
+body.kid .row[data-go] { cursor: pointer; }
+
+body.kid .icon-box {
+  flex: 0 0 36px; width: calc(36 * var(--u)); height: calc(36 * var(--u));
+  border-radius: 50%; display: grid; place-items: center;
+}
+
+/* ============================ 任务卡 ============================ */
+body.kid .task-card {
+  background: #fff; border: 1px solid var(--card-line); border-radius: var(--r-md);
+  box-shadow: var(--sh-card-sm); padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* 图标 + 名字 + 奖励胶囊：必须竖向居中，否则矮的胶囊会吊顶 */
+body.kid .task-row { display: flex; align-items: center; gap: 10px; }
+body.kid .task-ico {
+  flex: 0 0 40px; width: 40px; height: 40px; border-radius: 13px;
+  display: grid; place-items: center; background: var(--blue-bg);
+}
+body.kid .task-name { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink); }
+body.kid .task-sub  { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-2); margin-top: 5px; }
+body.kid .reward {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+  background: #FFF6E0; color: var(--gold-deep); font-size: calc(10.5 * var(--u-sm)); font-weight: 700;
+  padding: 6px 10px; border-radius: var(--r-xs); white-space: nowrap;
+}
+body.kid .reward svg { width: calc(11 * var(--u)); height: calc(11 * var(--u)); color: var(--stardust); }
+
+/* ============================ 券卡 / 商品卡 ============================ */
+body.kid .coupon-card, body.kid .goods-card {
+  background: #fff; border: 1px solid var(--card-line); border-radius: var(--r-md);
+  box-shadow: var(--sh-card-sm); padding: 12px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+body.kid .coupon-name { font-size: calc(12.5 * var(--u)); font-weight: 700; }
+body.kid .coupon-desc { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); line-height: 1.4; }
+body.kid .coupon-card.is-empty { opacity: .55; }
+body.kid .goods-card .btn { width: 100%; margin-top: 2px; }
+/* 券卡右上角的数量：一眼看出还剩几张 */
+body.kid .coupon-card .cnt {
+  font-family: var(--font-num); font-size: calc(15 * var(--u)); font-weight: 800; color: var(--orange);
+}
+
+/* ============================ 星尘直购卡（v38 补） ============================ */
+/* 这个类名 JS 里用了很久，样式却从来没定义过：落成浏览器默认按钮，
+   白底、胶囊、边框全丢。设计稿对不上的根因就是它。 */
+body.kid .card--buy {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; min-width: 0; text-align: left; cursor: pointer;
+  padding: 10px; border-radius: var(--r-md);
+  background: #fff; border: 1px solid var(--card-line);
+  box-shadow: var(--sh-card-sm);
+  font-family: var(--font-cn); color: var(--ink);
+}
+body.kid .card--buy > svg { flex: 0 0 auto; }
+body.kid .card--buy > .v { flex: 1; min-width: 0; }
+/* 价格那行本身是 nowrap 的 flex，窄屏下它自己也压不下去（min-content 顶住轨道）。
+   只给它一个 0 下限就能跟着收；不让它 flex-wrap —— 一换行「105 星尘」会整块
+   掉到第二行，390 上就跟设计稿不一样了。 */
+body.kid .card--buy .h { min-width: 0; }
+body.kid .card--buy:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ============================ 「我的」三宫格里能点的两格 ============================ */
+body.kid .k-tap { cursor: pointer; }
+body.kid .k-lab { display: flex; align-items: center; justify-content: center; gap: 2px; }
+body.kid .k-go { display: flex; align-items: center; }
+
+/* ============================ 宝箱：有箱待开的那张提醒卡 ============================ */
+/* 有箱待开那颗胶囊（v39）。比原来的白卡窄一圈、圆到底、橙边描粗一档：
+   它是这一页唯一「现在就能做的事」，所以做成一颗按下去的东西，而不是一张卡。 */
+body.kid .chest-pod {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left; cursor: pointer;
+  height: 54px; padding: 0 14px; border-radius: 27px;
+  background: #fff; border: 2px solid #F5B96A;
+  box-shadow: 0 6px 16px -6px rgba(240,150,60,.45);
+  font-family: var(--font-cn); color: var(--ink);
+  animation: kAlertPulse 1.8s ease-in-out infinite;
+}
+body.kid .chest-pod > svg { flex: 0 0 auto; }
+body.kid .chest-pod-g { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+body.kid .chest-pod-t { font-size: calc(14 * var(--u)); font-weight: 700; color: #3A2E25; }
+body.kid .chest-pod-s { font-size: calc(11 * var(--u)); color: #8A7359; }
+body.kid .chest-pod-go {
+  flex: 0 0 auto; padding: 7px 12px; border-radius: 14px;
+  background: #F5A75D; color: #fff; font-size: calc(12 * var(--u)); font-weight: 700;
+}
+@keyframes kAlertPulse {
+  0%, 100% { box-shadow: 0 6px 16px -6px rgba(240,150,60,.45); }
+  50%      { box-shadow: 0 8px 22px -6px rgba(240,150,60,.72); }
+}
+
+/* ============================ 宝箱：开箱四拍 ============================ */
+body.kid .box-stage {
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  padding: 36px 0 28px; text-align: center;
+}
+body.kid .box-stage-in { display: block; transition: transform .34s ease, filter .34s ease; }
+body.kid .box-stage-tip { font-size: calc(12.5 * var(--u)); font-weight: 700; color: var(--ink-2); }
+body.kid .box-stage.is-in .box-stage-in { transform: scale(1.06); }
+body.kid .box-stage.is-shake .box-stage-in { animation: kBoxShake .5s ease-in-out; }
+body.kid .box-stage.is-glow .box-stage-in {
+  filter: drop-shadow(0 0 14px rgba(255,190,80,.95)); transform: scale(1.12);
+}
+body.kid .box-stage.is-burst .box-stage-in {
+  filter: drop-shadow(0 0 20px rgba(255,170,40,1)); transform: scale(1.22);
+}
+@keyframes kBoxShake {
+  0%, 100% { transform: rotate(0deg) scale(1.02); }
+  25%      { transform: rotate(-7deg) scale(1.04); }
+  75%      { transform: rotate(7deg) scale(1.04); }
+}
+
+/* ============================ 宝箱：自选候选卡 ============================ */
+body.kid .pick-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 8px; border-radius: var(--r-md);
+  background: #fff; border: 1.5px solid var(--card-line);
+  cursor: pointer; text-align: center;
+  font-family: var(--font-cn); color: var(--ink);
+}
+body.kid .pick-card.on { border-color: var(--orange); background: #FFF6EC; }
+body.kid .pick-name { font-size: calc(12 * var(--u)); font-weight: 700; }
+body.kid .pick-desc { font-size: calc(9.5 * var(--u-sm)); color: var(--ink-3); line-height: 1.4; }
+
+/* ============================ 宝箱：七档各给什么 ============================ */
+/* 七档一列一档（v39）：箱图标、档名、门槛分、内容两行，七列并排。
+   当前那一档换个底和描边 —— 孩子得能一眼看出「我现在站在哪」。 */
+/* minmax(0, 1fr)：轨道下限设成 0，七列才能在窄屏上一起收。
+   留着 1fr（下限 = min-content）时，七个「14 券」把这张卡的最小宽度顶到 296，
+   320 屏上整页被撑宽 6px —— 就是这一处。 */
+body.kid .btcols { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+body.kid .btcol {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 9px 2px; border-radius: 14px;
+  background: #FFFDF8; border: 1px solid #F0E6D8;
+}
+body.kid .btcol.is-now { background: #FFFBEF; border-color: #F5D9A0; }
+/* 这两行原来是 nowrap。320 上「钻石箱」正好卡在列宽边缘，写死不断行就只有溢出
+   一条路；改成允许换行，宽屏下它照样是一行（列宽 37 > 字宽 31）。 */
+body.kid .btcol-n { font-size: calc(11 * var(--u)); font-weight: 700; text-align: center; }
+body.kid .btcol-s { font-size: calc(20 * var(--u)); font-weight: 700; line-height: 1; }
+body.kid .btcol-d { font-size: calc(10 * var(--u-sm)); color: #6B5B4A; text-align: center; }
+/* 随机件概率整页只写这一句。七列里各带一串百分比的话，孩子读到的是
+   七个数字，不是一个结论 —— 而他真正要判断的只有「我这只箱出不出东西」。 */
+body.kid .btnote { font-size: calc(10 * var(--u-sm)); line-height: 1.6; color: #7B4FB0; margin-top: 9px; }
+/* 宝箱卡中间那一格大箱图：箱居中，四角各一颗小星。星星按设计稿在 390 宽
+   画布里的落点折算成百分比，换个机型也不会散开。 */
+body.kid .box-figure { position: relative; display: grid; place-items: center; margin: 13px 0; }
+body.kid .box-figure > svg { position: absolute; }
+body.kid .box-figure > svg:first-child { position: static; }
+body.kid .box-figure > svg:nth-child(2) { left: 8%;  top: 14%; }
+body.kid .box-figure > svg:nth-child(3) { left: 75%; top: 19%; }
+body.kid .box-figure > svg:nth-child(4) { left: 5%;  top: 69%; }
+body.kid .box-figure > svg:nth-child(5) { left: 76%; top: 66%; }
+
+/* ============================ 七格进度条 ============================ */
+body.kid .chest-slots { display: flex; gap: 6px; }
+body.kid .chest-slots i {
+  flex: 1; height: 10px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,.32); position: relative; overflow: hidden;
+}
+body.kid .chest-slots i.is-full { background: #fff; }
+body.kid .chest-slots i.is-half::after {
+  content: ""; position: absolute; inset: 0 50% 0 0; background: #fff;
+}
+/* 摆在白卡上（成长报告）时换一套底色，白条在白底上是看不见的 */
+body.kid .chest-slots.on-plain i { background: #F4EDE2; }
+body.kid .chest-slots.on-plain i.is-full { background: var(--orange); }
+body.kid .chest-slots.on-plain i.is-half::after { background: var(--orange); }
+
+/* ============================ 七档阶梯 ============================ */
+body.kid .ladder { display: flex; gap: 5px; }
+body.kid .ladder-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+body.kid .ladder-step svg { width: calc(22 * var(--u)); height: calc(22 * var(--u)); }
+body.kid .ladder-step span { font-size: calc(9.5 * var(--u-sm)); font-weight: 500; color: var(--ink-3); white-space: nowrap; }
+body.kid .ladder-step.is-now span { color: var(--gold-deep); font-weight: 700; }
+body.kid .ladder-step.is-now { position: relative; }
+body.kid .ladder-step.is-now::before {
+  content: ""; position: absolute; inset: -4px -3px -2px; border-radius: 12px;
+  background: #FFF6E0; z-index: -1;
+}
+
+/* ============================ 提示条 / 脚注 ============================ */
+body.kid .tip {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--warn-bg); border-radius: var(--r-sm);
+  padding: 10px 12px; font-size: calc(11 * var(--u)); color: var(--warn); font-weight: 500;
+}
+body.kid .tip svg { flex: 0 0 auto; }
+body.kid .footnote {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: calc(10 * var(--u-sm)); color: var(--ink-3); text-align: center; line-height: 1.5;
+}
+body.kid .footnote svg { flex: 0 0 auto; }
+
+/* ============================ 排版工具类 ============================ */
+body.kid .h  { display: flex; align-items: center; }
+body.kid .v  { display: flex; flex-direction: column; }
+body.kid .grow { flex: 1; min-width: 0; }
+body.kid .g3 { gap: 3px; } body.kid .g5 { gap: 5px; } body.kid .g6 { gap: 6px; }
+body.kid .g7 { gap: 7px; } body.kid .g8 { gap: 8px; } body.kid .g10 { gap: 10px; }
+body.kid .g12 { gap: 12px; }
+body.kid .ico { display: block; flex: 0 0 auto; color: inherit; }
+body.kid .mt6 { margin-top: 6px; } body.kid .mt8 { margin-top: 8px; }
+body.kid .mt10 { margin-top: 10px; } body.kid .mt12 { margin-top: 12px; }
+body.kid hr.rule { border: 0; border-top: 1px solid var(--line); margin: 13px 0; }
+body.kid svg use { color: inherit; }
+/* 数据还没回来时的空句子，跟别处一个调子 */
+body.kid .empty { color: var(--ink-3); text-align: center; padding: 26px 14px; font-size: calc(12.5 * var(--u)); }
+
+/* ============================ 弹层与提示（孩子端一套糖果皮） ============================ */
+body.kid .sheet { background: rgba(74,54,39,.42); }
+body.kid .sheet-body {
+  max-width: var(--sheet-w); background: var(--bg-btm);
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  border-top: 1px solid var(--card-line);
+  padding: 16px 16px calc(16px + var(--safe-b, env(safe-area-inset-bottom, 0px)));
+  color: var(--ink);
+}
+body.kid .sheet h3 { margin: 0 0 6px; font-size: calc(16 * var(--u)); color: var(--ink); }
+body.kid .sheet .muted { color: var(--ink-3); font-size: calc(12 * var(--u)); line-height: 1.6; }
+body.kid .field label { color: var(--ink-2); font-size: calc(12 * var(--u)); }
+body.kid .field input, body.kid .field select, body.kid .field textarea {
+  background: #fff; border: 1px solid var(--card-line);
+  border-radius: var(--r-sm); color: var(--ink);
+  padding: 10px 12px;
+}
+body.kid .field input:focus, body.kid .field textarea:focus, body.kid .field select:focus {
+  outline: none; border-color: var(--orange);
+  box-shadow: 0 0 0 3px rgba(255,138,61,.16);
+}
+body.kid .chips .chip, body.kid .chip {
+  background: #fff; border: 1px solid var(--card-line);
+  border-radius: var(--r-pill); color: var(--ink-2);
+}
+body.kid .chip.on {
+  background: linear-gradient(180deg, var(--orange-light), var(--orange));
+  border-color: transparent; color: #fff; font-weight: 700;
+}
+body.kid .notice {
+  background: var(--warn-bg); color: var(--warn);
+  border-radius: var(--r-sm); font-size: calc(12 * var(--u)); line-height: 1.6;
+}
+body.kid .notice.info { background: var(--blue-bg); color: var(--blue-deep); }
+body.kid .notice.warn { background: var(--warn-bg); color: var(--warn); }
+body.kid .hr { background: var(--line); }
+body.kid .kv { font-size: calc(12.5 * var(--u)); }
+body.kid .kv .k { color: var(--ink-2); }
+body.kid .kv .v { color: var(--ink); }
+body.kid .toast { background: var(--ink); border-radius: var(--r-sm); }
+body.kid .no-t, body.kid .tk-no { color: var(--warn) !important; }
+body.kid .ok-t, body.kid .ok-line { color: var(--ok) !important; }
+body.kid .tk-no { background: var(--warn-bg); border-radius: var(--r-xs); }
+
+/* 券「正在玩」那块：倒计时是这一屏最大的数字 */
+body.kid .tk-big { font-family: var(--font-num); font-size: calc(26 * var(--u)); font-weight: 800; color: var(--purple-deep); }
+
+/* 家长端的头像挑选用不着，但孩子端「我的」里选头像要用同一套 */
+body.kid .av-gp { font-size: calc(12 * var(--u)); color: var(--ink-3); margin: 12px 0 7px; }
+body.kid .av-gp:first-child { margin-top: 0; }
+body.kid .av-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
+body.kid .av-pick { border: 2px solid transparent; border-radius: 50%; padding: 2px; cursor: pointer;
+  line-height: 0; justify-self: center; background: transparent; }
+body.kid .av-pick.on { border-color: var(--orange); }
+
+/* 图鉴：23 张卡一格一张，跟「我的」页的三宫格一个调子 */
+body.kid .catalog { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+body.kid .cat-cell {
+  padding: 9px 6px; border-radius: var(--r-sm); background: #FFFBF3;
+  text-align: center; font-size: calc(10.5 * var(--u-sm)); color: var(--ink-3);
+  border: 1px solid var(--card-line); line-height: 1.5;
+}
+body.kid .cat-cell b { display: block; font-size: calc(11.5 * var(--u)); color: var(--ink-2); margin-bottom: 2px; }
+body.kid .cat-cell.have { background: #fff; border-color: var(--gold-light); box-shadow: var(--sh-card-sm); }
+body.kid .cat-cell.have b { color: var(--gold-deep); }
+
+/* 「我的记录」里七项各一行的小格子（周一到周日） */
+body.kid .dgrid { display: flex; gap: 4px; margin-top: 7px; }
+body.kid .dgrid i {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  font-style: normal; font-size: calc(11.5 * var(--u)); line-height: 1.25; padding: 3px 0 2px;
+  border-radius: 7px; background: var(--line); color: var(--ink-3);
+}
+body.kid .dgrid i b { font-size: calc(9.5 * var(--u-sm)); font-weight: 500; }
+body.kid .dgrid i.on { background: var(--ok-bg); color: var(--ok); font-weight: 700; }
+body.kid .dgrid i.no { background: var(--warn-bg); color: var(--warn); }
+body.kid .dgrid i.lock { opacity: .5; }
+body.kid .ditem { display: flex; gap: 10px; align-items: flex-start; padding: 11px 0; }
+body.kid .ditem + .ditem { border-top: 1px solid var(--line); }
+body.kid .dnote { font-size: calc(11 * var(--u)); color: var(--warn); margin-top: 6px; }
+body.kid .dstar { font-size: calc(11 * var(--u)); color: var(--gold-deep); margin-top: 6px; }
+
+/* ============================ 横屏矮屏 ============================ */
+/* 条件是 max-height 560（横屏手机 360~430 高这一档），管的是「矮」，不是「宽」。
+   旧注释写成「宽一点的屏」，代码从来是高度，两回事。
+   竖屏那套底栏是 71px（药丸 61 + 离底 10），搁在 390 高的屏上占 18%，
+   所以横屏把它整体收一档：离底 10→6、药丸内边距 6→4、图标 21→18、格内上下各减 2，
+   底栏落到 56px 上下。
+   --h-tabbar 必须跟着改：它是 .content 底部空档的唯一来源（第 47 行
+   calc(var(--h-tabbar) + 16px)）。旧规则把空档硬写成 10px，比底栏本身还矮，
+   实测横屏下最后一块内容整段压在药丸底下、滚到底也看不见（844x390 差 60px）。 */
+@media (max-height: 560px) {
+  body.kid { --h-tabbar: calc(58 * var(--u)); }
+  body.kid #tabs { padding-bottom: calc(6 * var(--u) + var(--safe-b, env(safe-area-inset-bottom, 0px))); }
+  body.kid #tabs .tabbar-pill { padding: calc(4 * var(--u)) calc(5 * var(--u)); }
+  body.kid #tabs button { padding: calc(3 * var(--u)) 0; gap: calc(2 * var(--u)); }
+  body.kid #tabs button svg { width: calc(18 * var(--u)); height: calc(18 * var(--u)); }
+}
+
+/* ============================ 心愿：条件 / 进度 / 按条提交 ============================
+   结构来自 app.js 的 wishCondText / wishProgHTML / wishSubRow / wishNotesHTML
+   （孩子端和家长端共用同一份），家长端那套灰绿在这边不适用，统一在 body.kid 下重上糖果色。
+   一个灰阶都不用：次要文字走 --ink-2 / --ink-3，描边走 --card-line（暖黄）。 */
+body.kid .wcond {
+  margin-top: 10px; padding: 9px 11px;
+  background: var(--purple-bg); border-radius: var(--r-sm);
+}
+body.kid .wcond-h {
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700; color: var(--purple-deep);
+  letter-spacing: .04em;
+}
+body.kid .wcond-t {
+  font-size: calc(12.5 * var(--u)); font-weight: 700; color: var(--ink);
+  line-height: 1.45; margin-top: 3px;
+}
+body.kid .wprog { margin-top: 9px; }
+body.kid .wprog .ds { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-2); }
+body.kid .wprog .ok-t { color: var(--ok); }
+body.kid .wprog .bar { margin-top: 6px; }
+body.kid .wsubs { margin-top: 9px; display: flex; flex-direction: column; gap: 6px; }
+body.kid .wsub {
+  padding: 9px 11px;
+  background: var(--bg-btm);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-sm);
+}
+body.kid .wsub.done { border-color: var(--ok); background: var(--ok-bg); }
+body.kid .wsub.pend { border-color: var(--purple); background: var(--purple-bg); }
+body.kid .wsub.rej { border-color: var(--warn); background: var(--warn-bg); }
+body.kid .wsub .ds { font-size: calc(11.5 * var(--u)); color: var(--ink); }
+body.kid .wsub .ds.muted { color: var(--ink-3); font-size: calc(10 * var(--u-sm)); margin-top: 3px; }
+body.kid .wsubmit { margin-top: 7px; display: flex; gap: 6px; }
+body.kid .wsubmit .inp {
+  flex: 1 1 auto; min-width: 0; padding: 7px 10px;
+  border: 1.5px solid var(--card-line); border-radius: var(--r-sm);
+  background: var(--card); color: var(--ink);
+  font-family: var(--font-cn); font-size: calc(12 * var(--u));
+}
+body.kid .wnote {
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px dashed var(--card-line);
+}
+body.kid .wnote-h {
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700; color: var(--ink-2);
+  letter-spacing: .04em;
+}
+body.kid .wnote .ds { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-2); line-height: 1.55; }
+/* 历史心愿：默认收起，点标题展开。底栏占着屏幕最下面一截，
+   这块每页都在最末，`--h-tabbar` 的留白就是给它让位的。 */
+/* style.css 里的 .tag.ok / .blue / .gold 是给家长端定的（品牌深绿那套），
+   孩子端不覆盖就顶着墨绿的「✓ 做到了」出来。换成孩子端自己的色。 */
+body.kid .tag.ok { background: var(--ok-bg); color: var(--ok); }
+body.kid .tag.blue { background: var(--purple-bg); color: var(--purple-deep); }
+body.kid .tag.gold { background: var(--gold-pale); color: var(--gold-deep); }
+body.kid .tag.warn { background: var(--warn-bg); color: var(--warn); }
+body.kid .hist-toggle {
+  background: transparent; border: 0; cursor: pointer;
+  font-family: var(--font-cn); font-size: calc(12.5 * var(--u)); font-weight: 700; color: var(--ink);
+}
+body.kid .hist-body[hidden] { display: none; }
+body.kid .hist-body .ds { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-2); line-height: 1.55; }
+
+/* ============================ 首页 · 这一周的七分（v39） ============================
+   七行维度 × 七列这一周。格子四态：拿到 = 实心维度色（颜色由 JS 按维度给），
+   那天过去了没拿到 = 浅棕，今天在格子外面套一圈橙框，还没到 = 最浅的米色。
+   下面这一串量都按 390 宽画布算过：图标 20 ＋ 名字 34 ＋ 七格 ＋ 天数 32，
+   行与列头共用同一套宽度，所以列头能正对着格子。 */
+body.kid .k7 {
+  background: #fff; border-radius: 24px; padding: 12px 12px 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  box-shadow: 0 7px 16px -4px rgba(184,128,64,.13);
+}
+body.kid .k7-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.kid .k7-title { font-size: calc(13 * var(--u)); font-weight: 700; color: #4A3627; }
+body.kid .k7-legend { font-size: calc(10 * var(--u-sm)); color: #A08E7A; }
+body.kid .k7-row { display: flex; align-items: center; gap: 5px; }
+body.kid .k7-ic { flex: 0 0 20px; width: 20px; height: 20px; display: flex; align-items: center; }
+body.kid .k7-ic img { width: 20px; height: 20px; }
+body.kid .k7-nm {
+  flex: 0 0 34px; width: 34px; font-size: calc(9.5 * var(--u-sm));
+  font-weight: 700; color: #4A3627; line-height: 1.1;
+}
+body.kid .k7-cells { flex: 1; display: flex; gap: 4px; min-width: 0; }
+body.kid .k7-wd { flex: 1; text-align: center; font-size: calc(9 * var(--u-sm)); color: #C9B8A2; }
+body.kid .k7-wd.is-today { color: #E87229; font-weight: 700; }
+body.kid .k7-c { flex: 1; height: 16px; border-radius: 6px; background: #F7F2EA; }
+body.kid .k7-c.is-off { background: #F1E9DC; }
+body.kid .k7-c.is-today { background: #FBF6EE; box-shadow: inset 0 0 0 1.5px rgba(232,114,41,.70); }
+body.kid .k7-day {
+  flex: 0 0 32px; width: 32px; text-align: right;
+  font-size: calc(11 * var(--u)); font-weight: 700; color: #C9B8A2;
+}
+body.kid .k7-day.is-hot { color: #E87229; }
+body.kid .k7-day.is-mid { color: #8A7359; }
+body.kid .k7-concl {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 10px; border-radius: 14px; background: #FFF6E0; margin-top: 3px;
+}
+body.kid .k7-cg { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+body.kid .k7-c1 { font-size: calc(11.5 * var(--u)); font-weight: 700; color: #4A3627; }
+body.kid .k7-c2 { font-size: calc(10.5 * var(--u-sm)); color: #8A7359; }
+body.kid .k7-go {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 2px;
+  font-size: calc(9.5 * var(--u-sm)); font-weight: 700; color: #E87229; cursor: pointer;
+}
+/* 角色条副标：「今天能量 5/7 · 第 3 天」 */
+body.kid .k7-sub { font-size: calc(11 * var(--u)); font-weight: 700; color: var(--orange); }
+/* 星尘胶囊改成金底白字：它是这一屏唯一一个「数得出来的家底」，
+   跟旁边那个橙不橙黄不黄的 pill 挤在一起时，白底的那个读起来像禁用了。 */
+body.kid .pill--gold { background: #FFC93C; color: #fff; font-weight: 700; }
+
+/* ============================ 宽屏：只放宽上限 ============================ */
+/* 孩子端不做电脑版式。它的设计基准是 390 宽的画布，宽到一定程度再重排，
+   等于把宝箱页、券包页、我的页重画一遍（三页刚按设计稿对齐完），
+   而孩子真正用的是手机和平板。所以宽屏只做一件事：把外壳上限放宽、回收留白。
+   600 起 480 → 560，900 起 560 → 600，版式一点不动。
+   外壳放大之后底栏、装饰层、弹层跟着走（它们读的是 --shell-w / --bar-w），
+   药丸自己仍按 330 封顶，不会跟着拉成一条长带。 */
+@media (min-width: 600px) {
+  body.kid { --shell-w: 560px; }
+}
+
+/* ============================ 宽屏：放开高度锁 ============================ */
+/* 手机上 #app 锁 height:100dvh（第 16 行）是对的：一屏塞不下就由 .content 自己滚。
+   电脑上同一个锁的后果是页面整体没有滚动条 —— 滚动只发生在中间那条 480px 里，
+   鼠标停在两侧留白上滚，画面纹丝不动，看着像卡死（P0-2）。
+   ≥900 把 height 去掉、只留 min-height：高度改由内容撑开，滚动交还给浏览器那一根。
+   内容比一屏矮的时候 min-height 还是会撑满，背景不会出现断层；
+   .content 那层 overflow-y:auto 留着，手机上怎么滚还是怎么滚。 */
+@media (min-width: 900px) {
+  body.kid { --shell-w: 600px; }
+  body.kid #app { height: auto; }
+  /* 只有上面那一条还不够。.content 自己还是个滚动容器（第 45 行），
+     而且带 overscroll-behavior:contain —— contain 的意思就是「滚到头也不往上抛」。
+     实测结果：1280 下左右留白各滚了 133px，内容条正中一格滚不动（0px），
+     鼠标从留白划进内容条就突然卡住，比整页都不能滚更迷惑。
+     内容已经能把整页撑高之后，这一层内部滚动就没有存在理由了，直接放掉。 */
+  body.kid .content { overflow-y: visible; overscroll-behavior: auto; }
+}

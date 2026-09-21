@@ -1,0 +1,184 @@
+/* =========================================================================
+   家长端 · 设计变量（Design Tokens）·「糖果冒险 · 角色换位」
+   与孩子端共用同一套色板与工艺，靠「角色语汇」而不是明暗区分：
+   孩子端像游戏主界面，家长端像冒险者协会的公告板。改主题只改这一处。
+
+   三条约束，别破坏：
+
+   1. 全部挂在 body.grown 下面，不用 :root。
+      style.css 已经占了 --card / --line / --gold / --blue 这些名字，
+      child-tokens.css 又占了 body.kid。家长端一套，同样也有
+      .card / .btn / .row / .bar / .chip 这些类，两边必须能同时存在
+      （同一个 index.html、同一份 app.js）。挂在 body.grown 上之后，
+      变量和样式都只往家长端那棵子树里继承。
+
+   2. 不用纯黑、不用中性灰阶。文字一律深棕，阴影走暖棕，描边走暖黄。
+
+   3. 覆盖必须够全。style.css 里有一段 prefers-color-scheme: dark，
+      夜间会给 :root 换一组深色变量。body.grown 的特异性比 :root 高，
+      凡是这里声明过的变量都会赢；没声明的就会漏出那套深色，所以
+      家长端用到的每一个名字都在这里补齐，别只补一半。
+   ========================================================================= */
+body.grown {
+  /* ---------------- 背景（自上而下三段渐变，与孩子端同款） ---------------- */
+  --bg-top:  #FFD08A;
+  --bg-mid:  #FFE9C6;
+  --bg-btm:  #FFFBF3;
+  --bg:      #FFFBF3;   /* style.css 的 body 底色，这里一起盖掉 */
+
+  /* ---------------- 文字（深棕系） ---------------- */
+  --ink:       #4A3627;
+  --ink-2:     #8A7359;
+  --ink-3:     #A08E7A;
+  --ink-line:  #C9B8A2;
+  --ink-title: #3A2A1C;
+
+  /* ---------------- 品牌色 · 冒险橙（家长端唯一主线） ---------------- */
+  --brand:         #E8722A;   /* style.css 里那套深绿的主色名，一并收编 */
+  --brand-dark:    #C25A18;
+  --brand-soft:    #FFF0E0;
+  --brand-line:    #FFC9A0;
+  --orange:        #FF8A3D;
+  --orange-deep:   #E8722A;
+  --orange-light:  #FFC46B;
+  /* 选中底栏格的渐变。交付包 tokens.css:24-25 原本给的是 #FFB066 → #FF8A3D
+     （比孩子端浅一档），WW 先生 09-21 看图认定两端口径该一致，改成孩子端
+     那两个 --orange-light / --orange-deep。要退回原色改这两行即可。 */
+  --grad-tab-a:    var(--orange-light);
+  --grad-tab-b:    var(--orange-deep);
+
+  /* ---------------- 宝箱金 / 星尘（进度、星尘语义） ---------------- */
+  --gold:       #FFC93C;
+  --gold-deep:  #B87A0C;
+  --gold-soft:  #FFF3D6;
+  --track:      #E8D5B0;
+
+  /* ---------------- 羊皮纸重点卡（「正在玩」「周期进度」专用） ---------------- */
+  --parch-a:     #F5E6C2;
+  --parch-b:     #E6D0A0;
+  --parch-line:  #D9A93F;
+
+  /* ---------------- 面 / 描边 ---------------- */
+  --card:       #FFFFFF;
+  --card-line:  #EFD9B4;
+  --line:       #F5EDE0;
+  --field:      #FCF2E6;
+  --seg-bg:     #F5E8D6;
+  --divider:    #F5EDE0;
+
+  /* ---------------- 糖果粉（孩子 B · 小朵 / 心愿语义） ---------------- */
+  --pink:       #FF9FCE;
+  --pink-deep:  #FF5E9E;
+  --pink-dark:  #C2185B;
+  --pink-pale:  #FFC79E;
+  --pink-soft:  #FFEAF4;
+
+  /* ---------------- 神秘紫（进行中 / 待定状态） ---------------- */
+  --purple:      #8B6BFF;
+  --purple-deep: #5B3FD6;
+  --purple-pale: #EDE7FF;
+  --purple-soft: #EDE7FF;
+
+  /* ---------------- 天空蓝（任务） ---------------- */
+  --blue:      #5BA9FF;
+  --blue-soft: #E7F1FF;
+
+  /* ---------------- 状态色 ---------------- */
+  --ok:         #5BB98C;
+  --ok-soft:    #E9F7EF;
+  --warn:       #E2604C;
+  --warn-soft:  #FDECE9;
+  --dash:       #C9BCA8;
+  --future:     #F1ECE4;
+  --partial:    #FFE0BC;
+
+  /* ---------------- 厚实偏移投影（家长端工艺核心） ----------------
+     不是模糊阴影，是「实心色块往下偏移」，统一暖棕。
+     禁止在浅底上用不透明的暖棕向上投 —— 底栏上方糊出一条脏橙带。 */
+  --shadow:      #C9761F;
+  --sh-card:     0 4px 0 rgba(201, 118, 31, .26);
+  --sh-card-sm:  0 3px 0 rgba(201, 118, 31, .20);
+  --sh-card-lg:  0 5px 0 rgba(201, 118, 31, .32);
+  --sh-parch:    0 5px 0 rgba(201, 118, 31, .35);
+  --sh-btn:      0 4px 0 rgba(201, 118, 31, .40);
+  /* 选中底栏格：改成孩子端那颗柔光（交付包原本是 0 2px 0 的硬边，
+     与家长端其它卡片的「压印」语言一致，但两端口径不一致是 WW 先生点名的）。
+     跟风格向统一走，别单独动这一条去迁就卡片那套。 */
+  --sh-tab:      0 4px 10px -2px rgba(255,138,61,.42);
+  --sh-soft:     0 3px 10px rgba(201, 118, 31, .07);
+
+  /* ---------------- 圆角 ---------------- */
+  --r-xs: calc(11 * var(--u));
+  --r-sm: calc(12 * var(--u));
+  --r-md: calc(14 * var(--u));
+  --r-lg: calc(16 * var(--u));
+  --r-xl: calc(18 * var(--u));
+  --r-2xl: calc(20 * var(--u));
+  --r-3xl: calc(22 * var(--u));
+  --r-pill: 999px;
+  --r-nav: calc(31 * var(--u));
+  /* 26 在矮屏上会超过格子半高（横屏格高 42.8，半径 29.1），整块变成一颗胶囊，
+     曲率跟外面那颗药丸（--r-nav 34.7）几乎重合，看上去像选中块从药丸里鼓出来。
+     孩子端用 --r-sm（15）是圆角矩形，外面一圈留白清清楚楚。这里跟孩子端对齐。 */
+  --r-tab: calc(15 * var(--u));
+  --radius: calc(16 * var(--u));        /* style.css 里那个通用圆角名 */
+
+  /* ---------------- 布局 ---------------- */
+  --pad: calc(16 * var(--u));
+  --gap-card: calc(14 * var(--u));
+  --h-tabbar: calc(86 * var(--u));      /* 药丸底栏 + 上下留白。内容区按它留底部空档 */
+  --bar-w:    var(--shell-w);  /* 底栏跟外壳同宽，跟 --shell-w 写同一条规则里 */
+  --shell-w:  480px;     /* 宽屏居中留白。这是内网端口访问的网页，
+                            不做 390×844 的手机框 —— 拿手机框套网页，
+                            电脑上会看见一个浮在灰底上的小方块。
+                            底栏 --bar-w 默认跟它同宽（style.css :root 里那条），
+                            宽屏段落里内容放开、底栏单独限宽。 */
+
+  /* ---------------- 字体 ---------------- */
+  --font-cn:  "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-num: "Inter", "Noto Sans SC", sans-serif;
+}
+
+/* =========================================================================
+   字阶（实测取用值）
+   ------------------------------------------------------------------------
+   页面大标题        22px / 700      「审核」「打分」「发布」
+   二级页标题        17px / 700      「宝箱」「我们家」「小满的心愿」
+   问候语            19px / 700
+   角色 / 主人名     18px / 700
+   卡片标题          13px / 700
+   段落标题          14px / 700
+   正文              11–13px / 400–500
+   按钮              15px / 700
+   胶囊 / 标签       11px / 500
+   维度名 / 脚注     9–10px / 400
+   大数字            20–30px / Inter 800
+   ========================================================================= */
+body.grown .caption      { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+body.grown .caption--warm{ font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
+body.grown .heading-page { font-size: calc(22 * var(--u)); font-weight: 700; color: var(--ink-title); line-height: 1.2; }
+body.grown .heading-sub  { font-size: calc(17 * var(--u)); font-weight: 700; color: var(--ink-title); line-height: 1.3; }
+body.grown .heading-sec  { font-size: calc(14 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .card-title   { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .ink          { color: var(--ink); }
+body.grown .ink-2        { color: var(--ink-2); }
+body.grown .ink-3        { color: var(--ink-3); }
+body.grown .accent       { color: var(--orange-deep); }
+
+/* 数字是视觉锤：一律走 Inter，且比同排正文大一号。
+   状态短词（「未打」「还没打」「5 件」）当同一档处理，只是换回中文字体 ——
+   为了对齐把中文塞进 Inter，标点会飘。 */
+body.grown .num {
+  font-family: var(--font-num);
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+body.grown .num--xl   { font-size: calc(30 * var(--u)); }
+body.grown .num--lg   { font-size: calc(25 * var(--u)); }
+body.grown .num--md   { font-size: calc(24 * var(--u)); }
+body.grown .num--sm   { font-size: calc(20 * var(--u)); }
+body.grown .num--gold { color: var(--gold-deep); }
+body.grown .num--warn { color: var(--warn); }
+body.grown .num--state { font-family: var(--font-cn); font-size: calc(20 * var(--u)); font-weight: 700; color: var(--orange-deep); }

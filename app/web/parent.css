@@ -1,0 +1,710 @@
+/* =========================================================================
+   家长端 · 组件样式「糖果冒险 · 角色换位」
+   依赖 parent-tokens.css。选择器全部挂在 body.grown 下，与 style.css（登录页、
+   弹层骨架）、child.css（孩子端）三套共存于同一个 index.html。
+
+   工艺核心：投影是实心色块往下偏移（blur=0），统一暖棕 #C9761F 加透明度。
+   看上去像贴纸浮在纸上，不是发光。别换成普通模糊阴影。
+   ========================================================================= */
+
+/* ------------------------------------------------------------------ 外壳 */
+body.grown {
+  background: linear-gradient(180deg,
+    var(--bg-top) 0%, var(--bg-mid) 34%, var(--bg-btm) 68%) fixed;
+  background-color: var(--bg-btm);
+  color: var(--ink);
+  font-family: var(--font-cn);
+  -webkit-font-smoothing: antialiased;
+}
+body.grown #app {
+  position: relative; z-index: 1;
+  max-width: var(--shell-w); margin: 0 auto;
+  height: 100dvh; min-height: 100dvh;
+  display: flex; flex-direction: column;
+}
+/* 家长端没有顶栏：问候语在总览页，「我是谁」在「我的」里，切孩子在打分页。 */
+body.grown #topbar { display: none; }
+
+/* 内容区 = 页面的实际滚动区。flex:1 + min-height:0 + overflow-y:auto，
+   这是把「一屏塞不下」变成「自己滚」的唯一开关 —— 内容超了就滚，别为省高度砍留白。 */
+body.grown #view {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--gap-card);
+  padding: var(--pad);
+  padding-bottom: calc(var(--h-tabbar) + 16px);
+  scrollbar-width: none;
+}
+body.grown #view::-webkit-scrollbar { width: 0; }
+/* 带 overflow:hidden 的卡是 flex 子项，会被压成 0 高、按钮点不到。 */
+body.grown #view > * { flex-shrink: 0; }
+
+/* 底栏：药丸浮在内容之上 */
+body.grown #tabs {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 0;
+  width: 100%; max-width: var(--bar-w); z-index: 20;
+  display: block; gap: 0;
+  background: transparent; border-top: 0; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  padding: calc(12 * var(--u)) calc(12 * var(--u)) calc(12 * var(--u) + env(safe-area-inset-bottom, 0px));
+}
+body.grown .nav-pill {
+  display: flex; gap: calc(2 * var(--u)); padding: calc(5 * var(--u)); height: calc(62 * var(--u));
+  background: #fff; border: 1px solid #FFF2E0; border-radius: var(--r-nav);
+  box-shadow: var(--sh-card);
+}
+body.grown .nav-item {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(3 * var(--u)); border-radius: var(--r-tab); border: 0; background: transparent;
+  cursor: pointer; color: var(--ink-3); font-family: inherit;
+  max-width: none; min-height: 0; font-size: calc(10 * var(--u-sm));
+}
+body.grown .nav-item .ico { width: calc(22 * var(--u)); height: calc(22 * var(--u)); }
+body.grown .nav-item span { font-size: calc(10 * var(--u-sm)); font-weight: 500; }
+body.grown .nav-item.on {
+  background: linear-gradient(180deg, var(--grad-tab-a), var(--grad-tab-b));
+  color: #fff; box-shadow: var(--sh-tab);
+  font-weight: 700;
+}
+body.grown .nav-item.on span { font-weight: 700; }
+
+/* 上面这几条一直没生效，被 style.css 里那条 `#tabs button` 压着 ——
+   那是 v35 换皮之前的老底栏，用的是 id 选择器，一票压过「body.grown + 一个类」。
+   后果是家长端底栏长期「老壳新皮」：圆角被按回 11px、max-width 钉在 118px、
+   min-height 钉在 50px，选中态那块奶油色也是老皮的，
+   交付包 prototype/parent.css:99 画的橙色渐变从来没显示过。
+   孩子端写的是 `body.kid #tabs button`，本身带 id 所以是对的；家长端图省事写成
+   `.nav-item`，就漏了。
+   横屏把药丸压到 48px（内高 38）之后，钉在 50px 的那块就多出 12px 戳到药丸外，
+   看上去像选中特效溢出了。下面两条补回 id，把老皮那三条按回去，
+   再把交付包那颗橙色渐变放出来（`--grad-tab-a` → `--grad-tab-b` + `--sh-tab`）。 */
+body.grown #tabs .nav-item {
+  max-width: none; min-height: 0; border-radius: var(--r-tab); font-size: calc(10 * var(--u-sm));
+}
+body.grown #tabs .nav-item.on {
+  background: linear-gradient(180deg, var(--grad-tab-a), var(--grad-tab-b));
+  color: #fff; font-weight: 700;
+}
+
+/* 装饰层：云、太阳、星芒 + 顶部暖光。铺在内容之下，纯装饰。
+   宽屏时跟着内容一起居中，不然星星会飘到留白上去。 */
+body.grown .g-deco {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: var(--shell-w); height: 400px;
+  pointer-events: none; z-index: 0;
+  background: url("parent/deco-candy-island.svg") no-repeat top center;
+  background-size: cover;
+  opacity: .9;
+}
+body.grown .g-glow {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: var(--shell-w); height: 360px;
+  pointer-events: none; z-index: 0;
+  background: radial-gradient(60% 60% at 50% 0%,
+    rgba(255,255,255,.55) 0%, rgba(255,224,153,.14) 50%, rgba(255,224,153,0) 100%);
+}
+
+/* ------------------------------------------------------------------ 页头 */
+body.grown .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+body.grown .page-head .left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+body.grown .page-head .right { display: flex; align-items: center; gap: 10px; flex: none; }
+body.grown .head-line { display: flex; align-items: center; gap: 8px; }
+
+body.grown .back-btn {
+  width: 34px; height: 34px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.9); border: 1px solid var(--card-line);
+  border-radius: var(--r-sm); cursor: pointer; color: var(--ink-2);
+}
+body.grown .back-btn .ico { width: calc(18 * var(--u)); height: calc(18 * var(--u)); }
+body.grown .back-btn:hover { background: #fff; }
+
+/* 「领航员」徽章 —— 家长靠角色语汇区分身份 */
+body.grown .badge-pilot {
+  font-size: calc(9 * var(--u-sm)); font-weight: 700; color: var(--orange-deep);
+  background: rgba(255,255,255,.85); border: 1.5px solid var(--orange);
+  border-radius: var(--r-pill); padding: 2px 8px; line-height: 1.4;
+  flex: none;
+}
+body.grown .bell {
+  position: relative; width: 38px; height: 38px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--card-line); border-radius: 14px;
+  box-shadow: var(--sh-card); cursor: pointer; color: var(--ink);
+}
+body.grown .bell .ico { width: calc(20 * var(--u)); height: calc(20 * var(--u)); }
+body.grown .bell .dot {
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px;
+  border-radius: var(--r-pill); background: var(--orange-deep); color: #fff;
+  font-size: calc(11 * var(--u)); font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--bg-mid); padding: 0 4px;
+}
+
+/* ------------------------------------------------------------------ 卡片 */
+body.grown .card {
+  background: var(--card); border: 2px solid var(--card-line);
+  border-radius: var(--r-lg); padding: 12px; box-shadow: var(--sh-card);
+  overflow: visible; margin: 0;
+}
+body.grown .card + .card { margin-top: 0; }
+body.grown .card--lg   { border-radius: var(--r-2xl); padding: 16px; box-shadow: var(--sh-card-lg); }
+body.grown .card--soft { background: rgba(255,255,255,.86); }
+body.grown .card--flush { padding: 0; overflow: hidden; }
+body.grown .card--tight { padding: 6px; border-radius: var(--r-xl); }
+body.grown .card .pad  { padding: 0; }
+
+/* 羊皮纸重点卡。全站只有两种内容用它：此刻正在发生的事。
+   一多就失去意义，别给普通卡片也刷。 */
+body.grown .card--parch {
+  background: linear-gradient(180deg, var(--parch-a), var(--parch-b));
+  border: 2.5px solid var(--parch-line); border-radius: var(--r-2xl);
+  padding: 14px; box-shadow: var(--sh-parch);
+}
+body.grown .parch-line {
+  border-top: 1px solid rgba(217,169,63,.45);
+  margin-top: 12px; padding-top: 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* 卡内分组标题行 */
+body.grown .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .sec-title { font-size: calc(14 * var(--u)); font-weight: 700; color: var(--ink-title);
+  display: flex; align-items: center; gap: 7px; }
+body.grown .sec-link { font-size: calc(11 * var(--u)); font-weight: 700; color: var(--orange-deep); cursor: pointer; white-space: nowrap; }
+body.grown .sec-count { font-size: calc(11 * var(--u)); color: var(--ink-3); }
+body.grown .stack { display: flex; flex-direction: column; gap: 10px; }
+body.grown .stack--sm { gap: 8px; }
+body.grown .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+body.grown .kv { display: flex; align-items: center; gap: 6px; }
+
+/* ------------------------------------------------------------------ 分段器 */
+body.grown .seg {
+  display: flex; gap: 4px; padding: 4px; height: 40px; flex: none;
+  background: var(--seg-bg); border: 1px solid var(--card-line); border-radius: var(--r-md);
+  justify-content: flex-start;
+}
+body.grown .seg-item {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-xs); border: 0; background: transparent; cursor: pointer;
+  font-family: inherit; font-size: calc(12 * var(--u)); font-weight: 500; color: var(--ink-3);
+}
+body.grown .seg-item.on { background: #fff; color: var(--ink-title); font-weight: 700; box-shadow: var(--sh-tab); }
+
+/* 打分页页头的孩子切换（小胶囊）。宝箱页用全宽 .seg，别混。 */
+body.grown .kid-switch {
+  display: inline-flex; gap: 3px; padding: 3px; flex: none;
+  background: var(--seg-bg); border: 1px solid var(--card-line); border-radius: var(--r-pill);
+}
+body.grown .kid-switch button {
+  border: 0; background: transparent; cursor: pointer; font-family: inherit;
+  font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-3);
+  padding: 6px 14px; border-radius: var(--r-pill);
+}
+body.grown .kid-switch button.on {
+  background: linear-gradient(180deg, var(--grad-tab-a), var(--grad-tab-b));
+  color: #fff; font-weight: 700; box-shadow: var(--sh-tab);
+}
+
+/* ------------------------------------------------------------------ 按钮 */
+body.grown .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; padding: 0 16px; cursor: pointer; font-family: inherit;
+  font-size: calc(12 * var(--u)); font-weight: 700; border-radius: var(--r-pill);
+  background: #fff; color: var(--ink-2); border: 1.5px solid var(--card-line);
+}
+body.grown .btn--primary,
+body.grown .btn.on {
+  background: linear-gradient(90deg, var(--orange), var(--orange-deep));
+  color: #fff; border-color: rgba(255,255,255,.45); box-shadow: var(--sh-btn);
+}
+body.grown .btn--ghost,
+body.grown .btn.line,
+body.grown .btn.ghost { background: rgba(255,255,255,.9); color: var(--ink-2); }
+body.grown .btn--warn { background: #fff; color: var(--warn); border-color: #F3C4BB; }
+body.grown .btn--block,
+body.grown .btn.wide { width: 100%; height: 50px; font-size: calc(15 * var(--u)); border-radius: var(--r-lg); }
+body.grown .btn--sm, body.grown .btn.sm { height: 30px; padding: 0 13px; font-size: calc(11 * var(--u)); border-radius: var(--r-pill); }
+body.grown .btn:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }
+body.grown .btn--quiet { background: rgba(255,255,255,.7); border-color: var(--card-line); color: var(--ink-2); height: 46px; }
+body.grown .act-row { display: flex; gap: 8px; flex: none; }
+
+/* ------------------------------------------------------------------ 胶囊 */
+body.grown .pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: calc(11 * var(--u)); font-weight: 500; padding: 5px 10px; border-radius: var(--r-pill);
+  background: rgba(255,255,255,.9); color: var(--ink-2); border: 1px solid var(--card-line);
+  white-space: nowrap;
+}
+body.grown .pill--orange { background: var(--orange-deep); color: #fff; border-color: transparent; font-weight: 700; }
+body.grown .pill--gold   { background: var(--gold); color: #6B4200; border-color: transparent; font-weight: 700; }
+body.grown .pill--pink   { background: var(--pink-pale); color: var(--pink-dark); border-color: transparent; }
+body.grown .pill--purple { background: var(--purple-pale); color: var(--purple-deep); border-color: transparent; font-weight: 700; }
+body.grown .pill--gray   { background: #F2EDE5; color: var(--ink-3); border-color: transparent; }
+body.grown .pill--tag    { background: rgba(255,138,61,.14); color: var(--orange-deep); border-color: transparent; }
+body.grown .pill--on-parch { background: rgba(255,255,255,.7); border-color: rgba(217,169,63,.6); color: var(--ink-2); }
+/* 打分页那四个状态标签。四个颜色对应四件事：灰=还没轮到、琥珀=还能补、
+   蓝=能改、红=锁死。颜色只做区分，判断靠旁边那句话。 */
+body.grown .pill--warn { background: #FBE3E1; color: #A03224; border-color: transparent; font-weight: 700; }
+body.grown .pill--blue { background: #E4EEF9; color: #2A5C93; border-color: transparent; font-weight: 700; }
+body.grown .sband {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: calc(11.5 * var(--u)); line-height: 1.55; border-radius: var(--r-xs); padding: 10px 12px;
+  background: #F2EDE5; color: var(--ink-2);
+}
+body.grown .sband.is-warn { background: var(--warn-soft); color: #A2601F; }
+body.grown .sband.is-bad  { background: #FBE3E1; color: #A03224; }
+body.grown .sband.is-info { background: #E4EEF9; color: #2A5C93; }
+
+/* style.css 那套 .tag 是深绿底，收编成暖色 */
+body.grown .tag {
+  display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: calc(11 * var(--u));
+  background: var(--brand-soft); color: var(--orange-deep); font-weight: 650;
+}
+body.grown .tag.gold { background: var(--gold-soft); color: var(--gold-deep); }
+body.grown .tag.ok   { background: var(--ok-soft); color: #2F8A5F; }
+body.grown .tag.warn { background: var(--warn-soft); color: var(--warn); }
+body.grown .tag.blue { background: var(--purple-pale); color: var(--purple-deep); }
+
+/* ------------------------------------------------------------------ 进度 */
+body.grown .bar { height: 8px; border-radius: var(--r-pill); background: var(--track); overflow: hidden; }
+body.grown .bar > i { display: block; height: 100%; border-radius: var(--r-pill); background: var(--gold); }
+body.grown .bar--orange > i,
+body.grown .bar > i.orange { background: linear-gradient(90deg, var(--orange), var(--orange-deep)); }
+body.grown .bar > i.gold { background: linear-gradient(90deg, var(--gold) 0%, #F0B31F 100%); }
+body.grown .bar--thin { height: 6px; }
+
+/* 七格宝箱进度：当前在攒的那一格画半格。
+   底轨与填充必须同色相，只许差明度 / 饱和度，否则看着像卡上的色斑。 */
+body.grown .slots { display: flex; gap: 4px; }
+body.grown .slots > i { flex: 1; height: 8px; border-radius: var(--r-pill); background: var(--track); }
+body.grown .slots > i.is-full { background: var(--gold); }
+body.grown .slots > i.is-half { background: linear-gradient(90deg, var(--gold) 0 50%, var(--track) 50% 100%); }
+
+/* ------------------------------------------------------------------ 筛选筹码 */
+body.grown .chip-row { display: flex; align-items: center; gap: 8px; }
+body.grown .dim-label { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); flex: none; width: 20px; }
+body.grown .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+body.grown .chip {
+  font-family: inherit; font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2);
+  background: rgba(255,255,255,.9); border: 1px solid var(--card-line);
+  border-radius: var(--r-xs); padding: 5px 10px; cursor: pointer; white-space: nowrap;
+}
+body.grown .chip.on {
+  background: var(--orange-deep); color: #fff; border-color: transparent;
+  box-shadow: var(--sh-tab); font-weight: 700;
+}
+/* 「自定义」是唯一会弹出日期选择器的入口，虚线区分开 */
+body.grown .chip--dashed { border: 1.5px dashed var(--orange-deep); color: var(--orange-deep); background: #fff; }
+
+/* ------------------------------------------------------------------ 列表行 */
+body.grown .row {
+  display: flex; align-items: center; gap: 11px; min-height: 50px; padding: 0 10px;
+  border-radius: var(--r-sm); cursor: pointer; margin: 0;
+}
+body.grown .row + .row { border-top: 1px solid var(--divider); margin-top: 0; }
+body.grown .row .ico { width: calc(20 * var(--u)); height: calc(20 * var(--u)); color: var(--orange-deep); flex: none; }
+body.grown .row .row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+body.grown .row .row-title { font-size: calc(13 * var(--u)); font-weight: 600; color: var(--ink-title); }
+body.grown .row .row-sub { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
+body.grown .row .chev { font-size: calc(17 * var(--u)); color: var(--ink-line); flex: none; }
+body.grown .row:hover { background: #FDF6EA; }
+body.grown .chev { font-size: calc(17 * var(--u)); line-height: 1; color: var(--ink-line); flex: none; }
+
+/* ------------------------------------------------------------------ 头像 */
+body.grown .avatar { width: 44px; height: 44px; flex: none; border-radius: var(--r-pill); overflow: hidden; }
+body.grown .avatar--lg { width: 62px; height: 62px; }
+body.grown .avatar svg, body.grown .avatar img { width: 100%; height: 100%; display: block; }
+body.grown .avatar--a { background: #FFE0B8; }
+body.grown .avatar--b { background: var(--pink-pale); }
+body.grown .avatar--parent { background: #FFD9A8; box-shadow: inset 0 0 0 6px rgba(232,114,42,.12); }
+
+/* ------------------------------------------------------------------ 输入 */
+body.grown .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 0; }
+body.grown .field-label,
+body.grown .field label { font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2); margin-bottom: 0; display: block; }
+body.grown .field-box {
+  min-height: 42px; display: flex; align-items: center; padding: 10px 12px;
+  background: var(--field); border: 1px solid var(--card-line);
+  border-radius: var(--r-xs); font-size: calc(13 * var(--u)); color: var(--ink);
+}
+body.grown .field-box.is-empty { color: var(--ink-3); }
+body.grown .field input, body.grown .field select, body.grown .field textarea {
+  background: var(--field); border: 1px solid var(--card-line); border-radius: var(--r-xs);
+  padding: 10px 12px; color: var(--ink); width: 100%;
+}
+body.grown .field input:focus, body.grown .field select:focus, body.grown .field textarea:focus {
+  outline: 2px solid rgba(255,138,61,.35); outline-offset: 1px; border-color: var(--orange);
+}
+body.grown .field textarea { min-height: 68px; resize: vertical; }
+
+/* ------------------------------------------------------------------ 月历 */
+body.grown .cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .cal-nav { display: flex; align-items: center; gap: 10px; }
+body.grown .cal-nav .month { font-size: calc(15 * var(--u)); font-weight: 700; color: var(--ink-title); font-family: var(--font-num); }
+body.grown .cal-nav button {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border-radius: 9px; border: 1px solid var(--card-line); background: #fff;
+  cursor: pointer; color: var(--ink-2);
+}
+body.grown .cal-nav button:disabled { opacity: .38; cursor: not-allowed; }
+body.grown .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+body.grown .cal-wd { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); text-align: center; padding-bottom: 2px; }
+body.grown .cal-cell {
+  position: relative; aspect-ratio: 1 / 1; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); font-size: calc(12 * var(--u)); font-weight: 600; color: var(--ink);
+  border: 1.5px solid transparent; background: transparent; cursor: pointer; padding: 0;
+}
+body.grown .cal-cell.is-full   { background: var(--gold); color: var(--ink-title); }
+body.grown .cal-cell.is-part   { background: var(--partial); color: var(--ink-title); }
+body.grown .cal-cell.is-zero   { background: var(--warn); color: #fff; }
+body.grown .cal-cell.is-none   { border: 1.5px dashed var(--dash); color: var(--ink-3); }
+body.grown .cal-cell.is-future { background: var(--future); color: var(--ink-line); cursor: default; }
+body.grown .cal-cell.is-trans  { box-shadow: inset 0 0 0 2px rgba(255,255,255,.9); }
+body.grown .cal-cell.is-today::after {
+  content: ""; position: absolute; bottom: 3px; left: 50%; margin-left: -2px;
+  width: 4px; height: 4px; border-radius: 50%; background: var(--orange-deep);
+}
+body.grown .cal-blank { aspect-ratio: 1 / 1; }
+body.grown .cal-legend { display: flex; flex-wrap: wrap; gap: 10px; }
+body.grown .cal-legend span { display: flex; align-items: center; gap: 4px; font-size: calc(9 * var(--u-sm)); color: var(--ink-2); }
+body.grown .cal-legend b { width: 10px; height: 10px; border-radius: 3px; display: block; }
+
+/* ------------------------------------------------------------------ 日志条目 */
+body.grown .log-group { display: flex; flex-direction: column; gap: 8px; }
+body.grown .log-head { display: flex; align-items: center; gap: 7px; font-size: calc(12 * var(--u)); font-weight: 700; color: var(--ink); }
+body.grown .log-head .ico { width: calc(20 * var(--u)); height: calc(20 * var(--u)); }
+body.grown .log-head .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--orange); }
+body.grown .log-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  background: rgba(255,255,255,.92); border: 1px solid #F2E3CC;
+  border-radius: var(--r-md); box-shadow: var(--sh-card);
+}
+body.grown .log-item .ico { width: calc(20 * var(--u)); height: calc(20 * var(--u)); flex: none; color: var(--orange-deep); }
+body.grown .log-item .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+body.grown .log-item .txt { font-size: calc(12 * var(--u)); color: var(--ink); line-height: 1.45; }
+body.grown .log-item .meta { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+body.grown .log-item .time { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); flex: none; font-family: var(--font-num); }
+body.grown .log-item.tall { align-items: flex-start; }
+body.grown .log-item.is-neg .txt { color: var(--warn); }
+body.grown .log-item.is-neg .ico { color: var(--warn); }
+
+/* ------------------------------------------------------------------ 数字块 */
+body.grown .kpi-row { display: flex; gap: 10px; }
+body.grown .kpi { flex: 1; min-width: 0; }
+body.grown .kpi .k { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); display: block; margin-bottom: 2px; }
+body.grown .kpi .v { font-family: var(--font-num); font-size: calc(15 * var(--u)); font-weight: 800; color: var(--ink); }
+body.grown .hero-num { display: flex; align-items: baseline; gap: 4px; }
+body.grown .hero-num .u { font-size: calc(12 * var(--u)); color: var(--ink-2); font-weight: 500; }
+
+/* ------------------------------------------------------------------ 提示 / 脚注 */
+body.grown .tip {
+  font-size: calc(10 * var(--u-sm)); line-height: 1.55; color: var(--ink-2);
+  background: rgba(255,138,61,.10); border-radius: var(--r-xs); padding: 8px 10px;
+}
+body.grown .footnote {
+  font-size: calc(9 * var(--u-sm)); line-height: 1.5; color: var(--ink-3);
+  display: flex; align-items: center; justify-content: center; gap: 5px; text-align: center;
+}
+body.grown .footnote--left { text-align: left; justify-content: flex-start; }
+
+/* ------------------------------------------------------------------ 图标 */
+body.grown .ico { display: block; flex: none; }
+body.grown .ico--20 { width: calc(20 * var(--u)); height: calc(20 * var(--u)); }
+body.grown .ico--22 { width: calc(22 * var(--u)); height: calc(22 * var(--u)); }
+body.grown .ico--26 { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+
+/* 七维打分行 */
+body.grown .dim-row { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+body.grown .dim-row + .dim-row { border-top: 1px solid var(--divider); }
+body.grown .dim-row .dtxt { flex: 1; min-width: 0; }
+body.grown .dim-row .dname { font-size: calc(13 * var(--u)); font-weight: 600; color: var(--ink-title); }
+body.grown .dim-row .dm { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.grown .dim-row .dval { font-family: var(--font-num); font-weight: 800; font-size: calc(15 * var(--u)); color: var(--orange-deep); flex: none; }
+body.grown .dim-row.is-off { opacity: .5; }
+body.grown .dim-row.is-off .dname { text-decoration: line-through; }
+/* 锁死的那一天：光标不是手型，点了也不动。给手型却不给反应，等于骗了一下。 */
+body.grown .dim-row.is-locked { cursor: default; }
+/* 勾：做到是实心圆圈勾，没做到是空描边 */
+body.grown .dim-check {
+  width: 24px; height: 24px; flex: none; border-radius: 50%;
+  border: 2px solid var(--card-line); background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  color: transparent;
+}
+body.grown .dim-check .ico { width: calc(14 * var(--u)); height: calc(14 * var(--u)); }
+body.grown .dim-row:not(.is-off) .dim-check {
+  background: var(--orange); border-color: var(--orange); color: #fff;
+}
+
+/* ------------------------------------------------------------------ 七天日期条 */
+body.grown .daystrip { display: flex; gap: 6px; }
+body.grown .daycell {
+  flex: 1; min-width: 0; text-align: center; padding: 6px 0;
+  border-radius: var(--r-xs); border: 1px solid transparent; background: transparent;
+  font-family: inherit; cursor: pointer;
+}
+body.grown .daycell .dw { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+body.grown .daycell .dd { font-family: var(--font-num); font-size: calc(15 * var(--u)); font-weight: 800; color: var(--ink); }
+body.grown .daycell.on { background: var(--orange-deep); box-shadow: var(--sh-tab); }
+body.grown .daycell.on .dw, body.grown .daycell.on .dd { color: #fff; }
+
+/* ------------------------------------------------------------------ 表格（七档阶梯） */
+body.grown .tbl-head {
+  display: flex; gap: 8px; padding: 10px 12px; background: #FBF6EE;
+  border-bottom: 1px solid var(--divider);
+}
+body.grown .tbl-row {
+  display: flex; gap: 8px; padding: 10px 12px; align-items: center;
+}
+body.grown .tbl-row + .tbl-row { border-top: 1px solid var(--divider); }
+body.grown .tbl-row.is-cur { background: rgba(255,201,60,.16); }
+body.grown .c-name { width: 74px; flex: none; }
+body.grown .c-a { flex: 1; }
+body.grown .c-b { flex: 1.2; }
+body.grown .c-name b { font-size: calc(12 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .c-name span { display: block; font-family: var(--font-num); font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+
+/* ------------------------------------------------------------------ 商品卡 */
+body.grown .goods {
+  display: flex; align-items: center; gap: 12px;
+  background: #fff; border: 2px solid var(--card-line); border-radius: var(--r-lg);
+  padding: 12px; box-shadow: var(--sh-card);
+}
+body.grown .goods .goods-ic {
+  width: 44px; height: 44px; flex: none; border-radius: var(--r-sm);
+  background: var(--brand-soft); display: flex; align-items: center; justify-content: center;
+  color: var(--orange-deep);
+}
+body.grown .goods .goods-ic .ico { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+body.grown .goods .goods-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+body.grown .goods .goods-name { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .goods .goods-desc { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); line-height: 1.45; }
+body.grown .goods .goods-price { flex: none; text-align: right; }
+body.grown .goods .goods-price .p { font-family: var(--font-num); font-size: calc(17 * var(--u)); font-weight: 800; color: var(--gold-deep); }
+body.grown .goods .goods-price .c { display: block; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+
+/* ------------------------------------------------------------------ 空态 / 提示 */
+body.grown .empty { color: var(--ink-3); text-align: center; padding: 22px 12px; font-size: calc(12 * var(--u)); }
+body.grown .muted { color: var(--ink-3); font-size: calc(11.5 * var(--u)); }
+body.grown .dim-t { color: var(--ink-2); font-size: calc(12 * var(--u)); }
+body.grown .hr { height: 1px; background: var(--divider); margin: 10px 0; }
+body.grown .notice {
+  font-size: calc(11 * var(--u)); line-height: 1.5; border-radius: var(--r-xs); padding: 9px 11px;
+  background: var(--warn-soft); color: #A2601F;
+}
+body.grown .notice.info { background: rgba(255,138,61,.12); color: var(--orange-deep); }
+body.grown .no-t { color: var(--warn); }
+body.grown .ok-t { color: #2F8A5F; }
+
+/* ------------------------------------------------------------------ 兼容旧类名 */
+/* 弹层里还有一批沿用旧标记的列表与格子（.item / .qa-cell / .metric 这些），
+   它们在光换皮的时候最容易漏 —— 漏掉就是浅底上的深绿字，等于隐形。 */
+body.grown .item {
+  display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+  background: rgba(255,255,255,.92); border: 1px solid #F2E3CC;
+  border-radius: var(--r-md); box-shadow: var(--sh-card);
+}
+body.grown .item + .item { margin-top: 8px; }
+body.grown .item .txt { flex: 1; min-width: 0; }
+body.grown .item .nm { font-size: calc(13 * var(--u)); font-weight: 600; color: var(--ink-title); line-height: 1.4; }
+body.grown .item .ds { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-2); margin-top: 2px; line-height: 1.45; }
+body.grown .item .rt { flex: none; }
+body.grown .item .btn { flex: none; }
+body.grown .fwho {
+  display: inline-block; margin-right: 5px; padding: 1px 7px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--orange-deep);
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700; vertical-align: 1px;
+}
+body.grown .metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+body.grown .metric {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 11px 12px; text-align: left;
+  background: rgba(255,255,255,.92); border: 2px solid var(--card-line);
+  border-radius: var(--r-lg); box-shadow: var(--sh-card);
+  font-size: calc(11 * var(--u)); color: var(--ink-2); cursor: default;
+}
+body.grown .metric strong { font-family: var(--font-num); font-size: calc(18 * var(--u)); font-weight: 800; color: var(--orange-deep); }
+body.grown .metric.alert { cursor: pointer; }
+body.grown .qa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+body.grown .qa-cell {
+  display: flex; align-items: center; gap: 10px; text-align: left; padding: 12px;
+  background: #fff; border: 2px solid var(--card-line); border-radius: var(--r-lg);
+  box-shadow: var(--sh-card); cursor: pointer;
+}
+body.grown .qa-cell .qi {
+  width: 32px; height: 32px; flex: none; border-radius: var(--r-xs);
+  background: var(--brand-soft); color: var(--orange-deep);
+  display: grid; place-items: center; font-size: calc(15 * var(--u));
+}
+body.grown .qa-cell .qt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+body.grown .qa-cell .qt b { font-size: calc(12 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .qa-cell .qt span { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
+
+/* 孩子速览那种卡（旧 .kcard / .kstats 结构） */
+body.grown .kcard {
+  background: #fff; border: 2px solid var(--card-line); border-radius: var(--r-xl);
+  padding: 12px; box-shadow: var(--sh-card); cursor: pointer; margin-bottom: 10px;
+}
+body.grown .khead { display: flex; align-items: center; gap: 10px; }
+body.grown .kav { width: 36px; height: 36px; border-radius: 50%; overflow: hidden; flex: none; }
+body.grown .kav svg, body.grown .kav img { width: 100%; height: 100%; display: block; }
+body.grown .kid-id { flex: 1; min-width: 0; }
+body.grown .kid-id .nm { font-size: calc(15 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .kstats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
+body.grown .kstats > div {
+  flex: 1; min-width: 62px; background: #FBF6EE; border-radius: var(--r-xs); padding: 6px 8px;
+}
+body.grown .kstats span { display: block; font-size: calc(9 * var(--u-sm)); color: var(--ink-3); }
+body.grown .kstats strong { font-family: var(--font-num); font-size: calc(13 * var(--u)); font-weight: 800; color: var(--ink); }
+body.grown .lv-chip {
+  display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: calc(10 * var(--u-sm));
+  background: var(--gold-soft); color: var(--gold-deep); font-weight: 700;
+}
+body.grown .steps { display: flex; gap: 10px; margin-top: 7px; }
+body.grown .stp { display: flex; align-items: center; gap: 5px; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+body.grown .stp b { width: 7px; height: 7px; border-radius: 50%; background: var(--track); display: block; }
+body.grown .stp.on { color: var(--orange-deep); font-weight: 700; }
+body.grown .stp.on b { background: var(--orange); }
+body.grown .boxtrack { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; }
+body.grown .boxtrack > div {
+  flex: 1; min-width: 56px; text-align: center; padding: 7px 4px;
+  background: #FBF6EE; border: 1.5px solid transparent; border-radius: var(--r-xs);
+}
+body.grown .boxtrack > div.got { background: var(--gold-soft); }
+body.grown .boxtrack > div.on { border-color: var(--orange); background: var(--brand-soft); }
+body.grown .boxtrack b { display: block; font-size: calc(11 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .boxtrack .bt-s { display: block; font-family: var(--font-num); font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
+body.grown .boxtrack .bt-c { display: block; font-size: calc(9 * var(--u-sm)); color: var(--ink-2); }
+body.grown .ladder { display: flex; gap: 5px; overflow-x: auto; }
+body.grown .ladder > div {
+  flex: 1; min-width: 46px; text-align: center; padding: 6px 3px; border-radius: var(--r-xs);
+  background: #FBF6EE; font-family: var(--font-num); font-size: calc(11 * var(--u)); color: var(--ink-2);
+}
+body.grown .ladder > div.on { background: var(--brand-soft); color: var(--orange-deep); font-weight: 700; }
+
+/* 券卡（正在玩）在弹层里也用到 */
+body.grown .tk-big { font-family: var(--font-num); font-size: calc(22 * var(--u)); font-weight: 800; color: var(--orange-deep); }
+body.grown .tk-no { color: var(--warn); }
+
+/* ------------------------------------------------------------------ 登录页 */
+body.grown .login-wrap { padding: 26px 4px; }
+body.grown .login-brand {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  font-size: calc(19 * var(--u)); font-weight: 700; color: var(--ink-title); margin-bottom: 8px;
+}
+body.grown .login-brand .mark {
+  width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--orange), var(--orange-deep));
+  color: #fff; font-size: calc(16 * var(--u));
+}
+body.grown .login-wrap p { text-align: center; color: var(--ink-2); font-size: calc(12 * var(--u)); margin: 0 0 16px; }
+body.grown .login-form {
+  background: #fff; border: 2px solid var(--card-line); border-radius: var(--r-2xl);
+  padding: 16px; box-shadow: var(--sh-card-lg); display: flex; flex-direction: column; gap: 12px;
+}
+body.grown .login-form .field { margin: 0; }
+body.grown .login-note { margin-top: 14px; font-size: calc(11 * var(--u)); color: var(--ink-3); line-height: 1.6; }
+
+/* ------------------------------------------------------------------ 弹层 */
+/* #sheet / #toast 两个端共用（孩子端在 child.css 里另有一套），这里只盖家长端。 */
+body.grown .sheet { background: rgba(74,54,39,.42); }
+body.grown .sheet-body {
+  background: #FFFBF3; border: 2px solid var(--card-line); border-radius: var(--r-2xl);
+  box-shadow: var(--sh-card-lg); color: var(--ink);
+}
+body.grown .sheet h3 { color: var(--ink-title); font-size: calc(16 * var(--u)); font-weight: 700; }
+body.grown .sheet p { color: var(--ink-2); font-size: calc(12 * var(--u)); }
+body.grown .toast {
+  background: #4A3627; color: #FFF7EC; border-radius: var(--r-pill);
+  font-size: calc(12 * var(--u)); box-shadow: var(--sh-card-lg);
+}
+
+/* 图标选择器与头像选择器（设置里的两个弹层） */
+body.grown .ip-chips .chip { flex: none; }
+body.grown .ip-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+body.grown .ip-cell {
+  aspect-ratio: 1 / 1; border-radius: var(--r-xs); border: 1.5px solid var(--card-line);
+  background: #fff; display: grid; place-items: center; cursor: pointer; padding: 4px;
+}
+body.grown .ip-cell.on { border-color: var(--orange); box-shadow: var(--sh-tab); }
+body.grown .ip-cell .ico { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+body.grown .ar-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+body.grown .ar-pick {
+  aspect-ratio: 1 / 1; border-radius: var(--r-xs); border: 1.5px solid var(--card-line);
+  background: #fff; display: grid; place-items: center; cursor: pointer; overflow: hidden;
+}
+body.grown .ar-pick.on { border-color: var(--orange); box-shadow: var(--sh-tab); }
+body.grown .ar-pick svg, body.grown .ar-pick img { width: 100%; height: 100%; }
+body.grown .any-row { display: flex; align-items: center; gap: 8px; }
+body.grown .any-need input { width: 56px; text-align: center; padding: 6px 4px; }
+body.grown .callout-line {
+  font-size: calc(11 * var(--u)); color: var(--ink-2); background: rgba(255,138,61,.10);
+  border-radius: var(--r-xs); padding: 8px 10px; margin-top: 10px;
+}
+body.grown .dr-sum { font-size: calc(13 * var(--u)); color: var(--ink-2); margin: 6px 0 10px; }
+body.grown .dr-sum b { font-family: var(--font-num); font-size: calc(20 * var(--u)); color: var(--orange-deep); }
+body.grown .dr-list { display: flex; flex-direction: column; gap: 6px; }
+body.grown .dr-row { display: flex; align-items: center; gap: 8px; font-size: calc(12 * var(--u)); }
+body.grown .dr-row .dr-ic { width: 22px; height: 22px; }
+body.grown .dr-row .dr-nm { flex: 1; min-width: 0; }
+body.grown .dr-row .dr-v { font-family: var(--font-num); font-weight: 800; }
+body.grown .dr-row .dr-v.yes { color: var(--ok); }
+body.grown .dr-row .dr-v.no { color: var(--warn); }
+
+/* ------------------------------------------------- 宽屏：外壳与版式 -------- */
+/* 家长在电脑上做三件事：审核、打分、翻记录。手机那套 480 的窄条搁在电脑上，
+   两边留白加起来比内容还宽。所以家长端值得真做一版宽屏。
+   600 起先回收留白（480 → 560，版式不动，给孩子端同款处理）；
+   900 起两件事一起做：外壳放到 min(1200px, 92vw)，#view 换 auto-fit 网格。
+   底栏单独限宽（--bar-w 封顶 640）：内容能铺到 1200，底栏还是那颗药丸，
+   五格各 120 上下，不然它会跟着拉成一条 1200 长的带子，格子大得没边。 */
+@media (min-width: 600px) {
+  body.grown { --shell-w: 560px; }
+}
+
+/* 放开高度锁 */
+/* 手机竖屏锁 height:100dvh（第 22 行）是对的：内容超了由 #view 自己滚。
+   电脑上这么锁，页面整体就没有滚动条了 —— 能滚的只有中间那条 --shell-w 宽的窄条，
+   鼠标停在两侧留白上滚，画面纹丝不动，看着像卡死（P0-2）。
+   ≥900 去掉 height、只留 min-height：高度由内容撑开，滚动交还浏览器那一根。
+   内容不比一屏高时 min-height 撑满，渐变背景不会在半腰断开；
+   #view 那层内部滚动留着，手机上没变化。 */
+@media (min-width: 900px) {
+  body.grown { --shell-w: min(1200px, 92vw); --bar-w: min(640px, 100%); }
+  body.grown #app { height: auto; }
+  /* 同理，#view 那层内部滚动在内容能撑高整页之后就没有存在理由了。
+     它没有 contain，但留着一个吃滚轮的空壳没好处，一起放掉，让整机只认一根滚动条。 */
+  body.grown #view { overflow-y: visible; }
+  /* 卡片自然成列。340 是「一张卡还能读」的窄边（390 画布减两侧内边距再留一点）。
+     页头 / 分段控件 / 横幅 / 脚注 / 整条按钮横跨整行 —— 不跨的话标题会被切进
+     某一列里，跟旁边的卡片并排，读起来像两张卡。 */
+  body.grown #view {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    align-content: start; gap: calc(var(--gap-card) * 1.15);
+  }
+  body.grown #view > .page-head,
+  body.grown #view > .card--parch,
+  body.grown #view > .seg,
+  body.grown #view > .sband,
+  body.grown #view > .footnote,
+  body.grown #view > .btn--block { grid-column: 1 / -1; }
+}
+
+/* ------------------------------------------------- 横屏：把底栏压实 ------- */
+/* 上面那条管的是「宽」，这条管的是「矮」（横屏手机 360~430 高）。
+   孩子端从第一天就有一条 max-height:560 的补救，家长端一直没有，
+   结果横屏下底栏 86px（药丸 62 + 上下各 12）在 390 高的屏上占 22%，
+   内容只剩 300 出头，是全站最挤的一处。
+   收三样：外层上下留白 12→8、药丸 62→48、图标 22→19，底栏落到 64px（占 16%）。
+   --h-tabbar 必须同步改成 64：它是 #view 底部空档的唯一来源（第 34 行
+   calc(var(--h-tabbar) + 16px)），不同步内容尾巴会被压在药丸底下，
+   横屏下还滚不到底。格内是竖向排列（图标在上、字在下），48 够放 19+2+13。 */
+@media (max-height: 560px) {
+  body.grown { --h-tabbar: calc(64 * var(--u)); }
+  body.grown #tabs { padding: calc(8 * var(--u)) calc(12 * var(--u)) calc(8 * var(--u) + env(safe-area-inset-bottom, 0px)); }
+  body.grown .nav-pill { height: calc(48 * var(--u)); padding: calc(4 * var(--u)); }
+  body.grown .nav-item { gap: calc(2 * var(--u)); }
+  body.grown .nav-item .ico { width: calc(19 * var(--u)); height: calc(19 * var(--u)); }
+}

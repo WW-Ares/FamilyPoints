@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#157a67">
+<title>家庭积分</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#11088;</text></svg>">
+<link rel="stylesheet" href="style.css">
+<!-- v36 登录页「糖果冒险」：两态选头像 + 输密码，加家长端一屏。
+     类名全挂在 body.lg 下，登录态一挂上 kid / grown 就完全不生效。 -->
+<link rel="stylesheet" href="login.css">
+<!-- 孩子端「糖果冒险」那套：变量 + 组件。选择器全挂在 body.kid 下，
+     所以家长端是完全不生效的（同一个 index.html，两边共用）。 -->
+<link rel="stylesheet" href="child-tokens.css">
+<link rel="stylesheet" href="child.css">
+<!-- 家长端「糖果冒险 · 角色换位」那套：跟孩子端同一套色板，靠角色语汇区分。
+     选择器全挂在 body.grown 下，孩子端不生效。 -->
+<link rel="stylesheet" href="parent-tokens.css">
+<link rel="stylesheet" href="parent.css">
+</head>
+<body>
+<!-- 家长端的背景装饰层（云 / 太阳 / 星芒 + 顶部暖光）。放在 #app 外面：
+     挂在里面的话，#app 这个定位元素有自己的层叠上下文，装饰层会压到内容上面。
+     孩子端不挂这两个 div，所以那边一点不受影响。 -->
+<div class="g-deco"></div>
+<div class="g-glow"></div>
+<div id="app">
+  <header id="topbar">
+    <div class="brand"><span class="mark">★</span><span>家庭积分</span></div>
+    <select id="kidSel" class="child-select" style="display:none"></select>
+    <button id="who" class="who" type="button"></button>
+    <div id="balance" class="balance"></div>
+  </header>
+  <main id="view"></main>
+  <nav id="tabs"></nav>
+</div>
+<div id="sheet" class="sheet"><div class="sheet-body" id="sheetBody"></div></div>
+<div id="toast" class="toast"></div>
+<script src="icons.js"></script>
+<script src="avatars.js"></script>
+<script src="candy-icons.js"></script>
+<script src="parent-icons.js"></script>
+<script src="app.js"></script>
+<script src="child.js"></script>
+<script>
+/* 启动探测。app.js 只要没跑起来（加载失败、语法错、启动时抛异常），
+   页面就是一片白，看不出任何原因。这里把白屏换成一句能看懂的话。
+   正常启动时 boot() 会设 __APP_BOOTED__，这段什么都不做。 */
+setTimeout(function () {
+  if (window.__APP_BOOTED__) return;
+  var v = document.getElementById('view');
+  if (v && v.innerText.replace(/\s/g, '').length < 10) {
+    v.innerHTML = '<div class="empty">界面没能启动。<br><br>' +
+      '脚本没加载成功，或者启动时就报错了。<br>' +
+      '电脑上按 F12 看 Console 里的红字，手机上把这条截图发出来。</div>';
+  }
+}, 2500);
+</script>
+</body>
+</html>

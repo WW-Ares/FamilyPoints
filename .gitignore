@@ -1,0 +1,31 @@
+# 运行数据与家庭真实数据（永不入库）
+app/data/
+nas原数据/
+nas数据测试/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# 构建与临时产物
+__pycache__/
+*.py[cod]
+*.pyo
+.tmp/
+app/.tmp/
+app/dist/
+dist/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 工作区过程文件（记忆、日志、发布 skill，本机专用，不进公开仓库）
+.workbuddy/
+
+# 归档：v1.2 之前的规则、脚本、设计稿、旧数据，一律不进仓库
+旧版历史备份/

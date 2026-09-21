@@ -1,0 +1,14 @@
+data/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.tmp/
+tools/
+dist/
+*.db
+*.db-wal
+*.db-shm
+snapshots/
+.DS_Store

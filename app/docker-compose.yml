@@ -1,0 +1,18 @@
+services:
+  family-points:
+    build: .
+    image: family-points:latest
+    container_name: family-points
+    restart: unless-stopped
+    ports:
+      # 左边改成 NAS 上没被占用的端口。容器里那 3637 别动，
+      # 改了就要同步 Dockerfile 里的 FAMILY_PORT 和 EXPOSE
+      - "3637:3637"
+    volumes:
+      # 数据库和每日快照都落在这里。换机器时把整个目录拷走就行
+      - ./data:/data
+    environment:
+      TZ: Asia/Shanghai
+      FAMILY_DATA_DIR: /data
+      FAMILY_PORT: "3637"
+      FAMILY_QUIET: "1"

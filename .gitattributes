@@ -1,0 +1,11 @@
+# 仓库内统一 LF：部署到 NAS 的打包脚本也要求 LF，避免两份换行打架
+* text=auto eol=lf
+
+*.db binary
+*.db-wal binary
+*.db-shm binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.gz binary

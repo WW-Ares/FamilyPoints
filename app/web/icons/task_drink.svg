@@ -1,0 +1,2 @@
+<!-- 家庭积分 · 图标。由 tools/build_icons.py 生成，不要手改 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="44" fill="#8ec9e8"/><path d="M42 40h30v42a13 13 0 0 1-13 13H55a13 13 0 0 1-13-13z" fill="#ffffff"/><path d="M42 52h30" stroke="#8ec9e8" stroke-width="4"/><path d="M72 50h8a7 7 0 0 1 0 14h-8" fill="none" stroke="#ffffff" stroke-width="4.5"/></svg>

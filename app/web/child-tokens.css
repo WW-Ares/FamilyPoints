@@ -1,0 +1,122 @@
+/* =========================================================================
+   孩子端 · 设计变量（Design Tokens）·「糖果冒险」
+   冒险岛宝箱语汇 + 蛋仔圆润果冻质感。改主题只改这一处。
+
+   两条约束，别破坏：
+
+   1. 全部挂在 body.kid 下面，不用 :root。
+      style.css 已经占了 --ink / --card / --line / --blue / --gold 这几个名字，
+      同样也有 .card / .btn / .row / .bar 这些类。孩子端一套糖果色，
+      家长端一套深绿，两套必须能同时存在（同一个 index.html、同一份 app.js）。
+      挂在 body.kid 上之后，变量和样式都只往孩子端那棵子树里继承。
+
+   2. 不用纯黑、不用中性灰阶。文字一律深棕，阴影走暖棕，描边走暖黄。
+   ========================================================================= */
+body.kid {
+  /* ---------------- 背景（自上而下三段渐变） ---------------- */
+  --bg-top:  #FFD08A;
+  --bg-mid:  #FFE9C6;
+  --bg-btm:  #FFFBF3;
+
+  /* ---------------- 文字（深棕系） ---------------- */
+  --ink:       #4A3627;   /* 主文字：标题、数字、正文 */
+  --ink-2:     #8A7359;   /* 次文字：说明、标签 */
+  --ink-3:     #A08E7A;   /* 更次：脚注、占位 */
+  --ink-line:  #C9B8A2;   /* 图标描边、箭头、分隔符 */
+  --ink-title: #3A2A1C;   /* 头像五官等需要更沉的地方 */
+
+  /* ---------------- 品牌色 · 冒险橙（主色） ---------------- */
+  --orange:        #FF8A3D;
+  --orange-deep:   #E8722A;
+  --orange-light:  #FFC46B;
+
+  /* ---------------- 宝箱金 / 星尘 ---------------- */
+  --gold:        #FFC93C;
+  --gold-deep:   #B87A0C;
+  --gold-light:  #FFD76B;
+  --gold-pale:   #FFE9A8;
+  --stardust:    #FFB020;   /* 星尘数字专用 */
+
+  /* ---------------- 糖果粉（心愿） ---------------- */
+  --pink:        #FF9FCE;
+  --pink-deep:   #FF5E9E;
+  --pink-dark:   #C2185B;
+
+  /* ---------------- 天空蓝（任务） ---------------- */
+  --blue:        #5BA9FF;
+  --blue-deep:   #2F7FE8;
+
+  /* ---------------- 神秘紫（等级 / 正在玩） ---------------- */
+  --purple:      #8B6BFF;
+  --purple-deep: #5B3FD6;
+  --purple-dark: #4B2FB8;
+
+  /* ---------------- 七档宝箱材质色 ---------------- */
+  --wood:        #B8824A;  --wood-deep:  #6B4213;
+  --bronze:      #C4793C;  --bronze-deep:#8A3E0C;
+  --silver:      #C3CAD6;  --silver-deep:#76808F;
+
+  /* ---------------- 面 / 描边 ---------------- */
+  --card:      #FFFFFF;
+  --card-line: #FFF2DB;   /* 卡片浅描边（暖色，不要用灰） */
+  --line:      #F5EDE0;   /* 卡内分隔线 */
+  --warn-bg:   #FFF3E2;   /* 欠账 / 提示条底 */
+  --warn:      #A2601F;   /* 孩子端不用正红：欠账是提醒，不是责备 */
+  --blue-bg:   #E7F1FF;
+  --purple-bg: #EDE8FF;
+  --pink-bg:   #FFEAF4;
+  --ok:        #3E9E68;   /* 做到了 / 已完成，走草绿 */
+  --ok-bg:     #E9F7EF;
+
+  /* ---------------- 圆角 ---------------- */
+  --r-xs: calc(11 * var(--u));
+  --r-sm: calc(15 * var(--u));
+  --r-md: calc(20 * var(--u));
+  --r-lg: calc(24 * var(--u));
+  --r-xl: calc(26 * var(--u));
+  --r-pill: 999px;
+
+  /* ---------------- 投影（厚实偏移感，暖棕色） ---------------- */
+  --sh-card:     0 7px 16px -4px rgba(184,128,64,.13);
+  --sh-card-sm:  0 6px 14px -4px rgba(184,128,64,.11);
+  --sh-hero:     0 10px 22px -5px rgba(255,128,51,.36);
+  --sh-btn:      0 4px 10px -2px rgba(255,138,61,.42);
+  --sh-tab:      0 4px 10px -2px rgba(255,138,61,.42);
+
+  /* ---------------- 布局 ---------------- */
+  --pad: calc(16 * var(--u));    /* 内容区左右内边距 */
+  --gap-card: calc(15 * var(--u));    /* 卡片之间的默认间距 */
+  --h-tabbar: calc(74 * var(--u));
+
+  /* 外壳宽度。全站只认 style.css :root 里那套名字，这里是孩子端的一份覆盖：
+     宽屏段落（≥600 / ≥900）只改 --shell-w 一处，底栏、装饰层、弹层跟着一起走。
+     别在别的地方再写死 px。 */
+  --shell-w: 480px;
+  --bar-w:   var(--shell-w);   /* 底栏跟外壳同宽（必须跟 --shell-w 同一条规则里写，
+                                  写去 :root 会被那里的 560 定死，宽屏段落改不动它） */
+  --sheet-w: 480px;       /* 弹层比家长端窄一档 */
+
+  /* ---------------- 字体 ---------------- */
+  --font-cn:  "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-num: "Inter", "Noto Sans SC", sans-serif;
+
+  /* ---------------- 外壳 ---------------- */
+  /* 晨光渐变铺满视口。不做 390×844 的手机框：这是内网端口访问的网页，
+     真机上占满一屏，宽屏居中留白 —— 拿手机框套网页，宽屏会看见一个
+     浮在灰底上的小方块。 */
+  background: linear-gradient(180deg,
+    var(--bg-top) 0%, var(--bg-mid) 34%, var(--bg-btm) 68%) fixed;
+  background-color: var(--bg-btm);
+  color: var(--ink);
+  font-family: var(--font-cn);
+}
+/* 装饰层（星星与云）。铺在内容之上、交互之下，纯装饰。
+   宽屏时跟着内容一起居中，不然星星会飘到留白上去。 */
+body.kid .bg-deco {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: var(--shell-w); height: 360px;
+  pointer-events: none; z-index: 0;
+  background: url("candy/deco-stars.svg") no-repeat top center;
+  background-size: 100% auto;
+  opacity: .9;
+}
