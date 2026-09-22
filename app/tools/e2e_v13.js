@@ -113,6 +113,82 @@ async function clickSel(page, sel, tag) {
   return true;
 }
 
+/* ------------------------------------------------ v1.8：弹窗滚动锁 / 底栏铺到底 */
+
+/* 弹窗开着的时候，手指划在遮罩上不该带着下面那一层一起滚 —— v1.8 需求 5，
+   而且是全站弹窗一个毛病（所有弹层都走 #sheet，所以修一次全站受益）。
+   合成 touchmove / wheel 各一次，dispatchEvent 返回 false 就是被
+   preventDefault 拦下了，这里记成「放行 = 没拦住」。
+
+   拦过头一样是坏：弹窗自己滚不动，等于把一个坏修成了另一个坏。所以顺手在
+   弹窗**里面**也试一次 —— 内容够长能滚就必须放行，内容没超屏就必须拦住。
+   这两条一起，才把「外面拦死、里面照滚」这半句钉住。 */
+async function sheetLock(page, tag) {
+  const r = await page.evaluate(() => {
+    const fire = (el, t) => el.dispatchEvent(t === 'touchmove'
+      ? new TouchEvent('touchmove', { cancelable: true, bubbles: true })
+      : new WheelEvent('wheel', { cancelable: true, bubbles: true, deltaY: 60 }));
+    const sht = document.getElementById('sheet');
+    const body = document.querySelector('#sheetBody');
+    if (!sht || !body) return null;
+    const scrolls = body.scrollHeight > body.clientHeight + 1;
+    return {
+      onMask: !!(fire(sht, 'touchmove') || fire(sht, 'wheel')),
+      inBody: !!(fire(body, 'touchmove') || fire(body, 'wheel')),
+      scrolls: scrolls,
+      over: getComputedStyle(sht).overscrollBehaviorY,
+      h: Math.round(body.getBoundingClientRect().height),
+    };
+  });
+  if (!r) { bad('[' + tag + '] 弹窗没开着，滚动锁验不了'); return; }
+  say('   [弹窗锁] ' + tag + ': 遮罩放行=' + r.onMask + ' 内部放行=' + r.inBody +
+      '（内容' + (r.scrolls ? '可滚' : '不滚') + '，高 ' + r.h + 'px）overscroll=' + r.over);
+  if (r.onMask) {
+    bad('[v1.8] ' + tag + '：遮罩上的滑动没拦住，会带着下面那一层一起滚');
+  }
+  if (r.scrolls && !r.inBody) bad('[v1.8] ' + tag + '：弹窗里能滚的内容被一并拦死了');
+  if (!r.scrolls && r.inBody) {
+    bad('[v1.8] ' + tag + '：这条弹窗内容没超屏，在里面划动却放行了（会带动下面那层）');
+  }
+  if (!/contain|none/.test(r.over)) {
+    bad('[v1.8] ' + tag + '：弹窗没设 overscroll-behavior，iOS 上手势会传给下面那层');
+  }
+}
+
+/* v1.8 需求 7：底栏自己上层底色铺到屏幕底。
+   原来 #tabs 是透明的，里面那颗胶囊离屏幕底还差一截（padding-bottom 里那
+   34px 安全区 + 12px），真机量到胶囊下沿离屏幕底 47px 空在那里，就是
+   「底下空了一片没铺满」。现在底色归壳子自己画，一直铺到屏幕底、只留上面
+   两个圆角；胶囊那层皮去掉，导航项位置一点不动。
+   所以查的是：壳子有底色、没有上边框、上面有圆角下面没有、下沿压在屏幕底、
+   胶囊自己不再画一层。 */
+async function barToBottom(page, tag) {
+  const r = await page.evaluate(() => {
+    const t = document.getElementById('tabs');
+    // 不能用 offsetParent 判在不在：#tabs 是 position:fixed，offsetParent 恒为 null
+    if (!t || t.getBoundingClientRect().height < 1) return null;
+    const cs = getComputedStyle(t), b = t.getBoundingClientRect();
+    const pill = t.querySelector('.nav-pill, .tabbar-pill');
+    return { bg: cs.backgroundColor, bt: cs.borderTopWidth,
+      rTL: cs.borderTopLeftRadius, rBL: cs.borderBottomLeftRadius,
+      bottom: Math.round(b.bottom), vh: window.innerHeight,
+      pillBg: pill ? getComputedStyle(pill).backgroundColor : '' };
+  });
+  if (!r) { bad('[' + tag + '] 底栏不在，铺没铺到底验不了'); return; }
+  say('   [底栏] ' + tag + ': 底色 ' + r.bg + ' / 上边 ' + r.bt + ' / 圆角上 ' + r.rTL +
+      ' 下 ' + r.rBL + ' / 下沿 ' + r.bottom + ' of ' + r.vh + ' / 胶囊 ' + (r.pillBg || '无'));
+  if (r.bg === 'rgba(0, 0, 0, 0)') bad('[v1.8] ' + tag + '：底栏是透明的，底下还空着一截');
+  if (r.bt !== '0px') bad('[v1.8] ' + tag + '：底栏上面还压着一道 ' + r.bt + ' 的线');
+  if (parseFloat(r.rTL) < 8) bad('[v1.8] ' + tag + '：底栏上面两个圆角只有 ' + r.rTL);
+  if (parseFloat(r.rBL) > 1) bad('[v1.8] ' + tag + '：底栏底下不该有圆角（' + r.rBL + '）');
+  if (Math.abs(r.bottom - r.vh) > 1) {
+    bad('[v1.8] ' + tag + '：底栏下沿在 ' + r.bottom + '，屏幕底是 ' + r.vh + '，中间还空着');
+  }
+  if (r.pillBg && r.pillBg !== 'rgba(0, 0, 0, 0)') {
+    bad('[v1.8] ' + tag + '：胶囊自己还带一层底色（' + r.pillBg + '），两层皮会显出接缝');
+  }
+}
+
 async function walkTabs(page, tag) {
   const tabs = await tabLabels(page);
   const out = [];
@@ -297,7 +373,7 @@ async function walkTabs(page, tag) {
     if (bk) bad('[渲染出错] 孩子端「' + v + '」: ' + bk + ' | ' + kidView[v].slice(0, 90));
     await page.screenshot({ path: path.join(SHOT, 'kid-' + v + '.png'), fullPage: true });
   }
-
+  await barToBottom(page, '孩子端底栏');
   /* v40：「有事就说」那两条从「我的」搬走 —— 申请加时挪到券包（它延长的就是
      下面那张券），「遇到困难」挪到首页（写作业的时候开的就是这一屏）。
      原来两块叠在「我的」最下面，要翻两屏才找得到，等于把唯一的正经通道埋起来。 */
@@ -315,7 +391,7 @@ async function walkTabs(page, tag) {
      原来成长报告的返回写死 data-go="home"，于是「我的 → 成长报告 → 返回」
      掉回首页。这里两条路各走一遍：从我的进去退回我的，从首页进去退回首页。
      必须真点入口进去 —— kidGo 直接改 location.hash，来路是空的。 */
-  for (const [from, mark] of [['mine', '头像与皮肤'], ['home', '这一周的七分']]) {
+  for (const [from, mark] of [['mine', '头像与皮肤'], ['home', '本周获得']]) {
     await kidGo(from);
     await clickSel(page, '#view [data-go="report"]', from + ' → 成长报告');
     const inRep = await kidText();
@@ -330,8 +406,39 @@ async function walkTabs(page, tag) {
   // 首页：今天几分、多少星尘、这一周的七分、要做的事
   await kidGo('home');
   const kHome = kidView.home;
-  for (const want of ['这一周的七分', '要做的事', '星尘']) {
+  for (const want of ['要做的事', '星尘']) {
     if (kHome.indexOf(want) < 0) bad('[v39] 首页缺少「' + want + '」');
+  }
+  /* v1.8：七分卡抬头从「这一周的七分」换成一句账 —— 本周获得 X 能量，丢失 N 能量。
+     抬头这两个数跟矩阵同一份数算出来，不另起一套，免得出现「图上有 20 格、
+     标题写 21 分」，所以这里把格子和标题对一遍。
+     行尾单位也从「天」改成「分」：一格就是一分，写「天」会让人以为按天算。
+     右上角那两个图例字（灰色 = 还没到 / 橙框 = 今天）一并撤了。 */
+  /* 核对不拿七行行尾相加 —— 那还是同一套数在自说自话。这里数图上**亮了几格**，
+     格子和抬头两条路各算一遍，对不上就是有一边算错了。 */
+  const k7 = await page.evaluate(() => {
+    const t = document.querySelector('#view .k7-title');
+    const days = Array.from(document.querySelectorAll('#view .k7-row:not(.k7-cols) .k7-day'));
+    return {
+      title: t ? t.innerText.replace(/\s+/g, '') : '',
+      legend: !!document.querySelector('#view .k7-legend'),
+      units: days.map(d => d.innerText.replace(/\s+/g, '')),
+      lit: document.querySelectorAll('#view .k7-c.is-on').length,
+    };
+  });
+  say('   七分卡抬头: ' + (k7.title || '（没有）') + ' | 图上亮 ' + k7.lit +
+      ' 格 | 行尾 ' + k7.units.join(' '));
+  if (!/^本周获得\d+能量，丢失\d+能量$/.test(k7.title)) {
+    bad('[v1.8] 七分卡抬头不是「本周获得 X 能量，丢失 N 能量」：' + k7.title);
+  }
+  if (k7.legend) bad('[v1.8] 七分卡右上角那两个图例字没撤掉');
+  if (k7.units.length !== 7) bad('[v1.8] 七分卡不是 7 行，是 ' + k7.units.length);
+  if (k7.units.some(u => !/分$/.test(u))) {
+    bad('[v1.8] 七分卡行尾单位不是「分」：' + k7.units.join(' '));
+  }
+  const gotTxt = +(k7.title.match(/本周获得(\d+)能量/) || [])[1];
+  if (k7.title && gotTxt !== k7.lit) {
+    bad('[v1.8] 抬头「获得 ' + gotTxt + '」和图上亮起的格子数（' + k7.lit + '）对不上');
   }
   /* v39：首页那张「本周能量」卡撤了 —— 宝箱页头一行就在报同一个数。
      留着的话孩子会在两处看到同一根进度条各说各话。 */
@@ -476,18 +583,50 @@ async function walkTabs(page, tag) {
   }
   /* 一条到底的总进度：七列下面那条横线。
      原来每列各自一条短进度，讲的是同一个进度切成七段，反而看不出离下一档多远。
-     断言看宽度单调往前推 —— 一条 progression bar 最怕的就是画出来为 0。 */
-  const barInfo = await page.evaluate(() => {
+
+     v1.8：这条线原来是「能量 ÷ 49」一条通铺直线 —— 7 分就窜进第二格、15 分跑到
+     第三格，跟上面七个箱子对不上。现在按「每档 7 分」逐格填，所以这里量的不是
+     百分比（现在写成 calc()，parseFloat 读出来是 NaN），是**条头压在第几格、
+     格里走了几分之几**，拿七列的真实位置对一遍：
+       i = floor(能量 ÷ 7) − 1   站在第几格（0 起，0–7 分时是 −1 = 还没进第一格）
+       r = 能量 − 7 × (i + 1)    这一格里填了几分之几 */
+  const barGeo = await page.evaluate(() => {
     const bar = document.querySelector('#view .chest-bar');
-    if (!bar) return null;
+    const cols = Array.from(document.querySelectorAll('#view .btcol'));
+    if (!bar || cols.length !== 7) return null;
     const f = bar.querySelector('.chest-bar-f');
-    return { w: bar.getBoundingClientRect().width,
-             fw: f ? parseFloat(f.style.width) : -1 };
+    const r = cols.map(c => c.getBoundingClientRect());
+    const fr = f.getBoundingClientRect();
+    return { track: bar.getBoundingClientRect().width, fill: fr.width,
+             colW: r[0].width, pitch: r[1].left - r[0].left, base: r[0].left,
+             head: fr.right,
+             e: Number(bar.getAttribute('aria-valuenow')),
+             max: Number(bar.getAttribute('aria-valuemax')) };
   });
-  if (!barInfo) bad('[v1.7] 七档下面没有那条总进度线');
+  if (!barGeo) bad('[v1.7] 七档下面没有那条总进度线，或者七列不是 7 个');
   else {
-    say('   总进度线: 轨道 ' + Math.round(barInfo.w) + 'px，走到 ' + barInfo.fw + '%');
-    if (!(barInfo.fw > 0)) bad('[v1.7] 总进度线没有填起来（' + barInfo.fw + '%）');
+    const e = barGeo.e, max = barGeo.max;
+    const i = Math.floor(e / 7) - 1;
+    const r = e - 7 * (i + 1);
+    const want = e >= max ? barGeo.base + barGeo.track - 1        // 整条填满
+      : i < 0 ? barGeo.base + 1                                   // 空的，条头贴左沿
+        : barGeo.base + i * barGeo.pitch + (r / 7) * barGeo.colW;
+    const off = barGeo.head - want;
+    say('   总进度线: 能量 ' + e + '/' + max + '，条头 ' + Math.round(barGeo.head) +
+      'px，第 ' + (i + 1) + ' 格走 ' + r + '/7（该在 ' + Math.round(want) +
+      'px，差 ' + off.toFixed(1) + 'px）');
+    if (!(Number.isFinite(off)) || Math.abs(off) > 2) {
+      bad('[v1.8] 进度条条头没落在第 ' + (i + 1) + ' 格里（差 ' + off.toFixed(1) + 'px）');
+    }
+    if (e < 8 && barGeo.fill > 2) {
+      bad('[v1.8] 不到 8 分条子就该是空的，现在填了 ' + Math.round(barGeo.fill) + 'px');
+    }
+    if (e > 7 && e < max && !(barGeo.fill > 4)) {
+      bad('[v1.8] 总进度线没有填起来（' + Math.round(barGeo.fill) + 'px）');
+    }
+    if (e >= max && Math.abs(barGeo.fill - barGeo.track) > 3) {
+      bad('[v1.8] 满档该整条填满，现在只填了 ' + Math.round(barGeo.fill) + '/' + Math.round(barGeo.track));
+    }
   }
   if (await page.locator('#view .chest-bar.chest-slots').count()) {
     bad('[v1.7] 还留着旧的那条七格分段进度');
@@ -589,13 +728,18 @@ async function walkTabs(page, tag) {
     if (pk.split('\n').filter(x => /卡 \d+ 张/.test(sq(x))).length !== 3) {
       bad('[v1.7] 完美箱那三张卡没各占一行：' + JSON.stringify(pk));
     }
-    // 随机件那一列用「 / 」串，并且完美箱多一句「另有 10% 机会出钻石级卡」
+    /* v1.8：这句从「另有 10% 机会出钻石级卡」改成「有10%概率出钻石级卡」。
+       原来那句把「概率」说成「机会」，还说成是「另有」一件东西，
+       读起来像多送一件，其实它就是随机件那一栏的中奖率。 */
     const poolRaw = (await page.locator('#view .bxif-pool').allInnerTexts()).map(sq);
     const poolTxt = poolRaw.join(' ');
     say('   随机列: ' + poolTxt.slice(0, 100));
     if (poolTxt.indexOf(' / ') < 0) bad('[v1.7] 随机件那一列没用「 / 」分隔');
-    if (poolTxt.indexOf('另有 10% 机会出钻石级卡') < 0) {
-      bad('[v1.7] 完美箱少那一句「另有 10% 机会出钻石级卡」：' + JSON.stringify(poolRaw.slice(-2)));
+    if (poolTxt.indexOf('有10%概率出钻石级卡') < 0) {
+      bad('[v1.8] 完美箱少那一句「有10%概率出钻石级卡」：' + JSON.stringify(poolRaw.slice(-2)));
+    }
+    if (poolTxt.indexOf('另有 10% 机会') >= 0) {
+      bad('[v1.8] 完美箱还留着旧文案「另有 10% 机会出钻石级卡」');
     }
     // 详情页的箱图跟着家长换的那张走，默认就是设计稿那七只扁平箱
     const iSrcs = await page.evaluate(() => Array.from(
@@ -784,6 +928,9 @@ async function walkTabs(page, tag) {
     say('   头像图: ' + avImgs + ' 张，加载失败 ' + brokenAv + ' 张');
     if (avImgs !== 40) bad('[v36] 头像弹层里不是 40 张图，是 ' + avImgs);
     if (brokenAv) bad('[v25] 有 ' + brokenAv + ' 张头像图没加载出来');
+    // v1.8：40 张头像铺下来这条弹窗必定超出屏。它代表的是「内容能滚」那一档
+    // —— 外面要拦死、里面要放行，两条一起才算修好（见 sheetLock 那条注释）。
+    await sheetLock(page, '孩子端换头像');
     await page.screenshot({ path: path.join(SHOT, 'kid-avatar.png'), fullPage: true });
     await page.evaluate(() => document.querySelector('#sheet').classList.remove('on'));
     await page.waitForTimeout(250);
@@ -905,6 +1052,29 @@ async function walkTabs(page, tag) {
   if (!(await page.locator('#view .kcal-mv').count())) {
     bad('[v13] 月历没有翻月的箭头');
   }
+  /* v1.8：真机上「‹」和「›」一个圆一个椭圆。根因是这两颗一个是 <button>、
+     一个是 <span>，iOS 给 button 套原生外观 + 自带 padding: 1px 6px 撑宽；
+     span 老实听 CSS。本机 Chrome 两颗天然一样大，光量几何查不出来，
+     所以查的是那两行针对 iOS 的复位到底在不在，几何顺手比一遍。 */
+  for (const a of await page.evaluate(() => Array.from(
+      document.querySelectorAll('#view .kcal-mv')).map(el => {
+        const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+        return { tag: (el.tagName || '').toLowerCase(),
+          w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10,
+          pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' '),
+          app: cs.appearance || '' };
+      }))) {
+    say('   月历箭头: ' + a.tag + ' ' + a.w + '×' + a.h + ' pad="' + a.pad + '" appearance=' + a.app);
+    if (a.pad !== '0px 0px 0px 0px') {
+      bad('[v1.8] 月历箭头（' + a.tag + '）还带着浏览器自带的 padding：' + a.pad);
+    }
+    if (!/^none/.test(a.app)) {
+      bad('[v1.8] 月历箭头（' + a.tag + '）没关掉原生外观：' + a.app);
+    }
+    if (Math.abs(a.w - a.h) > 0.6) {
+      bad('[v1.8] 月历箭头（' + a.tag + '）不是正圆：' + a.w + '×' + a.h);
+    }
+  }
   if (cal.indexOf('不是一件事') < 0) bad('[v13] 月历没说清「0 分」和「没打分」不是一回事');
   const kpiCells = await page.locator('#view .kkpi').count();
   say('   本月小结: ' + kpiCells + ' 格');
@@ -1015,6 +1185,7 @@ async function walkTabs(page, tag) {
   say('');
   say('5. 家长端各页:');
   const pViews = await walkTabs(page, 'dad');
+  await barToBottom(page, '家长端底栏');
   say('   ' + pViews.join(' '));
 
   // 家长端审核页。演示库里留了一条待办，这里只验证渲染与接线，
@@ -1283,6 +1454,37 @@ async function walkTabs(page, tag) {
   if (await page.locator('#view .chip[data-ct="custom"].on').count() !== 1) {
     bad('[v1.7] 「自己写一条」没选中');
   }
+  /* v1.8：这一屏按「写任务」的版式重排 —— 两张卡、每行左边挂一个标签。
+     那句「校准是让他承担后果…」原来吊在整屏最下面，现在挪到「哪件事」输入框
+     正下面（那才是它解释的那一格）。所以量的是**结构**：两张卡、没有旧版
+     .field 行、小字跟「哪件事」同卡且在其下方 —— 光查文字还在不在，
+     版式退回去了照样过。 */
+  const cg = await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('#view .card--lg.pc'));
+    const why = document.querySelector('#view #cWhy');
+    const cap = document.querySelector('#view p.caption');
+    const tpl = document.querySelector('#view #cTplBox');
+    const c0 = cards[0] || null;
+    const rb = el => (el ? el.getBoundingClientRect() : null);
+    const w = rb(why), c = rb(cap);
+    return {
+      cards: cards.length,
+      fields: document.querySelectorAll('#view .field').length,
+      labels: Array.from(document.querySelectorAll('#view .prow .plab'))
+        .map(l => l.innerText.replace(/\s+/g, '')).slice(0, 5),
+      whyInCard0: !!(c0 && why && c0.contains(why)),
+      capInCard0: !!(c0 && cap && c0.contains(cap)),
+      capBelowWhy: !!(w && c && c.top >= w.bottom - 1),
+      tplIsRow: !!(tpl && tpl.classList.contains('prow')),
+    };
+  });
+  say('   写校准版式: ' + cg.cards + ' 张卡 / 标签 ' + cg.labels.join('、') +
+      ' / 小字在「哪件事」下面 ' + (cg.capBelowWhy ? '是' : '否'));
+  if (cg.cards !== 2) bad('[v1.8] 写校准不是两张卡，是 ' + cg.cards + ' 张');
+  if (cg.fields) bad('[v1.8] 写校准还留着 ' + cg.fields + ' 个旧版 .field 行');
+  if (!cg.whyInCard0 || !cg.capInCard0) bad('[v1.8] 「哪件事」或那句小字不在第一张卡里');
+  if (!cg.capBelowWhy) bad('[v1.8] 小字说明没跟在「哪件事」输入框下面');
+  if (!cg.tplIsRow) bad('[v1.8] 「修复类型」那一行不是 .prow（版式跟写任务不一致）');
   /* 写任务：「给谁」原来分两层（先选「派给一个孩子」，再在这一层里选哪个孩子），
      多点一次、多占一排。现在一层：挂大厅 + 每个孩子各一颗按钮，点谁就是派给谁。 */
   await clickSel(page, '#view .seg-item[data-pseg="new"]', '发布 → 写任务');
@@ -1378,46 +1580,64 @@ async function walkTabs(page, tag) {
      v1.5 报上来的坏就是点了没反应 —— 面板的开合按钮当时是快照绑定：
      进这一屏时绑一次，而 #view 这个容器不重画（只换里面的 innerHTML），
      所以第二次进来，新画出来的那颗按钮身上一个监听都没有。
-     所以这里要真点、并且点两次。 */
+     所以这里要真点、并且点两次。
+
+     v1.8：这一格从「在表单里就地撑开」改成**底部弹窗** —— 它长在「数量 + 配图」
+     的右半栏里，一展开就被卡片右边缘切掉、还被上面那行压住，就是报上来的
+     「显示不正常」。面板的 DOM 因此搬进了 #sheetBody（#view 里那个 #ipb-pIcon
+     还在，但一直是 hidden），下面这些选择器也跟着换过去。 */
   await clickSel(page, '#view button[data-ip="pIcon"]', '写任务 → 配一张图');
-  if (!(await page.locator('#view #ipb-pIcon:not([hidden])').count())) {
-    bad('[v42] 点「配一张图」没打开选图面板');
+  if (!(await page.locator('#sheet.on').count())) {
+    bad('[v1.8] 点「配一张图」没弹出选图面板');
   }
-  const ipCells = await page.locator('#view #ipb-pIcon .ip-cell').count();
-  const ipChips = (await page.locator('#view #ipb-pIcon .ip-chips .chip').allInnerTexts()).map(flat);
-  const ipOn = flat(await page.locator('#view #ipb-pIcon .ip-chips .chip.on').first().innerText());
+  if (!(await page.locator('#sheetBody .ip-chips .chip').count())) {
+    bad('[v1.8] 弹窗里没有配图面板（分组按钮一个都没有）');
+  }
+  if (!(await page.locator('#sheetBody #ipg-pIcon').count())) {
+    bad('[v1.8] 弹窗里没有那一格格子容器 #ipg-pIcon');
+  }
+  await sheetLock(page, '配图');
+  const ipCells = await page.locator('#sheetBody .ip-cell').count();
+  const ipChips = (await page.locator('#sheetBody .ip-chips .chip').allInnerTexts()).map(flat);
+  const ipOn = flat(await page.locator('#sheetBody .ip-chips .chip.on').first().innerText());
   say('   配图面板: ' + ipCells + ' 个格子；分组 ' + ipChips.slice(0, 4).join(' / ') + '…；停在「' + ipOn + '」');
   if (ipCells < 6) bad('[v42] 配图面板里格子太少：' + ipCells);
   if (ipOn !== '任务') bad('[v42] 配图面板没停在「任务」那一组，停在「' + ipOn + '」');
   // 任务这一组就是这一版新画的 17 张：挑一张，看它落没落进隐藏字段
-  const questCells = await page.locator('#view #ipb-pIcon .ip-cell[data-v^="quest_"]').count();
+  const questCells = await page.locator('#sheetBody .ip-cell[data-v^="quest_"]').count();
   say('   任务图标候选: ' + questCells + ' 张');
   if (questCells < 12) bad('[v42] 配图面板里任务图标只有 ' + questCells + ' 张');
-  await page.locator('#view #ipb-pIcon .ip-cell[data-v="quest_scroll"]').click();
+  await page.locator('#sheetBody .ip-cell[data-v="quest_scroll"]').click();
   await page.waitForTimeout(400);
   const ipVal = await page.locator('#view #pIcon').inputValue();
   if (ipVal !== 'quest_scroll') bad('[v42] 挑了悬赏令，隐藏字段里是「' + ipVal + '」');
+  // 挑完就得自己收起来。不收的话，下面「再点一次」连按钮都够不着 ——
+  // 弹窗铺满整屏，按钮被盖住，Playwright 点不动。
+  if (await page.locator('#sheet.on').count()) bad('[v1.8] 挑完图弹窗没自己关掉');
   // 第二次点开：老毛病就坏在这一下
   await clickSel(page, '#view button[data-ip="pIcon"]', '再点一次配一张图');
-  if (!(await page.locator('#view #ipb-pIcon:not([hidden])').count())) {
+  if (!(await page.locator('#sheet.on').count())) {
     bad('[v42] 配图面板第二次点不开了（快照绑定的老毛病）');
   }
   // 搜索框也是点开之后才生成的，同样要真敲一次。敲一个只在这组里存在的词，
   // 命中谁就是谁 —— 「什么都没搜出来」也算它有反应，那证明不了它在按词筛。
-  await page.locator('#view #ipq-pIcon').fill('钥匙');
+  await page.locator('#sheetBody #ipq-pIcon').fill('钥匙');
   await page.waitForTimeout(600);
   const ipHits = await page.evaluate(() => Array.from(
-    document.querySelectorAll('#view #ipb-pIcon .ip-cell'))
+    document.querySelectorAll('#sheetBody .ip-cell'))
     .map(c => c.dataset.v || '').filter(Boolean));
   say('   搜「钥匙」之后命中: ' + (ipHits.join(' ') || '（空）'));
   if (ipHits.length !== 1 || ipHits[0] !== 'quest_key') {
     bad('[v42] 配图面板搜「钥匙」没搜出 quest_key，命中 ' + JSON.stringify(ipHits));
   }
-  await clickSel(page, '#view button[data-ipc="pIcon"]', '配图 → 重置');
-  const ipBack = await page.locator('#view #ipb-pIcon .ip-cell').count();
+  await clickSel(page, '#sheetBody button[data-ipc="pIcon"]', '配图 → 重置');
+  const ipBack = await page.locator('#sheetBody .ip-cell').count();
   say('   重置之后格子: ' + ipBack + ' 个');
   if (ipBack < 18) bad('[v42] 点了「重置」没回到整组：' + ipBack);
-  await clickSel(page, '#view button[data-ip="pIcon"]', '把配图面板合上');
+  // 点遮罩收起来：这一格没有「完成」按钮，家长就是点外面关的
+  await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+  await page.waitForTimeout(400);
+  if (await page.locator('#sheet.on').count()) bad('[v1.8] 点了弹窗外面，弹窗没关掉');
 
   /* 三个时限按钮都得在，「不限时」这一档是新加的：后端原来只有「有就用、
      没有就用默认 48 小时」两路，选了不限时会被默认值顶回来。 */
@@ -1623,6 +1843,31 @@ async function walkTabs(page, tag) {
   }
   if (mvOffN !== 1) bad('[v1.7] 到了当月，「下个月」没变成灰块（灰块 ' + mvOffN + ' 颗）');
   if (mvBtnN !== 1) bad('[v1.7] 到了当月，翻月按钮不是 1 颗可点（' + mvBtnN + ' 颗）');
+  /* v1.8：真机上「‹」是椭圆、「›」是正圆。根因是这两颗一个是 <button>、
+     一个是 <span>（到当月那一档的右箭头是块灰的 span），iOS 给 button 套
+     原生外观 + 自带 padding: 1px 6px，宽度被顶到 36px；span 老实听 CSS，28px。
+     本机 Chrome 两颗天然都是 28×28，光量几何查不出来 —— 所以查的是那两行
+     针对 iOS 的复位到底在不在，几何顺手比一遍。 */
+  for (const a of await page.evaluate(() => Array.from(
+      document.querySelectorAll('#view .cal-head .cal-mv')).map(el => {
+        const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+        return { tag: (el.tagName || '').toLowerCase(),
+          w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10,
+          pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' '),
+          app: cs.appearance || '' };
+      }))) {
+    say('   翻月箭头: ' + a.tag + ' ' + a.w + '×' + a.h + ' pad="' + a.pad +
+        '" appearance=' + a.app);
+    if (a.pad !== '0px 0px 0px 0px') {
+      bad('[v1.8] 翻月箭头（' + a.tag + '）还带着浏览器自带的 padding：' + a.pad);
+    }
+    if (!/^none/.test(a.app)) {
+      bad('[v1.8] 翻月箭头（' + a.tag + '）没关掉原生外观：' + a.app);
+    }
+    if (Math.abs(a.w - a.h) > 0.6) {
+      bad('[v1.8] 翻月箭头（' + a.tag + '）不是正圆：' + a.w + '×' + a.h);
+    }
+  }
   // v23：翻月不许把页面顶回最上面。月历在打分页最底部，
   // 翻一次就要重新往下滚一遍的话，等于没法连着看几个月。
   await page.locator('#view .cal-bar .month').scrollIntoViewIfNeeded();
@@ -1840,6 +2085,7 @@ async function walkTabs(page, tag) {
     const body = flat(await page.locator('#sheet.on .sheet-body').innerText());
     say('   [弹层] ' + name + ' -> ' + body.length + ' 字: ' + body.slice(0, 56));
     if (body.length < 4) bad('[空弹层] 设置 → ' + name);
+    await sheetLock(page, '设置 → ' + name);
     await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
     await page.waitForTimeout(300);
     await clickSel(page, '#view #pSetBack', grp + ' 二级 返回');
@@ -1856,6 +2102,7 @@ async function walkTabs(page, tag) {
   await clickSel(page, '#view #iconBtn', '设置 → 给它们换张图');
   await page.waitForTimeout(1000);
   const iconBody = flat(await page.locator('#sheet.on .sheet-body').innerText());
+  await sheetLock(page, '给它们换张图');
   for (const grp of ['七个维度', '宝箱七档', '券与卡']) {
     if (iconBody.indexOf(grp) < 0) bad('[v41] 换图弹层缺一组「' + grp + '」');
   }

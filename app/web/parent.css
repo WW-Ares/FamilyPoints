@@ -31,26 +31,38 @@ body.grown #view {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--gap-card);
   padding: var(--pad);
-  padding-bottom: calc(var(--h-tabbar) + 16px);
+  /* 底栏那点高度里含着安全区（#tabs 的 padding-bottom 自己加了 34px），
+     底部空档也得跟着含，不然有刘海的机型上最后一块会被货架盖住一条。 */
+  padding-bottom: calc(var(--h-tabbar) + 16px + var(--safe-b));
   scrollbar-width: none;
 }
 body.grown #view::-webkit-scrollbar { width: 0; }
 /* 带 overflow:hidden 的卡是 flex 子项，会被压成 0 高、按钮点不到。 */
 body.grown #view > * { flex-shrink: 0; }
 
-/* 底栏：药丸浮在内容之上 */
+/* 底栏：一整块货架铺到屏幕底，导航项坐在里面。
+   原来是「透明一层壳 + 一颗白胶囊浮着」：壳子自己不上底色，胶囊下面那段
+   padding-bottom（12×--u 加安全区那 34px）露的全是页面底色，真机上量到胶囊
+   下沿离屏幕底 47px 空在那里，就是「底栏没顶到低」。
+   现在底归壳子自己画，一直铺到屏幕底，只留上面两个圆角；导航项位置一点不动，
+   改的只是「谁在画这块底」。孩子端同一处同一改法。 */
 body.grown #tabs {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: 0;
   width: 100%; max-width: var(--bar-w); z-index: 20;
   display: block; gap: 0;
-  background: transparent; border-top: 0; box-shadow: none;
+  background: var(--card);
+  border-top: 0;
+  border-radius: var(--r-nav) var(--r-nav) 0 0;
+  box-shadow: 0 -10px 26px -18px rgba(120, 78, 30, .5);
   backdrop-filter: none; -webkit-backdrop-filter: none;
   padding: calc(12 * var(--u)) calc(12 * var(--u)) calc(12 * var(--u) + env(safe-area-inset-bottom, 0px));
 }
 body.grown .nav-pill {
+  /* 底色归壳子之后，胶囊自己不用再画一层：白压白看不出边界，只会让导航项
+     像陷进一块更亮的块里。选中那一项的橙色渐变仍旧是它自己的。 */
   display: flex; gap: calc(2 * var(--u)); padding: calc(5 * var(--u)); height: calc(62 * var(--u));
-  background: #fff; border: 1px solid #FFF2E0; border-radius: var(--r-nav);
-  box-shadow: var(--sh-card);
+  background: transparent; border: 0; border-radius: var(--r-nav);
+  box-shadow: none;
 }
 body.grown .nav-item {
   flex: 1; min-width: 0;
@@ -362,11 +374,20 @@ body.grown .cal-head .month {
 }
 /* 翻月这对块跟孩子端同一套长相：一个实心圆块加一个箭头，到头的那一边变灰。
    原来是白底加淡描边的小按钮，在奶白卡片上几乎看不见，等于把「上个月」
-   藏起来了。28 是这一端按得稳的最小尺寸（孩子端 24）。 */
+   藏起来了。28 是这一端按得稳的最小尺寸（孩子端 24）。
+
+   padding 与 appearance 这两条是给 iOS 补的，少一条两颗就不一样大：
+   能点的那一颗是 <button>，到头的那一颗（.is-off）是 <span>，而我们
+   style.css 里那条全局 reset 只写了 font / color / border / background，
+   没碰 padding，也没关掉 button 的原生外观。于是 iOS 给 button 自己套上
+   appearance: auto 与 UA 自带的 padding: 1px 6px，宽度被顶到 36px；
+   span 老实听 CSS，28px。真机量出来就是「左边椭圆、右边正圆」。
+   本机 Chrome 两颗都是 28×28 —— 只靠电脑上量是查不出这个的。 */
 body.grown .cal-mv {
   width: 28px; height: 28px; flex: none; font-family: var(--font-cn);
   display: grid; place-items: center; font-size: calc(17 * var(--u)); line-height: 1;
   border: 0; border-radius: 14px; cursor: pointer;
+  padding: 0; appearance: none; -webkit-appearance: none;
   background: var(--orange-light); color: var(--wood-deep, #6B4213);
 }
 body.grown .cal-mv.is-off { background: var(--line); color: var(--ink-3); cursor: default; }
@@ -822,9 +843,19 @@ body.grown .prow { display: flex; align-items: center; gap: calc(7 * var(--u)); 
 body.grown .plab {
   flex: none; font-size: calc(11 * var(--u)); font-weight: 500; color: var(--ink-2);
 }
-/* 控件那一侧吃掉剩下的宽度；chips 多了就自己换行，不挤扁标签。 */
-body.grown .prow > .chips { display: flex; gap: calc(6 * var(--u)); flex-wrap: wrap; }
+/* 控件那一侧吃掉剩下的宽度；chips 多了就自己换行，不挤扁标签。
+   换行判定用的是「假设主尺寸」，所以基准给 auto 的控件只要内容宽过一行，
+   就会把标签一个人留在上一行。写校准的「怎么处理」和「哪件事」都栽在这：
+   基准改成 0、由 grow 去拿剩下的宽度，标签右边那一块才真的接得住东西。
+   本来就装得下的行（写任务的奖励 / 给谁 / 接取 / 时限）看不出区别，
+   左对齐没变，只是不再往下掉一行。 */
+body.grown .prow > .chips {
+  display: flex; gap: calc(6 * var(--u)); flex-wrap: wrap;
+  flex: 1 1 0; min-width: 0;
+}
 body.grown .prow > .field, body.grown .prow > .ip { flex: 1 1 auto; min-width: 0; }
+/* .pin 自己写着 width: 100%，不改掉的话它在换行判定里照样算满宽 */
+body.grown .prow > .pin { flex: 1 1 0; width: auto; min-width: 0; }
 /* 派给某个孩子之后整个收起来的那两问 */
 body.grown .pgrp { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
 /* 数量 + 配图并排：两组各占一半。原来两行各占一整行，一屏要多滚一屏。

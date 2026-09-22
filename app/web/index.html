@@ -3,12 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#FF8A3D">
+<meta name="theme-color" content="#FFD08A">
 <title>家庭积分</title>
 <!-- 图标全套由 tools/build_app_icons.py 生成，改图形改那个脚本重跑，别手改这几个文件。
      svg 给现代浏览器（标签页里带圆角），ico 兜老浏览器，png 给添加到主屏幕。
-     theme-color 跟着图标那档橙走：登录页和孩子端顶部本来就是暖色，之前留着
-     家长端的深绿 #157a67，安卓地址栏跟页面是两截颜色。 -->
+     theme-color 不能写深橙：iOS 加到主屏之后，会拿这个值去画状态栏那一整条
+     （59px，就是这台机器的 safe-area-inset-top），页面自己从这一条底下开始画。
+     写 #FF8A3D 的话，顶部就横着一条跟页面对不上的橙色，看着像「上面空了一截
+     没铺满」。改成 --bg-top 那档 #FFD08A，三个页面（家长端 / 孩子端 / 登录页）
+     顶部本来就是这个色，一条 meta 通吃，安卓地址栏那截也跟着归位。 -->
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon.ico" sizes="32x32">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">

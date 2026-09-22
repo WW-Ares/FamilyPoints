@@ -43,8 +43,10 @@ body.kid .appbar-right { flex: 0 0 auto; }
 body.kid .content {
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
-  /* 底栏是 fixed、高 --h-tabbar，不留够这一截，每页最后一块都压在底栏下面点不到 */
-  padding: 0 var(--pad) calc(var(--h-tabbar) + 16px);
+  /* 底栏是 fixed、高 --h-tabbar，不留够这一截，每页最后一块都压在底栏下面点不到。
+     末尾再加一份安全区：底栏自己的 padding-bottom 里含了 34px，底部空档不含的话，
+     有刘海的机型上最后一块会被那块实底货架盖住一条。 */
+  padding: 0 var(--pad) calc(var(--h-tabbar) + 16px + var(--safe-b));
   display: flex; flex-direction: column; gap: var(--gap-card);
   scrollbar-width: none;
 }
@@ -64,8 +66,13 @@ body.kid #tabs {
   width: 100%; max-width: var(--bar-w); z-index: 30;
   display: flex; align-items: center; justify-content: center;
   padding: 0 var(--pad) calc(10px + var(--safe-b, env(safe-area-inset-bottom, 0px)));
-  background: linear-gradient(180deg, rgba(255,251,243,0) 0%, rgba(255,251,243,.94) 46%);
-  border-top: 0; box-shadow: none;
+  /* 底色归底栏自己画，一直铺到屏幕底，只留上面两个圆角 —— 跟家长端同一个改法。
+     原来是一条「透明 → 奶油」的渐变，底下那截安全区跟页面底色同色，
+     看着就是「没铺满」。 */
+  background: var(--card);
+  border-top: 0;
+  border-radius: var(--r-nav) var(--r-nav) 0 0;
+  box-shadow: 0 -10px 26px -18px rgba(184, 128, 64, .5);
   backdrop-filter: none;
 }
 body.kid #tabs .tabbar-pill {
@@ -75,9 +82,11 @@ body.kid #tabs .tabbar-pill {
      不够就照可用宽度收，不然两头两颗会被挤出屏幕。 */
   width: 100%; max-width: calc(330 * var(--u));
   border-radius: var(--r-pill);
-  background: rgba(255,255,255,.72);
-  box-shadow: 0 6px 18px -6px rgba(184,128,64,.28);
-  backdrop-filter: blur(8px);
+  /* 底色归底栏之后不再自己画一层：奶油压白看不出边界，只把选中的那一格
+     衬得不清楚。选中态那颗橙色渐变还是它自己的。 */
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 body.kid #tabs button {
   /* 这里原来是 width: 62px + flex: 0 0 auto，五格加内外边距一共要 354px，
@@ -877,9 +886,13 @@ body.kid .pill--gold { background: #FFC93C; color: #fff; font-weight: 700; }
    往左只留一年，再往前都是空的，翻过去一整月空格比不给按钮更让人糊涂。 */
 body.kid .kcal-nav { display: flex; align-items: center; gap: 7px; }
 body.kid .kcal-nav .card-title { font-size: calc(15 * var(--u)); }
+/* padding: 0 与 appearance: none 是给 iOS 补的，跟家长端 .cal-mv 同一个毛病：
+   能点的那个是 <button>、到头的是 <span>，iOS 给 button 套原生外观 + 自带的
+   padding: 1px 6px，两颗会长成不一样宽。详见 parent.css 那一处的注释。 */
 body.kid .kcal-mv {
   width: 24px; height: 24px; border-radius: 12px; flex: none;
   display: grid; place-items: center; font-size: calc(14 * var(--u)); line-height: 1;
+  padding: 0; appearance: none; -webkit-appearance: none;
   background: var(--orange-light); color: var(--wood-deep);
 }
 body.kid .kcal-mv.is-off { background: var(--line); color: var(--ink-3); }

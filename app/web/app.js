@@ -50,14 +50,38 @@ function toast(msg) {
 }
 function err(e) { toast(e && e.message ? e.message : String(e)); }
 
+/* 配图面板正开在弹层里时记着是哪一个（发布页那处用它，见 ipOpen）。 */
+let ipSheetId = '';
 function sheet(html, onOpen) {
   const box = $('#sheetBody');
+  ipSheetId = '';                    // 换了一层新内容，原来认领的那个面板作废
   box.innerHTML = html;
   $('#sheet').classList.add('on');
   if (onOpen) onOpen(box);
 }
-function closeSheet() { $('#sheet').classList.remove('on'); }
+function closeSheet() { ipSheetId = ''; $('#sheet').classList.remove('on'); }
 $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+
+/* 弹层一开，底下那一页就不许跟着动。
+   手指落在遮罩上时，浏览器会顺着 DOM 往上找「能滚的那一个」，找到谁就滚谁 ——
+   弹层是 fixed、自己不带滚动，于是滚的是后面那一页；iOS 上滚轮/触摸都这样。
+   CSS 那边（style.css 的 .sheet）已经给它套了一层 overflow: hidden 加
+   overscroll-behavior: contain，这里再自己拦一道兜底：
+   手指落在弹层里、又不在那块真能滚的内容上，一律不许它默认滚动。
+   「真能滚」是量出来的 —— 内容比框矮的时候，落上去也是白滑，一并拦掉。 */
+(function () {
+  const sht = $('#sheet');
+  const idle = e => {
+    const b = e.target && e.target.closest ? e.target.closest('.sheet-body') : null;
+    return !(b && b.scrollHeight > b.clientHeight + 1);
+  };
+  sht.addEventListener('touchmove', e => { if (idle(e)) e.preventDefault(); }, { passive: false });
+  sht.addEventListener('wheel', e => { if (idle(e)) e.preventDefault(); }, { passive: false });
+})();
+
+/* 配图面板现在会在弹层里画（发布页那处），弹层在 #view 外面，
+   事件委托得另外挂一份。#sheetBody 这个元素自己从不重画，绑一次就够。 */
+bindIconField($('#sheetBody'));
 
 /* 做事之前的那一句。形状跟「确认花 XX 星尘」那一个弹层是同一套：
    一句话说清「点了会发生什么」，一个确认按钮，点外面或者按「取消」就是没这回事。
@@ -285,12 +309,17 @@ function ipGrid(id) {
   return h;
 }
 
-function ipRender(id) {
-  const box = $('#ipb-' + id);
-  if (!box) return;
+/* 面板画到哪儿：页面里那一格（#ipb-<id>），或者底部弹窗（#sheetBody）。
+   发布页那处原来是在表单里就地撑开的，而它长在「数量 + 配图」的右半栏里，
+   一展开就被卡片右边缘切掉、还被上面那行压住 —— 就是「显示不正常」。
+   改成弹窗：整屏宽、自己的滚动、不顶页面。已经在弹层里的那两处
+   （心愿表单、换图标）就地对开，不然会把上面那份还没提交的表单顶掉。 */
+function ipBox(id) {
+  return (ipSheetId === id ? $('#sheetBody') : $('#ipb-' + id));
+}
+function ipPanel(id) {
   const st = IP[id];
-  box.innerHTML =
-    '<div class="ip-head"><span class="ip-title">配一张图 · 当前：' +
+  return '<div class="ip-head"><span class="ip-title">配一张图 · 当前：' +
     esc(iconLabel(st.v, st.kind)) + '</span>' +
     '<button type="button" class="ip-clear" data-ipv="' + id + '" data-v="">不要图</button></div>' +
     '<div class="ip-top"><input class="ip-q" id="ipq-' + id + '" placeholder="搜：钥匙、星星、宝箱…" ' +
@@ -302,6 +331,29 @@ function ipRender(id) {
         '" data-ipg="' + id + '" data-g="' + esc(g) + '">' + esc(nm) + '</button>';
     }).join('') + '</div>' +
     '<div id="ipg-' + id + '">' + ipGrid(id) + '</div>';
+}
+function ipRender(id) {
+  const box = ipBox(id);
+  if (!box) return;
+  box.innerHTML = (ipSheetId === id ? '<h3>配一张图</h3>' : '') + ipPanel(id);
+}
+function ipOpen(id) {
+  if ($('#sheet').classList.contains('on')) {   // 已经在弹层里：就地展开
+    const box = $('#ipb-' + id);
+    if (!box) return;
+    box.hidden = false;
+    ipRender(id);
+    return;
+  }
+  // sheet() 开头会清掉上一次的认领，所以挂在这一句**之后**。
+  // 挂前面的话 ipClose() 认不出是这一层，挑完图弹窗关不掉。
+  sheet('<h3>配一张图</h3>' + ipPanel(id));
+  ipSheetId = id;
+}
+function ipClose(id) {
+  if (ipSheetId === id) { closeSheet(); return; }
+  const box = $('#ipb-' + id);
+  if (box) box.hidden = true;
 }
 
 /* 面板里所有交互都走事件委托，绑在 root 上，一个 root 只绑一次。
@@ -323,9 +375,8 @@ function bindIconField(root) {
     if (!id || !IP[id]) return;
     if (t.dataset.ip) {                    // 开 / 合这一格的面板
       const box = $('#ipb-' + id);
-      if (!box) return;
-      box.hidden = !box.hidden;
-      if (!box.hidden) ipRender(id);
+      if (box && !box.hidden) { ipClose(id); return; }   // 就地展开的，再点一次收起来
+      ipOpen(id);
       return;
     }
     if (t.dataset.ipv) {                   // 挑一张
@@ -338,8 +389,7 @@ function bindIconField(root) {
         const old = btn.querySelector('.gly');
         if (old) old.outerHTML = glyph(IP[id].v, IP[id].kind, 26);
       }
-      const box = $('#ipb-' + id);
-      if (box) box.hidden = true;
+      ipClose(id);
       e.stopPropagation();
       return;
     }
@@ -3464,35 +3514,41 @@ async function renderAdminPublish(v) {
     v.innerHTML = h;
     bindPublishForm();
   } else if (seg === 'calib') {
-    h += '<p class="caption" style="margin-top:2px">校准是让他承担后果，不是罚得越重越好。' +
-      '选「挂一条修复任务」的，系统会自己把修复清单挂到他的任务上，做完由你确认。</p>';
-    h += '<div class="card card--lg" style="display:flex;flex-direction:column;gap:12px">' +
-      '<div class="field"><span class="field-label">谁的事</span>' +
-      '<div class="chips">' + KIDS().map((m, i) =>
+    /* 版式照「写任务」那一版对齐：两张卡，每行都是「标签在左、控件在右」。
+       原来是一张卡装四行、小字说明还挂在卡外面当第一段，跟下面那张卡的标题
+       挤在一起，读起来像这一页的开场白 —— 可它讲的是「哪件事」该怎么写。
+       现在拆两张：第一张是「这件事是谁的、是哪件事」，第二张才是「怎么处理」。 */
+    h += '<div class="card card--lg pc">' +
+      '<div class="prow"><span class="plab">谁的事</span><div class="chips">' +
+      KIDS().map((m, i) =>
         '<button type="button" class="chip' + (i ? '' : ' on') + '" data-ckid="' + m.id + '">' +
         esc(m.name) + '</button>').join('') + '</div></div>' +
-      '<div class="field"><span class="field-label">哪件事</span>' +
-      '<input id="cWhy" placeholder="例如：说好 8 点回家，9 点半才回"></div>' +
-      '<div class="field" style="gap:7px"><span class="field-label">怎么处理</span>' +
-      '<div class="chips">' +
+      '<div class="prow"><span class="plab">哪件事</span>' +
+      '<input id="cWhy" class="pin" placeholder="例如：说好 8 点回家，9 点半才回"></div>' +
+      '<p class="caption">校准是让他承担后果，不是罚得越重越好。' +
+      '选「挂一条修复任务」的，系统会自己把修复清单挂到他的任务上，做完由你确认。</p>' +
+      '</div>';
+
+    h += '<div class="card card--lg pc">' +
+      '<div class="prow"><span class="plab">怎么处理</span><div class="chips">' +
       '<button type="button" class="chip on" data-ce="task">挂一条修复任务</button>' +
       '<button type="button" class="chip" data-ce="fine">罚款（进许愿池）</button>' +
       '<button type="button" class="chip" data-ce="ticket_min">扣娱乐时间</button>' +
-      '<button type="button" class="chip" data-ce="none">只记下来</button></div>' +
-      '<p class="caption" id="cHint">' + esc(CALIB_HINT.task) + '</p></div>' +
+      '<button type="button" class="chip" data-ce="none">只记下来</button></div></div>' +
+      '<p class="caption" id="cHint">' + esc(CALIB_HINT.task) + '</p>' +
       // 修复类型原来是个下拉。手机上的下拉要点开、再滚、再点，而这里总共只有
       // 四五个选项；摊成按钮一眼看完，还能顺手给自己留一条。
       // 「自己写一条」不是一个选项而是一个开关：点了才长出那一行输入框，
       // 空白的输入框常年摆在那儿，等于不断问家长「要不要写点什么」。
-      '<div class="field" id="cTplBox"><span class="field-label">修复类型</span>' +
-      '<div class="chips">' + CALIB_TPL.map((t, i) =>
+      '<div class="prow" id="cTplBox"><span class="plab">修复类型</span><div class="chips">' +
+      CALIB_TPL.map((t, i) =>
         '<button type="button" class="chip' + (i ? '' : ' on') + '" data-ct="' + t[0] + '">' +
         esc(t[1]) + '</button>').join('') +
-      '<button type="button" class="chip" data-ct="custom">自己写一条</button></div>' +
-      '<input id="cTplCustom" class="ip" placeholder="写清楚让他做什么" hidden>' +
-      '</div>' +
-      '</div>' +
-      '<button class="btn btn--primary btn--block" id="cGo">记下来</button>' +
+      '<button type="button" class="chip" data-ct="custom">自己写一条</button></div></div>' +
+      '<input id="cTplCustom" class="pin" placeholder="写清楚让他做什么" hidden>' +
+      '</div>';
+
+    h += '<button class="btn btn--primary btn--block" id="cGo">记下来</button>' +
       '<p class="footnote">金额、扣几分钟、负库存下限都在设置「校准与钱」那一组里，' +
       '四条红线改不了。</p>';
     v.innerHTML = h;

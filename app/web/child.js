@@ -258,7 +258,7 @@ function kAskCard(kind) {
 }
 
 /* ============================================================ 七分矩阵（首页） */
-/* 「这一周的七分」：七行维度 × 七列这一周。格子四态 —— 拿到是实心的维度色，
+/* 这一周的七分：七行维度 × 七列这一周。格子四态 —— 拿到是实心的维度色，
    那天过去了没拿到是浅棕，今天在格子外面套一圈橙框，还没到的日子是最浅的米色。
    数据整份来自 /api/score/cycle：界面不自己猜「今天算不算」，只拿 day 跟今天比一次。 */
 function kWeekCard(wk, todayS) {
@@ -273,11 +273,17 @@ function kWeekCard(wk, todayS) {
   });
   const scoredDays = days.filter(d => d.scored).length;
   const cntOf = code => days.reduce((a, d, i) => a + (maps[i][code] === 1 ? 1 : 0), 0);
+  /* 标题那两句跟矩阵同一份数算出来，不另起一套，免得出现「图上有 20 格、标题写 21 分」。
+     获得 = 点亮了几格（一格就是一分）；丢失 = 打过分的那些天里没拿到的分。
+     没打分的日子不计进丢失：那天家长压根没打分，不是孩子把分弄丢了，
+     跟「不追溯已发奖励」也是同一条口径。 */
+  const got = dims.reduce((a, d) => a + cntOf(d.code), 0);
+  const lost = Math.max(0, scoredDays * dims.length - got);
 
   let h = '<div class="k7"><div class="k7-head">' +
     '<span class="h g7">' + ic('i-star', 15, '#FFC93C') +
-    '<span class="k7-title">这一周的七分</span></span>' +
-    '<span class="k7-legend">灰色 = 还没到，橙框 = 今天</span></div>';
+    '<span class="k7-title">本周获得 ' + num(got) + ' 能量，丢失 ' +
+    num(lost) + ' 能量</span></span></div>';
 
   // 列头：星期几。今天那一格是橙的，跟下面格子上的橙框对上。
   h += '<div class="k7-row k7-cols"><span class="k7-ic"></span>' +
@@ -295,13 +301,13 @@ function kWeekCard(wk, todayS) {
       return '<span class="' + cls + '"' + (c ? ' style="background:' + c + '"' : '') + '></span>';
     }).join('');
     const n = cntOf(dim.code);
-    // 天数三档：拿满（跟已打分的天数持平）橙、拿到一些褐、一天没有灰。
-    // 只分「有没有」两档的话，5 天和 1 天在边上长得一样。
+    // 分数三档：拿满（跟已打分的天数持平）橙、拿到一些褐、一天没有灰。
+    // 只分「有没有」两档的话，5 分和 1 分在边上长得一样。
     const dcls = n ? (n >= scoredDays ? ' is-hot' : ' is-mid') : '';
     h += '<div class="k7-row"><span class="k7-ic">' + glyph(dim.icon, 'dim', 20) + '</span>' +
       '<span class="k7-nm">' + esc(dim.name) + '</span>' +
       '<span class="k7-cells">' + cells + '</span>' +
-      '<span class="k7-day' + dcls + '">' + num(n) + ' 天</span></div>';
+      '<span class="k7-day' + dcls + '">' + num(n) + ' 分</span></div>';
   });
 
   // 结论条：一句说谁最好，一句说谁还空着。两句都是这一周现算的，不落库 ——
@@ -823,12 +829,37 @@ function kTierCol(t, curTier) {
 
 /* 七档一条线：横贯整张卡，填到当前能量为止。
    刻度故意不画 —— 七个点把一条线切成七段，看得最清楚的那一句「还差多少」
-   反而要数点才知道；留一条净线，眼睛自己对上去就是位置。 */
+   反而要数点才知道；留一条净线，眼睛自己对上去就是位置。
+
+   条子本身跟上面七列是同一套账：条头停在哪个箱子的格里，就是哪一档。
+   原来是「能量 ÷ 49」一条通铺直线，7 分就窜进第二格、15 分跑到第三格，
+   跟上面七个箱子对不上。现在按「每档 7 分」逐格算：
+     i = floor(能量 ÷ 7) − 1      站在第几格（0 起）
+     r = 能量 − 7 × (i + 1)       这一格里填了几分之几
+     条宽 = i × (总宽 + 4px) ÷ 7 + r × (总宽 − 24px) ÷ 49
+   那两个 4px / 24px 是上面 .btcols 的账：七列六道 4px 的缝，列宽 = (总宽 − 24) ÷ 7。
+   落点：13 分压住木箱那格右沿，14 分正好压在铜箱左沿，15 分进铜箱 1/7，
+   21 分才进银箱，49 分整条填满。
+
+   写成 calc 而不是在 JS 里量像素：条宽跟着卡片自己走，换机型、转屏都不用重算。
+   式子里给 4 / 24 各让出 1px、末尾再减 1px，是因为 .chest-bar 自己压着一道
+   1px 描边，条能用的宽度比上面那排列阵少 2px —— 不把这 1px 还回去，
+   越往后累计偏得越多，第七格能偏出小半格。 */
 function kChestBar(energy, top) {
-  const pct = top ? Math.max(0, Math.min(1, (+energy || 0) / top)) : 0;
+  const e = Math.max(0, Math.floor(+energy || 0));
+  const max = +top || 0;
+  let w;
+  if (max && e >= max) w = '100%';          // 49 分：整条填满
+  else if (e < 8) w = '0%';                 // 0–7 分：条头还没进木箱那一格
+  else {
+    const i = Math.floor(e / 7) - 1;
+    const r = e - 7 * (i + 1);
+    w = 'calc(' + i + ' * (100% + 6px) / 7 + ' + r +
+      ' * (100% - 22px) / 49 - 1px)';
+  }
   return '<div class="chest-bar" role="progressbar" aria-valuenow="' +
-    num(energy) + '" aria-valuemax="' + num(top) + '">' +
-    '<span class="chest-bar-f" style="width:' + (pct * 100).toFixed(2) + '%"></span></div>';
+    num(e) + '" aria-valuemax="' + num(max) + '">' +
+    '<span class="chest-bar-f" style="width:' + w + '"></span></div>';
 }
 
 /* 宝箱详情：从宝箱页「查看宝箱详情」进来。七档一张表，
@@ -876,8 +907,8 @@ async function kScreenBoxInfo() {
       rnd = '<span class="bxif-rate">' + num(rate) + '%概率</span>' +
         '<span class="bxif-pool">' + pool + '</span>' +
         (+t.diamond_rate > 0
-          ? '<span class="bxif-pool">另有 ' + Math.round(+t.diamond_rate * 100) +
-            '% 机会出钻石级卡</span>' : '');
+          ? '<span class="bxif-pool">有' + Math.round(+t.diamond_rate * 100) +
+            '%概率出钻石级卡</span>' : '');
     }
     h += '<div class="bxif-r">' +
       '<span class="bxif-c bxif-tier">' + kGlyph(t.icon || kBoxIcon(t.tier), 26) +

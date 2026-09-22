@@ -387,16 +387,28 @@ img { max-width: 100%; }
 .qa-cell .qt span { display: block; color: var(--ink-3); font-size: calc(10.5 * var(--u-sm)); }
 
 /* ---------- 弹层 ---------- */
+/* 遮罩自己不是滚动容器，手指落上去时浏览器会顺着 DOM 往上找「能滚的那一个」，
+   找到谁就滚谁 —— 于是滚的是弹层后面那一页。overscroll-behavior 只对滚动容器
+   生效，管不到一块没得滚的遮罩。所以这里给它一个 overflow: hidden，
+   先把它自己变成滚动容器，再让它的滚动不许外传；
+   app.js 里另外挂一道 touchmove / wheel 拦截兜底（iOS 上光靠 CSS 不稳）。
+   两层一起上：弹窗开着的时候，任何一层滑动都不带动后面那页。 */
 .sheet {
   position: fixed; inset: 0; z-index: 60; display: none;
   background: rgba(16, 20, 30, .42); align-items: flex-end;
+  overflow: hidden; overscroll-behavior: contain;
 }
 .sheet.on { display: flex; }
 .sheet-body {
   width: 100%; max-width: var(--sheet-w); margin: 0 auto; background: var(--card);
   border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + var(--safe-b));
-  max-height: 86vh; overflow-y: auto; animation: up .18s ease-out;
+  /* 内容比框高就在框里滚，滚到头不许往上抛给后面那页 */
+  max-height: 86vh; overflow-y: auto; overscroll-behavior: contain;
+  animation: up .18s ease-out;
 }
+/* 配图面板搬进弹层之后，搜索框原来靠 --card 白底跟下面那块米色面板分层；
+   弹层自己也是白的，白压白就只剩一道描边，底色换成页面底那档。 */
+.sheet-body .ip-q { background: var(--bg); }
 @keyframes up { from { transform: translateY(14px); opacity: .6; } to { transform: none; opacity: 1; } }
 .sheet h3 { margin: 0 0 4px; font-size: calc(16 * var(--u)); }
 
