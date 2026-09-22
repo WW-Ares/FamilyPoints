@@ -77,6 +77,23 @@ async function shot(page, name) {
   await page.waitForTimeout(900);
   await shot(page, '7-家长端-月度统计');
 
+  /* 换图那一屏：新那七只是默认（宝箱组），旧的七只留在「宝箱·旧」组里
+     随时挑得回来 —— 「老的留着」这句话得落在这儿，不是落在仓库里。
+     这一层弹层画在 #sheetBody 里，不在 #view 里；分组那一排 chip 又要先
+     点开某一格的选图面板才出现。 */
+  await tap(page, '#tabs button:has-text("我的")');
+  await tap(page, '#view [data-go="settings"]');
+  await tap(page, '#view #iconBtn');
+  await page.waitForTimeout(800);
+  await tap(page, '#sheetBody .ip-btn[data-ip="ic-b-1"]');
+  await page.waitForTimeout(500);
+  await tap(page, '#sheetBody .ip-chips button[data-g="宝箱"]');
+  await page.waitForTimeout(500);
+  await shot(page, '8-家长端-换图-宝箱-新');
+  await tap(page, '#sheetBody .ip-chips button[data-g="宝箱·旧"]');
+  await page.waitForTimeout(500);
+  await shot(page, '9-家长端-换图-宝箱-旧');
+
   await browser.close();
   console.log('截图目录: ' + SHOT);
 })().catch(e => { console.error(e); process.exit(1); });

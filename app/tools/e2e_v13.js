@@ -496,6 +496,25 @@ async function walkTabs(page, tag) {
   say('   星尘直接买: ' + buyBoxes + ' 档');
   if (buyBoxes !== 3) bad('[v31] 星尘直接买不是三档，是 ' + buyBoxes);
   if (await page.locator('#view button[data-buy]').count()) bad('[v31] 宝箱栏还在卖箱子');
+  /* v1.7：这三格改成竖排（箱图 / 名 / 价），跟设计稿一致。
+     原来是横排「图 + 名/价」，价格那一行只剩七十来像素，「105 星尘」的
+     「星尘」被折成上下两行 —— 所以这里量的是「有没有折行 / 有没有撑爆」，
+     光查文字在不在是查不出这个的。 */
+  const buy = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#view .card--buy')).map(el => {
+      const p = el.querySelector('.cb-p');
+      return { txt: p ? p.innerText.replace(/\s+/g, ' ') : '',
+               lines: p ? p.getClientRects().length : 0,
+               over: el.scrollWidth - el.clientWidth,
+               ph: el.getBoundingClientRect().height };
+    }));
+  say('   直接买三格: ' + buy.map(b => b.txt + '(' + Math.round(b.ph) + 'px)').join(' | '));
+  if (buy.some(b => !/星尘$/.test(b.txt))) bad('[v1.7] 直购格的价钱没写成「N 星尘」');
+  if (buy.some(b => b.lines > 1)) bad('[v1.7] 直购格的价钱折成了两行');
+  if (buy.some(b => b.over > 1)) bad('[v1.7] 直购格撑爆了 ' + Math.max(...buy.map(b => b.over)) + 'px');
+  if (buy.length && new Set(buy.map(b => Math.round(b.ph))).size !== 1) {
+    bad('[v1.7] 直购三格高矮不一：' + buy.map(b => Math.round(b.ph)).join('/'));
+  }
 
   /* v38：结算只发一只箱子，箱子里有什么点开那一刻才抽。
      演示库给女儿留了一只没点开的箱，这里把它走完整条路：
@@ -539,15 +558,60 @@ async function walkTabs(page, tag) {
     for (const nm of ['木箱', '钻石箱', '完美箱']) {
       if (info.indexOf(nm) < 0) bad('[v1.7] 详情页少了「' + nm + '」');
     }
-    // 木铜银没有随机件，那一格要明写「没有」——留白会被读成「忘了填」
+    // 木铜银没有随机件，那一格要明写「无随机件」——留白会被读成「忘了填」
     const infoRows = await page.locator('#view .bxif-r').count();
     const noneCnt = await page.locator('#view .bxif-none').count();
     const rateCells = (await page.locator('#view .bxif-rate').allInnerTexts()).map(flat);
-    say('   详情页: ' + infoRows + ' 行；没有随机件 ' + noneCnt + ' 档；概率 ' + rateCells.join(' '));
+    say('   详情页: ' + infoRows + ' 行；无随机件 ' + noneCnt + ' 档；概率 ' + rateCells.join(' '));
     if (infoRows !== 7) bad('[v1.7] 详情页不是七行，是 ' + infoRows);
     if (noneCnt + rateCells.length !== 7) bad('[v1.7] 随机件那一列有空档');
-    if (rateCells.join('') !== '10%20%40%70%') {
+    if (rateCells.map(x => x.replace('概率', '')).join('') !== '10%20%40%70%') {
       bad('[v1.7] 随机件概率不是 10/20/40/70：' + rateCells.join(' '));
+    }
+    if (rateCells.some(x => x.indexOf('概率') < 0)) {
+      bad('[v1.7] 概率胶囊没写「概率」两个字：' + rateCells.join(' '));
+    }
+    /* v1.7 文案照设计稿那张总表逐字对：券在前、卡在后（「娱乐券 8 张」
+       不是「8 张娱乐券」），每张卡各占一行（不是拿「·」串成一行 ——
+       串起来读着像「给三张」，其实是一行一件）。
+       这几条都得看原样的空白：flat() 会把所有空白抹平，一旦抹平，
+       「各占一行」和「用 / 分隔」这两条就永远成立，等于没查。 */
+    const sq = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const mustTxt = (await page.locator('#view .bxif-must').allInnerTexts()).map(sq);
+    say('   必得列: ' + mustTxt.join(' | '));
+    if (/\d+ 张娱乐券/.test(mustTxt.join(' '))) {
+      bad('[v1.7] 必得列还写着「N 张娱乐券」，设计稿是「娱乐券 N 张」');
+    }
+    if (mustTxt.filter(x => x.indexOf('娱乐券') < 0).length) {
+      bad('[v1.7] 必得列有哪一档没写娱乐券');
+    }
+    const pk = (await page.locator('#view .bxif-must').allInnerTexts())[6] || '';
+    if (pk.split('\n').filter(x => /卡 \d+ 张/.test(sq(x))).length !== 3) {
+      bad('[v1.7] 完美箱那三张卡没各占一行：' + JSON.stringify(pk));
+    }
+    // 随机件那一列用「 / 」串，并且完美箱多一句「另有 10% 机会出钻石级卡」
+    const poolRaw = (await page.locator('#view .bxif-pool').allInnerTexts()).map(sq);
+    const poolTxt = poolRaw.join(' ');
+    say('   随机列: ' + poolTxt.slice(0, 100));
+    if (poolTxt.indexOf(' / ') < 0) bad('[v1.7] 随机件那一列没用「 / 」分隔');
+    if (poolTxt.indexOf('另有 10% 机会出钻石级卡') < 0) {
+      bad('[v1.7] 完美箱少那一句「另有 10% 机会出钻石级卡」：' + JSON.stringify(poolRaw.slice(-2)));
+    }
+    // 详情页的箱图跟着家长换的那张走，默认就是设计稿那七只扁平箱
+    const iSrcs = await page.evaluate(() => Array.from(
+      document.querySelectorAll('#view .bxif-tier img')).map(u => u.getAttribute('src')));
+    say('   详情页图: ' + iSrcs.join(' '));
+    if (iSrcs.length !== 7) bad('[v1.7] 详情页的箱图不是 7 张，是 ' + iSrcs.length);
+    if (iSrcs.join() !== srcs.join()) {
+      bad('[v1.7] 详情页的箱图和宝箱页那七张对不上：' + iSrcs.join(' '));
+    }
+    /* 老那七只（带圆底那版）留在图库当备选 —— 家长在「给它们换张图」里
+       还挑得到，不然「老的留着」这句话只落在仓库里，落不到界面上。 */
+    const libBox = await page.evaluate(() => (window.ICONS || [])
+      .filter(i => i.t.indexOf('bx') === 0).map(i => i.t));
+    say('   图库里的箱子: ' + libBox.join(' '));
+    if (libBox.filter(t => t.indexOf('bxold_') === 0).length !== 7) {
+      bad('[v1.7] 图库里找不到旧那七只宝箱图：' + libBox.join(' '));
     }
     const backTo = await page.locator('#view .appbar-back').getAttribute('data-go');
     if (backTo !== 'chest') bad('[v1.7] 详情页返回不去宝箱页，去的是「' + backTo + '」');
@@ -1242,18 +1306,29 @@ async function walkTabs(page, tag) {
   }
   if (cardTxt0.indexOf('写成能核对的样子') < 0) bad('[v1.6] 卡里少了标题那句提示');
   /* v1.7：数量和配图搬到同一行。并起来这一屏少一行，按钮不用滚那么远。
-     断言看的是两个控件的前后位置差，不是「有没有」—— 分两行时它也照样在。 */
+     断言看的是两个控件的前后位置差，不是「有没有」—— 分两行时它也照样在。
+     另外量一下「＋」和「配图」之间剩多少空：贴着的时候读起来是「＋配图」
+     一个词，两件事混成一件。 */
   const pair = await page.evaluate(() => {
     const a = document.querySelector('#view #pAmtBox'), b = document.querySelector('#view #pIconBox');
     if (!a || !b) return null;
     const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
-    return { sameRow: Math.abs(ra.top - rb.top) < 6, ay: ra.top, by: rb.top, aw: ra.width, bw: rb.width };
+    const lab = b.querySelector('.plab');
+    return { sameRow: Math.abs(ra.top - rb.top) < 6, ay: ra.top, by: rb.top,
+             aw: ra.width, bw: rb.width,
+             gap: lab ? lab.getBoundingClientRect().left - ra.right : -1,
+             over: Math.max(a.scrollWidth - a.clientWidth, b.scrollWidth - b.clientWidth) };
   });
   if (!pair) bad('[v1.7] 页面上找不到「数量 / 配图」两组');
   else {
     say('   数量与配图: ' + (pair.sameRow ? '同一行' : '还在两行') +
-      '（数量 ' + Math.round(pair.aw) + 'px / 配图 ' + Math.round(pair.bw) + 'px）');
+      '（数量 ' + Math.round(pair.aw) + 'px / 配图 ' + Math.round(pair.bw) +
+      'px，中间留 ' + Math.round(pair.gap) + 'px）');
     if (!pair.sameRow) bad('[v1.7] 数量与配图没排到同一行');
+    if (pair.gap < 10) {
+      bad('[v1.7] 「＋」和「配图」只隔 ' + Math.round(pair.gap) + 'px，读起来是一个词');
+    }
+    if (pair.over > 1) bad('[v1.7] 数量 / 配图这一行挤爆了 ' + pair.over + 'px');
   }
   if (cardTxt0.indexOf('给谁') < 0) bad('[v1.6] 卡里找不到「给谁」那一行');
   // 「给谁」那一行不该带小注：选谁就是派给谁，六个字说得清的事不用再注一遍
@@ -1524,9 +1599,28 @@ async function walkTabs(page, tag) {
   /* v1.7：翻月从两个小描边按钮换成孩子端那一对圆块。到头的那一边不是
      「被禁用的按钮」而是一块灰的 —— 灰着摆在那儿说的是「前面没有了」，
      禁用只是一团看不懂的浅。所以这里查的是它到底还是不是一颗按钮。 */
-  const mvBtnN = await page.locator('#view .cal-nav button.cal-mv').count();
-  const mvOffN = await page.locator('#view .cal-nav .cal-mv.is-off').count();
+  const mvBtnN = await page.locator('#view .cal-head button.cal-mv').count();
+  const mvOffN = await page.locator('#view .cal-head .cal-mv.is-off').count();
   say('   翻月: 可点 ' + mvBtnN + ' 颗 / 到头灰着 ' + mvOffN + ' 颗');
+  /* 这个壳原来叫 .cal-nav，跟 style.css 里「一颗 34×34 的方块按钮」撞了名，
+     左箭头底下就垫出一块奶色方块来。改完名要真查一遍：壳上不能有底色，
+     底下的方块没了，箭头才是干净的一颗圆。 */
+  const headBox = await page.evaluate(() => {
+    const el = document.querySelector('#view .cal-head');
+    if (!el) return null;
+    const g = getComputedStyle(el);
+    return { bg: g.backgroundColor, w: el.getBoundingClientRect().width,
+             old: document.querySelectorAll('#view .cal-nav').length };
+  });
+  if (!headBox) bad('[v1.7] 月度统计里找不到翻月那一段');
+  else {
+    say('   翻月壳: ' + Math.round(headBox.w) + 'px 宽，底色 ' + headBox.bg);
+    if (headBox.bg !== 'rgba(0, 0, 0, 0)') {
+      bad('[v1.7] 翻月那个壳自己带底色（' + headBox.bg + '），箭头底下会垫出一块方块');
+    }
+    if (headBox.w < 120) bad('[v1.7] 翻月那个壳只有 ' + Math.round(headBox.w) + 'px 宽，被挤住了');
+    if (headBox.old) bad('[v1.7] 还有 .cal-nav 这个老壳名字在页面上（撞名没清干净）');
+  }
   if (mvOffN !== 1) bad('[v1.7] 到了当月，「下个月」没变成灰块（灰块 ' + mvOffN + ' 颗）');
   if (mvBtnN !== 1) bad('[v1.7] 到了当月，翻月按钮不是 1 颗可点（' + mvBtnN + ' 颗）');
   // v23：翻月不许把页面顶回最上面。月历在打分页最底部，
@@ -1534,7 +1628,7 @@ async function walkTabs(page, tag) {
   await page.locator('#view .cal-bar .month').scrollIntoViewIfNeeded();
   await page.waitForTimeout(300);
   const scrollBefore = await page.evaluate(() => window.scrollY);
-  await page.locator('#view .cal-nav button.cal-mv').first().click();
+  await page.locator('#view .cal-head button.cal-mv').first().click();
   await page.waitForTimeout(1200);
   const scrollAfter = await page.evaluate(() => window.scrollY);
   say('   翻月前后滚动位置: ' + scrollBefore + ' -> ' + scrollAfter);
@@ -1546,7 +1640,7 @@ async function walkTabs(page, tag) {
   if (calNow === calPrev) bad('[月度统计] 点「上个月」月份没变');
   // 回当月。停在当月时右箭头是灰块（不是按钮），翻走之后它才变回按钮，
   // 所以这里按「第二颗」取。
-  await page.locator('#view .cal-nav button.cal-mv').nth(1).click();
+  await page.locator('#view .cal-head button.cal-mv').nth(1).click();
   await page.waitForTimeout(1200);
   // 点某一天，看当天七项
   let dayBtn = page.locator('#view button.cal-cell.is-full').first();

@@ -556,12 +556,6 @@ tr.mx-why[hidden] { display: none; }
 /* ---------- 月度统计（打分页底部那张日历） ---------- */
 .cal-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
 .cal-h b { font-size: calc(15 * var(--u)); font-variant-numeric: tabular-nums; }
-.cal-nav {
-  width: 34px; height: 34px; border-radius: 10px; flex: none;
-  display: grid; place-items: center; font-size: calc(21 * var(--u)); line-height: 1;
-  color: var(--brand-dark); background: var(--brand-soft);
-}
-.cal-nav:disabled { opacity: .3; }
 table.cal { width: 100%; border-collapse: collapse; table-layout: fixed; }
 table.cal th {
   font-weight: 650; color: var(--ink-3); font-size: calc(10.5 * var(--u-sm));

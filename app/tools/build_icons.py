@@ -62,9 +62,43 @@ PALETTE = {
 
 
 # ---------------------------------------------------------------------------
-# 宝箱：七档同一副骨架，只换配色和顶上那件小装饰。
-# 骨架照抄 web/candy/i-chest-*.svg，22 版心放大到 120 版心（约 ×2.7）。
+# 宝箱：七档同一副骨架，只换配色。
+#
+# 现行这套（CRATES）是 2026-09-22 改版定的：扁平正面箱，没有圆底，
+# 骨架直接照搬设计稿画板 728497723585730 的七列箱图（26 版心）。
+# 不带圆底是有意的 —— 箱子的颜色本身就是档位，再垫一层同色圆底，
+# 七只箱子远看全一样；去掉圆底，颜色直接顶到边上，一眼分得出。
+# 同一个文件在宝箱页七列画 26、在能量卡那只大箱画 118，
+# 不再像原来那样留两幅画（改一处忘一处）。
+#
+# 底下那七只带圆底的（BXOLD）是上一版的样子，留在图库里当备选，
+# 家长在「给它们换张图」里还能挑回来。
 # ---------------------------------------------------------------------------
+def crate_body(lid, body):
+    return (
+        '<path d="M4 11c0-3.4 4-6 9-6s9 2.6 9 6v1H4z" fill="%s"/>'
+        '<rect x="4" y="12" width="18" height="9" rx="2" fill="%s"/>'
+        '<rect x="4" y="15.8" width="18" height="1.3" fill="%s" opacity=".35"/>'
+        '<rect x="11.5" y="10.5" width="3" height="4.5" rx="1" fill="#FFE9A8"/>'
+        '<circle cx="13" cy="13" r=".75" fill="%s"/>'
+        % (lid, body, body, body)
+    )
+
+
+# (token, 显示名, 箱盖色, 箱体色, 搜索词)
+CRATES = [
+    ("bx_wood", "木箱", "#A9754A", "#6B4213", "木 一档 7 分"),
+    ("bx_copper", "铜箱", "#B07B4A", "#8A3E0C", "铜 二档 14 分"),
+    ("bx_silver", "银箱", "#7C8794", "#4E5A68", "银 三档 21 分"),
+    ("bx_gold", "金箱", "#B57A1F", "#7A520E", "金 四档 28 分"),
+    ("bx_diamond", "钻石箱", "#2E8CA5", "#1D6273", "钻 五档 35 分"),
+    ("bx_king", "王者箱", "#7B4FB0", "#523080", "王 六档 42 分"),
+    ("bx_perfect", "完美箱", "#D6537F", "#9A2F52", "完满 七档 49 分"),
+]
+
+
+# 宝箱（旧）：七档同一副骨架，只换配色和顶上那件小装饰。
+# 骨架照抄 web/candy/i-chest-*.svg，22 版心放大到 120 版心（约 ×2.7）。
 def chest_body(lid, body, stroke, ornament=""):
     return (
         '<path d="M30 59c0-11 8-19 18-19h24c10 0 18 8 18 19z" fill="%s" '
@@ -78,28 +112,28 @@ def chest_body(lid, body, stroke, ornament=""):
 
 BOXES = [
     # (token, 显示名, 底色, 箱盖, 箱体, 描边, 顶上的小装饰, 搜索词)
-    ("bx_wood", "木箱", "wood", "#D9A063", "#B8824A", "#6B4213",
+    ("bxold_wood", "木箱·旧", "wood", "#D9A063", "#B8824A", "#6B4213",
      '<path d="M32 68h56M32 80h56" stroke="#6B4213" stroke-width="3" opacity=".5"/>',
      "木 一档 7 分"),
-    ("bx_copper", "铜箱", "copper", "#E3A96E", "#C4793C", "#8A3E0C",
+    ("bxold_copper", "铜箱·旧", "copper", "#E3A96E", "#C4793C", "#8A3E0C",
      '<path d="M36 76h48" stroke="#8A3E0C" stroke-width="4" stroke-linecap="round"/>',
      "铜 二档 14 分"),
-    ("bx_silver", "银箱", "silver", "#EDF1F6", "#C3CAD6", "#76808F",
+    ("bxold_silver", "银箱·旧", "silver", "#EDF1F6", "#C3CAD6", "#76808F",
      '<rect x="53" y="63" width="14" height="16" rx="4" fill="#76808F"/>',
      "银 三档 21 分"),
-    ("bx_gold", "金箱", "goldbox", "#FFD76B", "#FFC93C", "#B87A0C",
+    ("bxold_gold", "金箱·旧", "goldbox", "#FFD76B", "#FFC93C", "#B87A0C",
      '<rect x="53" y="63" width="14" height="16" rx="4" fill="#B87A0C"/>'
      '<circle cx="74" cy="50" r="4" fill="#ffffff" opacity=".9"/>',
      "金 四档 28 分"),
-    ("bx_diamond", "钻石箱", "diamond", "#B7E7FF", "#6FC8F5", "#2F7FE8",
+    ("bxold_diamond", "钻石箱·旧", "diamond", "#B7E7FF", "#6FC8F5", "#2F7FE8",
      '<path d="M60 42l11 8-11 8-11-8z" fill="#EAF8FF" stroke="#2F7FE8" '
      'stroke-width="3" stroke-linejoin="round"/>',
      "钻 五档 35 分"),
-    ("bx_king", "王者箱", "king", "#C9BAFF", "#8B6BFF", "#4B2FB8",
+    ("bxold_king", "王者箱·旧", "king", "#C9BAFF", "#8B6BFF", "#4B2FB8",
      '<path d="M48 47l4-15 8 10 8-10 4 15z" fill="#FFC93C" stroke="#4B2FB8" '
      'stroke-width="3" stroke-linejoin="round"/>',
      "王 六档 42 分"),
-    ("bx_perfect", "完美箱", "perfect", "#FFC9E4", "#FF9FCE", "#C2185B",
+    ("bxold_perfect", "完美箱·旧", "perfect", "#FFC9E4", "#FF9FCE", "#C2185B",
      '<path d="M60 24l4.5 9 10 1.5-7 7 1.6 10-9.1-5-9.1 5 1.6-10-7-7 10-1.5z" '
      'fill="#FFE9A8" stroke="#C2185B" stroke-width="3" stroke-linejoin="round"/>',
      "完满 七档 49 分"),
@@ -513,8 +547,11 @@ ICONS = [
      '<path d="M46 84c-2-3-3-6-3-9h10c0 3-1 6-3 9z" fill="{w}"/>'
      '<path d="M34 82L86 30" stroke="{bg}" stroke-width="7" stroke-linecap="round"/>'),
 
-    # 四、宝箱七档（配色与孩子端宝箱页同一套）
-] + [(t, n, "宝箱", bg, k, chest_body(lid, bd, st, orn))
+    # 四、宝箱七档（现行：扁平箱，配色照设计稿）
+] + [(t, n, "宝箱", "", k, crate_body(lid, bd))
+     for (t, n, lid, bd, k) in CRATES] + [
+    # 四之二、宝箱七档（旧：带圆底那一版，留作备选）
+] + [(t, n, "宝箱·旧", bg, k, chest_body(lid, bd, st, orn))
      for (t, n, bg, lid, bd, st, orn, k) in BOXES] + [
 
     # 五、系统 --------------------------------------------------------------
@@ -633,14 +670,25 @@ def build_one(token, body, bg):
     )
 
 
+def build_flat(body):
+    """不带圆底的那一类：图形自己就是全部，外面多垫一层就成了第八种颜色。
+    viewBox 用图形自己的 26，谁用谁按需缩放（26 / 118 都行）。"""
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 26">%s</svg>\n'
+            % body)
+
+
 def main():
     if not os.path.isdir(OUT_SVG):
         os.makedirs(OUT_SVG)
 
     tokens = []
     for token, label, grp, bgname, keys, body in ICONS:
-        bg = PALETTE[bgname]
-        svg = HEADER + build_one(token, body.format(w=W, d=DARK, bg=bg), bg)
+        # bgname 空 = 这一类不垫圆底（现在只有宝箱七档这么画）
+        if bgname == "":
+            svg = HEADER + build_flat(body.format(w=W, d=DARK, bg=""))
+        else:
+            bg = PALETTE[bgname]
+            svg = HEADER + build_one(token, body.format(w=W, d=DARK, bg=bg), bg)
         with io.open(os.path.join(OUT_SVG, token + ".svg"), "w",
                      encoding="utf-8", newline="\n") as f:
             f.write(svg)
@@ -688,8 +736,8 @@ def main():
         assert re.match(r"^[a-z0-9_]+$", token), "token 非法：" + token
         assert token not in seen, "token 重名：" + token
         seen.add(token)
-        assert bgname in PALETTE, "底色没定义：" + bgname
-        filled = body.format(w=W, d=DARK, bg=PALETTE[bgname])
+        assert bgname == "" or bgname in PALETTE, "底色没定义：" + bgname
+        filled = body.format(w=W, d=DARK, bg=PALETTE.get(bgname, ""))
         assert "{" not in filled, "占位符没填完：" + token
     print("自检通过：%d 个 token 无重名" % len(seen))
 

@@ -3850,7 +3850,7 @@ function calDaySheet(r) {
    点日期条和切孩子反过来 —— 上面那张卡要跟着变，那才走整页 render。
 
    容器 id 由调用方给（rf 画出来的是什么，就换什么），翻月的按钮在
-   .cal-nav 里 —— 交付包那张图里 .cal-nav 是个壳，按钮是它里面那两个，
+   .cal-head 里 —— 那张图里这个壳只是个容器，按钮是它里面那两个，
    所以禁用要落到 button 上，落在壳上一点用都没有（壳没有 disabled）。 */
 function bindCal(target, day, rf, boxId) {
   const box = $(boxId || '#pCalBox');
@@ -3859,7 +3859,7 @@ function bindCal(target, day, rf, boxId) {
     const mv = +b.dataset.mv;
     if (!CAL) return;
     const ym = ymShift(CAL.ym, mv);
-    $$('.cal-nav button', box).forEach(x => { x.disabled = true; });
+    $$('.cal-head button', box).forEach(x => { x.disabled = true; });
     try {
       const m = await monthData(target, ym);
       S.month = ym;
@@ -4168,7 +4168,7 @@ function pCalHTML(m, sel) {
     // 翻月做成孩子端那一对圆点块（不是描边小按钮）：白底 + 淡描边在奶白卡片上
     // 等于隐形，家长看半天找不着上个月在哪翻。到头的那一边变成灰块，
     // 不是把它禁用 —— 灰着摆在那儿，说的是「前面没有了」，禁用只是一团看不懂的浅。
-    '<span class="cal-nav">' +
+    '<span class="cal-head">' +
     '<button type="button" class="cal-mv" data-mv="-1" aria-label="上个月">‹</button>' +
     /* 年月连着写（不带空格）：中间那两个空格一拆成三段，窄屏上「9 月」会被
        挤到第二行去，箭头和说明就跟着错位。这一行另外也不用数字字体。 */

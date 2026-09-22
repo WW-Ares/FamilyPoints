@@ -58,6 +58,10 @@ const K_TIER_ICON = ['bx_wood', 'bx_copper', 'bx_silver', 'bx_gold',
   'bx_diamond', 'bx_king', 'bx_perfect'];
 function kBoxIcon(tier) { return K_TIER_ICON[(+tier || 1) - 1] || 'bx_wood'; }
 
+/* 「星尘直接买」那三格各自的底色。照设计稿：金箱奶油、钻石箱偏蓝、王者箱
+   偏紫 —— 三格并排，只靠箱子本身的颜色分不开，垫一层底色一眼就分得清。 */
+const BUY_TINT = { 4: '#FFF6E8', 5: '#F1F7FA', 6: '#F3EEFB' };
+
 /* 箱子的图有两个来路：家长在「给它们换张图」里挑的那个（存在 box_tier.icon，
    接口原样带回），和我们自己这套默认的（上面七个 token）。
    两条路合在一个出口，是因为箱子出现在宝箱页、周期卡、直购列表、开箱动画好几处，
@@ -780,13 +784,11 @@ async function kScreenChest() {
       '<div class="grid3" style="gap:8px">' + boxes.map(b => {
         const can = left > 0 && d.stardust >= b.price;
         return '<button class="card--buy" data-box="' + b.tier + '" data-p="' + b.price + '"' +
+          ' style="background:' + (BUY_TINT[b.tier] || '#fff') + '"' +
           (can ? '' : ' disabled') + '>' +
-          kGlyph(b.icon || kBoxIcon(b.tier), 22) +
-          '<span class="v" style="gap:3px;align-items:flex-start">' +
-          '<span style="font-size:10.5px;font-weight:700">' + esc(kBoxName(b)) + '</span>' +
-          '<span class="h" style="gap:2px">' + ic('i-stardust', 9, 'var(--stardust)') +
-          '<span class="num" style="font-size:11px;color:var(--orange)">' + num(b.price) +
-          '</span><span class="t-3" style="font-size:9px">星尘</span></span></span></button>';
+          kGlyph(b.icon || kBoxIcon(b.tier), 26) +
+          '<span class="cb-n">' + esc(kBoxName(b)) + '</span>' +
+          '<span class="cb-p">' + num(b.price) + ' 星尘</span></button>';
       }).join('') + '</div>' +
       '<div class="t-3" style="font-size:10px;line-height:1.6;margin-top:11px">' +
       '买来的箱不含随机件，开不出传说与钻石级卡；木铜银与完美箱不卖。' +
@@ -832,7 +834,11 @@ function kChestBar(energy, top) {
 /* 宝箱详情：从宝箱页「查看宝箱详情」进来。七档一张表，
    左列哪一档、中列肯定拿到什么、右列有多大机会多掉一件。
    概率原来写在宝箱页底下那一行小字里，但「金箱 10%」这四个字回答不了
-   「10% 出的是什么」—— 要写就得把那件东西写出来，那一行小字是装不下的。 */
+   「10% 出的是什么」—— 要写就得把那件东西写出来，那一行小字是装不下的。
+
+   文案按设计稿那张总表逐字对：券在前、卡在后，卡一张一行（「普通卡 1 张」
+   不是「1 张普通」），随机件那一列用「 / 」串，不拿「·」串 ——
+   「·」串三张卡读起来像「给你三张」，其实是一行一件。 */
 async function kScreenBoxInfo() {
   const d = await kg('/api/boxes?member_id=' + S.me.id) || {};
   const tiers = d.tiers || [];
@@ -849,29 +855,34 @@ async function kScreenBoxInfo() {
     '<span class="bxif-hc">还有机会多掉一件</span></div>';
   tiers.forEach(function (t) {
     const c = BTIER_COLOR[t.tier] || 'var(--ink)';
-    const must = [num(t.tickets) + ' 张娱乐券'];
-    if (+t.card_count > 0) {
-      must.push(((t.cards || []).map(function (x) {
-        return num(x.count) + ' 张' + esc(x.name || RAR[x.rarity] || '卡');
-      }).join(' · ')) || (num(t.card_count) + ' 张卡'));
-    }
-    // 随机件的概率写 0 就是没有；木铜银没有随机件，那一列写「没有」，
+    const cards = t.cards || [];
+    const must = ['娱乐券 ' + num(t.tickets) + ' 张'];
+    cards.forEach(function (x) {
+      must.push((RAR[x.rarity] || '') + '卡 ' + num(x.count) + ' 张');
+    });
+    if (!cards.length && +t.card_count > 0) must.push(num(t.card_count) + ' 张卡');
+    // 随机件的概率写 0 就是没有；木铜银没有随机件，那一列写「无随机件」，
     // 不写是不会自己明白的 —— 空格会被读成「忘了填」。
     const rate = Math.round((+t.random_rate || 0) * 100);
-    const pool = (t.random_pool || []).map(function (x) { return esc(x.label || ''); })
-      .filter(Boolean).join(' · ');
-    let rnd = '<span class="bxif-none">没有</span>';
+    // 一件一个 nowrap 的小块，中间用「 / 」串：那一列只有 110 来像素宽，
+    // 不锁住的话「自选普通卡 1 张」会在「自选普通」和「卡 1 张」之间断开，
+    // 读起来像两件东西。断了也要断在「 / 」上。
+    const pool = (t.random_pool || []).map(function (x) {
+      const s = esc(x.label || '');
+      return s ? '<span class="bxif-pool-i">' + s + '</span>' : '';
+    }).filter(Boolean).join(' / ');
+    let rnd = '<span class="bxif-none">无随机件</span>';
     if (rate > 0 && pool) {
-      rnd = '<span class="bxif-rate">' + num(rate) + '%</span>' +
+      rnd = '<span class="bxif-rate">' + num(rate) + '%概率</span>' +
         '<span class="bxif-pool">' + pool + '</span>' +
         (+t.diamond_rate > 0
-          ? '<span class="bxif-pool">还有 ' + Math.round(+t.diamond_rate * 100) +
-            '% 出钻石级卡</span>' : '');
+          ? '<span class="bxif-pool">另有 ' + Math.round(+t.diamond_rate * 100) +
+            '% 机会出钻石级卡</span>' : '');
     }
     h += '<div class="bxif-r">' +
-      '<span class="bxif-c">' + kGlyph(t.icon || kBoxIcon(t.tier), 30) +
-      '<b style="color:' + c + '">' + esc(t.name) + '</b>' +
-      '<span class="bxif-th">' + num(t.threshold) + ' 分能量</span></span>' +
+      '<span class="bxif-c bxif-tier">' + kGlyph(t.icon || kBoxIcon(t.tier), 26) +
+      '<span class="bxif-nm"><b style="color:' + c + '">' + esc(t.name) + '</b>' +
+      '<span class="bxif-th">需要 ' + num(t.threshold) + ' 分</span></span></span>' +
       '<span class="bxif-c bxif-must">' + must.join('<br>') + '</span>' +
       '<span class="bxif-c bxif-rnd">' + rnd + '</span></div>';
   });

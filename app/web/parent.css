@@ -348,11 +348,15 @@ body.grown .field textarea { min-height: 68px; resize: vertical; }
 
 /* ------------------------------------------------------------------ 月历 */
 body.grown .cal-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-body.grown .cal-nav { display: flex; align-items: center; gap: 10px; }
+/* 这个壳原来叫 .cal-nav，跟 style.css 里那条老规则撞了名 —— 那条老规则把
+   .cal-nav 当成「一颗 34×34 的方块按钮」（上一版的翻月就是这么一个块）。
+   这里只是换了个名字，不改长相，壳上那一层奶色方块自然就没了。
+   跟 v1.6 的 .lg-none 撞 .lg-empty 是同一类坑：同一个类名两层含义。 */
+body.grown .cal-head { display: flex; align-items: center; gap: 10px; }
 /* 年月不用数字字体：那套字体里没有「年」「月」这两个字，会回退到另一个字族，
    一行里中文和数字高低不齐；再被两侧箭头一挤就折成三行。
    不换行是硬要求 —— 折成「2026 年 / 9 / 月」没人读得懂。 */
-body.grown .cal-nav .month {
+body.grown .cal-head .month {
   font-size: calc(15 * var(--u)); font-weight: 700;
   color: var(--ink-title); white-space: nowrap;
 }
@@ -824,11 +828,21 @@ body.grown .prow > .field, body.grown .prow > .ip { flex: 1 1 auto; min-width: 0
 /* 派给某个孩子之后整个收起来的那两问 */
 body.grown .pgrp { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
 /* 数量 + 配图并排：两组各占一半。原来两行各占一整行，一屏要多滚一屏。
-   min-width:0 是让步进化器 / 选图按钮能被压进半栏的前提。 */
-body.grown .prow--pair { gap: calc(12 * var(--u)); }
+   min-width:0 是让步进化器 / 选图按钮能被压进半栏的前提。
+   两半之间留 16（比别的行里的 7 大一档）：这一行左右各有一组控件，
+   中间只隔 7 的话，「＋」和「配图」会连成「＋配图」一个词。 */
+body.grown .prow--pair { gap: calc(16 * var(--u)); align-items: center; }
 body.grown .ppair {
   flex: 1 1 0; min-width: 0;
-  display: flex; align-items: center; gap: calc(7 * var(--u));
+  display: flex; align-items: center; gap: calc(6 * var(--u));
+}
+/* 步进器吃掉这一半剩下的宽度。加减键固定 28、数字框能缩 —— 原来是
+   「30 + 12 + 56 + 12 + 30」写死 140 宽，比半个屏还宽，多出来的十几像素
+   正好顶在「配图」两个字上。 */
+body.grown .ppair .stepper { flex: 1 1 auto; min-width: 0; gap: calc(8 * var(--u)); }
+body.grown .ppair .st-btn { width: 28px; height: 28px; border-radius: 9px; }
+body.grown .ppair .stepper input.st-val {
+  width: auto; flex: 1 1 auto; min-width: 30px;
 }
 
 /* ------------------------------------------------------------------ 我的记录 · 自定义区间 */

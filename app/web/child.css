@@ -396,20 +396,26 @@ body.kid .coupon-card .cnt {
 /* ============================ 星尘直购卡（v38 补） ============================ */
 /* 这个类名 JS 里用了很久，样式却从来没定义过：落成浏览器默认按钮，
    白底、胶囊、边框全丢。设计稿对不上的根因就是它。 */
+/* 三格竖着排：箱图在上、名字居中、价格在下（设计稿就是这个次序）。
+   原来是横排「箱图 + 名字/价格两行」，价格那一行只剩七十来像素，
+   「105 星尘」的「星尘」两个字被折成上下两行，看着像漏了字。 */
 body.kid .card--buy {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; min-width: 0; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  width: 100%; min-width: 0; text-align: center; cursor: pointer;
   padding: 10px; border-radius: var(--r-md);
   background: #fff; border: 1px solid var(--card-line);
   box-shadow: var(--sh-card-sm);
   font-family: var(--font-cn); color: var(--ink);
 }
-body.kid .card--buy > svg { flex: 0 0 auto; }
-body.kid .card--buy > .v { flex: 1; min-width: 0; }
-/* 价格那行本身是 nowrap 的 flex，窄屏下它自己也压不下去（min-content 顶住轨道）。
-   只给它一个 0 下限就能跟着收；不让它 flex-wrap —— 一换行「105 星尘」会整块
-   掉到第二行，390 上就跟设计稿不一样了。 */
-body.kid .card--buy .h { min-width: 0; }
+/* 名字与价格都不许折行：「钻石箱」三个字折成两行、价格折成两行，这一格
+   就比旁边那两格高出一截，三格底边对不齐。 */
+body.kid .card--buy .cb-n {
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700; white-space: nowrap;
+}
+body.kid .card--buy .cb-p {
+  font-size: calc(11 * var(--u-sm)); font-weight: 700; color: var(--orange);
+  white-space: nowrap;
+}
 body.kid .card--buy:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ============================ 「我的」三宫格里能点的两格 ============================ */
@@ -521,8 +527,12 @@ body.kid .chest-bar-f {
 
 /* 宝箱详情页那张表。三列：哪一档 / 必定拿到 / 还有机会多掉一件。
    列宽按内容的分量给：中间那列最长，右边那列要有地方写清单，另一档留给箱子名。 */
+/* 三列：哪一档 / 必定拿到 / 还有机会多掉一件。
+   档位列是「箱图 + 档名 / 需要 N 分」横着排 —— 名字和门槛摆在图的右边，
+   不是摞在图下面：摞起来的话这一行的高度由最左那一列定死，右边两列的字
+   孤零零飘在顶上，看着像没对齐。 */
 body.kid .bxif-h, body.kid .bxif-r {
-  display: grid; grid-template-columns: 84px 1fr 1.15fr; gap: 8px;
+  display: grid; grid-template-columns: 88px 1fr 1.1fr; gap: 8px;
   align-items: start; padding: 11px 12px;
 }
 body.kid .bxif-h { padding: 9px 12px; }
@@ -531,12 +541,16 @@ body.kid .bxif-hc {
 }
 body.kid .bxif-r + .bxif-r { border-top: 1px solid #F2E7D6; }
 body.kid .bxif-c { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+body.kid .bxif-tier { flex-direction: row; align-items: center; gap: 6px; }
+body.kid .bxif-nm { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 body.kid .bxif-c b { font-size: calc(12.5 * var(--u)); font-weight: 700; }
 body.kid .bxif-th { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
 body.kid .bxif-must, body.kid .bxif-pool {
   font-size: calc(11 * var(--u-sm)); line-height: 1.6; color: var(--ink);
 }
 body.kid .bxif-pool { color: #8A7359; }
+/* 随机件一件一块，不许在块内部断行 —— 断点只允许落在「 / 」上 */
+body.kid .bxif-pool-i { white-space: nowrap; }
 body.kid .bxif-none { font-size: calc(10.5 * var(--u-sm)); color: #A08E7A; }
 body.kid .bxif-rate {
   align-self: flex-start; padding: 2px 8px; border-radius: var(--r-pill);
