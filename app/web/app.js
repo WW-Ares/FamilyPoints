@@ -68,12 +68,24 @@ $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeS
    CSS 那边（style.css 的 .sheet）已经给它套了一层 overflow: hidden 加
    overscroll-behavior: contain，这里再自己拦一道兜底：
    手指落在弹层里、又不在那块真能滚的内容上，一律不许它默认滚动。
-   「真能滚」是量出来的 —— 内容比框矮的时候，落上去也是白滑，一并拦掉。 */
+   「真能滚」是量出来的 —— 内容比框矮的时候，落上去也是白滑，一并拦掉。
+
+   横向也算数，别只量 .sheet-body 的纵向：配图面板顶上那排分类（.ip-chips，
+   22 个组横着铺 1100 多 px）是横向滚的，而面板一开默认只铺「任务」那十几张，
+   .sheet-body 纵向并不溢出 —— 于是落在这排上的 touchmove 被一起拦掉，
+   分类左右划不动，看着像「划不了」。落点到 .sheet-body 这条链上，只要有一个
+   方向真能滚，就交给浏览器自己处理；链上没有，才当它是白滑。 */
 (function () {
   const sht = $('#sheet');
+  const rolls = el => !!el && (el.scrollHeight > el.clientHeight + 1 ||
+    el.scrollWidth > el.clientWidth + 1);
   const idle = e => {
-    const b = e.target && e.target.closest ? e.target.closest('.sheet-body') : null;
-    return !(b && b.scrollHeight > b.clientHeight + 1);
+    const t = e.target;
+    const b = t && t.closest ? t.closest('.sheet-body') : null;
+    if (!b) return true;
+    if (rolls(b)) return false;
+    for (let n = t; n && n !== b; n = n.parentElement) { if (rolls(n)) return false; }
+    return true;
   };
   sht.addEventListener('touchmove', e => { if (idle(e)) e.preventDefault(); }, { passive: false });
   sht.addEventListener('wheel', e => { if (idle(e)) e.preventDefault(); }, { passive: false });
@@ -240,10 +252,15 @@ function glyph(icon, kind, size, cls, eager) {
 const IP = {};                 // 每个实例一份状态：当前值 / 当前组 / 搜索词
 const IP_LIMIT = 120;          // 一次最多画这么多格子，再多选的同学靠滚动加载没必要
 
-function iconField(id, cur, kind, label) {
+/* pop=true：这一处点「换」开成独立弹窗（发布页、设置里的换图标）。
+   pop 不给的（心愿表单那种自己就在弹层里的）还是就地展开 ——
+   弹层全局只有一个，二级一开就把上面那份填了一半的表单顶掉了。
+   top 是「退回列表时落回哪」，只有 pop 用得上。 */
+function iconField(id, cur, kind, label, pop) {
   // 配任务的图先落在「任务」那一组（悬赏卷轴 / 勋章 / 钥匙 / 藏宝图这些），
   // 家长发活时找的就是这一类；一上来铺「全部」，得从七个维度那儿开始往下划。
-  IP[id] = { v: cur || '', g: kind === 'task' ? '任务' : '', q: '', kind: kind || '' };
+  IP[id] = { v: cur || '', g: kind === 'task' ? '任务' : '', q: '', kind: kind || '',
+    pop: !!pop, top: 0 };
   return '<div class="field">' + (label ? '<label>' + label + '</label>' : '') +
     '<div class="ip"><button type="button" class="ip-btn" data-ip="' + id + '">' +
     glyph(cur, kind, 26) + '<span class="ip-n">' + esc(iconLabel(cur, kind)) + '</span>' +
@@ -265,21 +282,47 @@ function ipGroups() {
   return gs;
 }
 
+/* emoji 那 252 个没有关键词表（icons.js 由 build_icons.py 生成，手改会被下次
+   重跑覆盖），原来只能按组名命中：搜「星星」，星在「植物」那一组，于是搜出
+   一片空白，家长看到的就是「搜索没用」。这张表只服务搜索，不参与任何显示。 */
+const EMOJI_ALIAS = {
+  '笑脸': '表情 情绪 开心 笑 哭 生气 困',
+  '人物': '人 家人 大人 小孩 职业',
+  '动物': '动物 宠物 猫 狗 鸟 鱼',
+  '植物': '植物 花草 树 叶子 星星 月亮 太阳',
+  '吃的': '吃的 食物 水果 蔬菜 面包',
+  '饮料': '喝的 甜点 蛋糕 冰淇淋 饮料 咖啡',
+  '活动': '运动 球 游戏 玩具 音乐 乐器 画画',
+  '出行': '车 交通 飞机 火车 船 出门 地图',
+  '天气': '天气 太阳 下雨 下雪 云 火 闪光',
+  '物品': '东西 书本 笔 钥匙 锁 礼物 奖杯 钻石 灯',
+  '建筑': '房子 家 城堡 学校 医院 商店 帐篷',
+  '符号': '符号 心 红心 对 错 感叹 问号 钻石 铃铛',
+};
+
 function ipItems(g, q) {
   const out = [];
+  /* 搜索一律跨组：搜的是「这个词在哪」，不是「这个词在不在当前这一组」。
+     原来先按当前组筛、再按词筛，家长停在默认的「任务」那一组里搜「足球」，
+     task_sport 明明在库里，也只报「找到 0 张」—— 报上来的「搜索没效果」
+     就是这一条。分组按钮只在没搜词的时候管筛选。 */
   ICONS.forEach(function (i) {
-    if (g && g !== i.g) return;
-    if (q && i.l.indexOf(q) < 0 && i.k.indexOf(q) < 0 && i.t.indexOf(q) < 0) return;
+    if (q) {
+      if (i.l.indexOf(q) < 0 && i.k.indexOf(q) < 0 && i.t.indexOf(q) < 0) return;
+    } else if (g && g !== i.g) return;
     out.push({ t: i.t, l: i.l, img: true });
   });
   (typeof EMOJI_GROUPS === 'undefined' ? [] : EMOJI_GROUPS).forEach(function (e) {
-    if (g && g !== 'emoji:' + e.g) return;
-    if (q && e.g.indexOf(q) < 0) return;
+    const alias = EMOJI_ALIAS[e.g] || '';
+    if (q) {
+      if (e.g.indexOf(q) < 0 && alias.indexOf(q) < 0 && e.items.indexOf(q) < 0) return;
+    } else if (g && g !== 'emoji:' + e.g) return;
     e.items.forEach(function (m) { out.push({ t: m, l: m, img: false }); });
   });
   (typeof CHAR_GROUPS === 'undefined' ? [] : CHAR_GROUPS).forEach(function (e) {
-    if (g && g !== '字:' + e.g) return;
-    if (q && e.g.indexOf(q) < 0) return;
+    if (q) {
+      if (e.g.indexOf(q) < 0 && e.items.indexOf(q) < 0) return;
+    } else if (g && g !== '字:' + e.g) return;
     e.items.forEach(function (m) { out.push({ t: m, l: m, img: false }); });
   });
   return out;
@@ -292,8 +335,10 @@ function ipGrid(id) {
   const st = IP[id];
   const items = ipItems(st.g, st.q);
   const shown = items.slice(0, IP_LIMIT);
-  const cnt = st.q ? '找到 ' + items.length + ' 张' : '共 ' + items.length + ' 张';
-  let h = '<div class="ip-stat">' + cnt + (st.g ? '　·　' + esc(st.g) : '') + '</div>';
+  // 搜索跨组，这时候再挂着当前组名会让人以为「只在任务里找」，标一句全部组。
+  const cnt = st.q ? '找到 ' + items.length + ' 张　·　全部组'
+    : '共 ' + items.length + ' 张' + (st.g ? '　·　' + esc(st.g) : '');
+  let h = '<div class="ip-stat">' + cnt + '</div>';
   if (!items.length) {
     return h + '<div class="ip-more">没找到，换个词试试，或者点「重置」看全部。</div>';
   }
@@ -319,7 +364,10 @@ function ipBox(id) {
 }
 function ipPanel(id) {
   const st = IP[id];
-  return '<div class="ip-head"><span class="ip-title">配一张图 · 当前：' +
+  // pop 那两处是「列表 → 配图」两级，得有一条退回列表的路。
+  // 挑完图弹窗会自己退回去，这条是给「看了不想改」留的。
+  return (st.pop ? '<button type="button" class="ip-back" data-ipb="' + id + '">‹ 回到列表</button>' : '') +
+    '<div class="ip-head"><span class="ip-title">配一张图 · 当前：' +
     esc(iconLabel(st.v, st.kind)) + '</span>' +
     '<button type="button" class="ip-clear" data-ipv="' + id + '" data-v="">不要图</button></div>' +
     '<div class="ip-top"><input class="ip-q" id="ipq-' + id + '" placeholder="搜：钥匙、星星、宝箱…" ' +
@@ -335,9 +383,26 @@ function ipPanel(id) {
 function ipRender(id) {
   const box = ipBox(id);
   if (!box) return;
+  /* 分类那排是横滑的（22 个组比一屏宽得多）。重画是整块 innerHTML 换掉，
+     位置跟着一起没了：家长滑到右边的「汉字」组、点一下，视野弹回最左边，
+     还得从头再划一遍。重画前把位置记下来，画完放回去。 */
+  const old = box.querySelector('.ip-chips');
+  const keepX = old ? old.scrollLeft : 0;
   box.innerHTML = (ipSheetId === id ? '<h3>配一张图</h3>' : '') + ipPanel(id);
+  const now = box.querySelector('.ip-chips');
+  if (now && keepX) now.scrollLeft = keepX;
 }
 function ipOpen(id) {
+  const st = IP[id] || {};
+  /* pop 那一处（设置里的换图标）自己就在弹层里，但它要的是弹窗不是就地展开：
+     一级列表是 7 维度 + 7 档宝箱 + 券卡，一个面板撑开 1100 多 px 塞在中间，
+     列表被顶得找不着北。记住列表滚到哪，退回来还得落回原来那一项。 */
+  if (st.pop) {
+    st.top = $('#sheetBody').scrollTop;
+    sheet('<h3>配一张图</h3>' + ipPanel(id));
+    ipSheetId = id;
+    return;
+  }
   if ($('#sheet').classList.contains('on')) {   // 已经在弹层里：就地展开
     const box = $('#ipb-' + id);
     if (!box) return;
@@ -351,7 +416,13 @@ function ipOpen(id) {
   ipSheetId = id;
 }
 function ipClose(id) {
-  if (ipSheetId === id) { closeSheet(); return; }
+  const st = IP[id] || {};
+  if (ipSheetId === id) {
+    // pop 那一处不是关掉完事，是退回一级列表，并且落回刚才那一项
+    if (st.pop) { ipSheetId = ''; iconSheet(st.top).catch(err); return; }
+    closeSheet();
+    return;
+  }
   const box = $('#ipb-' + id);
   if (box) box.hidden = true;
 }
@@ -369,10 +440,11 @@ function bindIconField(root) {
   if (r.dataset) r.dataset.ipBound = '1';
   r.addEventListener('click', function (e) {
     const t = e.target && e.target.closest
-      ? e.target.closest('[data-ip],[data-ipv],[data-ipg],[data-ipc]') : null;
+      ? e.target.closest('[data-ip],[data-ipv],[data-ipg],[data-ipc],[data-ipb]') : null;
     if (!t) return;
-    const id = t.dataset.ip || t.dataset.ipv || t.dataset.ipg || t.dataset.ipc;
+    const id = t.dataset.ip || t.dataset.ipv || t.dataset.ipg || t.dataset.ipc || t.dataset.ipb;
     if (!id || !IP[id]) return;
+    if (t.dataset.ipb) { ipClose(id); return; }        // 配图弹窗左上角退回一级列表
     if (t.dataset.ip) {                    // 开 / 合这一格的面板
       const box = $('#ipb-' + id);
       if (box && !box.hidden) { ipClose(id); return; }   // 就地展开的，再点一次收起来
@@ -393,7 +465,9 @@ function bindIconField(root) {
       e.stopPropagation();
       return;
     }
-    if (t.dataset.ipg) { IP[id].g = t.dataset.g; ipRender(id); return; }
+    // 切组顺手把搜索词清掉：词在的时候 ipItems 一律跨组搜，
+    // 不清的话点了分类看起来「没反应」（结果还停在刚才那一堆）。
+    if (t.dataset.ipg) { IP[id].g = t.dataset.g; IP[id].q = ''; ipRender(id); return; }
     if (t.dataset.ipc) { IP[id].g = ''; IP[id].q = ''; ipRender(id); return; }
   });
   r.addEventListener('input', function (e) {
@@ -5356,12 +5430,15 @@ async function holidaySheet() {
 /* 给七维度、宝箱七档、23 张卡 6 种券换图标。
    任务和心愿的图不在这儿改：它们是一次性的东西，图是在发布当时定的。
    这里改的都是「长期存在、反复出现」的那些。 */
-async function iconSheet() {
+async function iconSheet(top) {
   const d = await api('GET', '/api/icon/list');
+  /* pop=true：点「换」开成独立弹窗，不在这条列表里就地撑开。一级是
+     7 个维度 + 7 档宝箱 + 券卡，一个面板撑开 1100 多 px（最多 120 张候选图）
+     夹在中间，列表被顶得找不着北。挑完退回列表，靠 top 落回原来那一项。 */
   const mk = (kind, id, cur, name, sub) => '<div class="item">' + glyph(cur, kind, 30) +
     '<div class="txt"><div class="nm">' + esc(name) + '</div>' +
     '<div class="ds">' + esc(sub || '') + '</div>' +
-    '<div style="margin-top:6px">' + iconField(id, cur, kind, '') + '</div></div></div>';
+    '<div style="margin-top:6px">' + iconField(id, cur, kind, '', true) + '</div></div></div>';
   let h = '<h3>给它们换张图</h3><p class="muted">改完立刻生效，不用重新部署。' +
     '这里的图只是显示用，不影响任何分数、价格、门槛。</p>';
   h += '<div class="sec"><div class="sec-h"><h2>七个维度</h2>' +
@@ -5376,21 +5453,28 @@ async function iconSheet() {
     '</div></div>';
   sheet(h, box => {
     bindIconField(box);
-    // 每份 field 改完立刻存，不等最后的保存按钮：
-    // 一项一项改的时候，中途关掉不至于全丢，而「保存」会把 36 个开关按成两个
-    box.addEventListener('click', async e => {
-      const cell = e.target.closest && e.target.closest('[data-ipv]');
-      if (!cell) return;
-      const id = cell.dataset.ipv;
-      let kind = 'item', key = '';
-      if (id.indexOf('ic-d-') === 0) { kind = 'dimension'; key = id.slice(5); }
-      else if (id.indexOf('ic-b-') === 0) { kind = 'box'; key = +id.slice(5); }
-      else if (id.indexOf('ic-i-') === 0) { kind = 'item'; key = id.slice(5); }
-      try {
-        await api('POST', '/api/icon', { kind: kind, key: key, icon: cell.dataset.v || '' });
-        toast('换好了');
-      } catch (er) { err(er); }
-    });
+    /* 每份 field 改完立刻存，不等最后的保存按钮：
+       一项一项改的时候，中途关掉不至于全丢，而「保存」会把 36 个开关按成两个。
+       这个监听挂在 #sheetBody 上，而 #sheetBody 从来不重画（换的只是里面的
+       innerHTML），所以只该绑一次 —— 不加这道守卫的话，每进来一次就多叠一个，
+       挑一张图会连着发好几次请求。 */
+    if (!box.dataset.iconSave) {
+      box.dataset.iconSave = '1';
+      box.addEventListener('click', async e => {
+        const cell = e.target.closest && e.target.closest('[data-ipv]');
+        if (!cell) return;
+        const id = cell.dataset.ipv;
+        let kind = 'item', key = '';
+        if (id.indexOf('ic-d-') === 0) { kind = 'dimension'; key = id.slice(5); }
+        else if (id.indexOf('ic-b-') === 0) { kind = 'box'; key = +id.slice(5); }
+        else if (id.indexOf('ic-i-') === 0) { kind = 'item'; key = id.slice(5); }
+        try {
+          await api('POST', '/api/icon', { kind: kind, key: key, icon: cell.dataset.v || '' });
+          toast('换好了');
+        } catch (er) { err(er); }
+      });
+    }
+    box.scrollTop = top || 0;    // 从配图弹窗退回来，落回刚才那一项
   });
 }
 

@@ -757,6 +757,16 @@ table.cal td { padding: 2px; }
 /* 面板头：左边写当前选的哪张，右边那颗「不要图」是唯一的清除入口。
    它以前是一颗占满整行的格子，把图标全挤到限高区里，打开像「没图」。 */
 .ip-head { display: flex; align-items: center; gap: 8px; }
+/* 「列表 → 配图」两级里的退回（换图标那处）。挑完图弹窗自己会退，
+   这条是给「看了不想改」留的。appearance 那两行是给 iOS 的：
+   同一个类套在 button 上，UA 自带的 padding 与 appearance 会把尺寸顶歪，
+   全局 button reset 那一条不重置这两样。 */
+.ip-back {
+  display: inline-flex; align-items: center; margin-bottom: 8px;
+  padding: 4px 10px 4px 7px; font-size: calc(12 * var(--u)); color: var(--ink-3);
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+  appearance: none; -webkit-appearance: none;
+}
 .ip-title {
   flex: 1; min-width: 0; font-size: calc(11.5 * var(--u)); color: var(--ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

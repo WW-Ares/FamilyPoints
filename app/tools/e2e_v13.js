@@ -1619,21 +1619,54 @@ async function walkTabs(page, tag) {
   if (!(await page.locator('#sheet.on').count())) {
     bad('[v42] 配图面板第二次点不开了（快照绑定的老毛病）');
   }
-  // 搜索框也是点开之后才生成的，同样要真敲一次。敲一个只在这组里存在的词，
-  // 命中谁就是谁 —— 「什么都没搜出来」也算它有反应，那证明不了它在按词筛。
+  // 搜索框也是点开之后才生成的，同样要真敲一次。
+  /* 搜索一律跨组（v1.9 修的）：家长停在默认的「任务」那一组里搜「足球」，
+     task_sport 明明在库里，原来被「先按组筛」挡掉，面板报「找到 0 张」——
+     报上来的「搜索没效果」就是这一条。所以这里两条都要：组内那张搜得到，
+     组外那张也得搜得到。 */
   await page.locator('#sheetBody #ipq-pIcon').fill('钥匙');
   await page.waitForTimeout(600);
-  const ipHits = await page.evaluate(() => Array.from(
+  let ipHits = await page.evaluate(() => Array.from(
     document.querySelectorAll('#sheetBody .ip-cell'))
     .map(c => c.dataset.v || '').filter(Boolean));
   say('   搜「钥匙」之后命中: ' + (ipHits.join(' ') || '（空）'));
-  if (ipHits.length !== 1 || ipHits[0] !== 'quest_key') {
+  if (ipHits.indexOf('quest_key') < 0) {
     bad('[v42] 配图面板搜「钥匙」没搜出 quest_key，命中 ' + JSON.stringify(ipHits));
+  }
+  await page.locator('#sheetBody #ipq-pIcon').fill('足球');
+  await page.waitForTimeout(600);
+  ipHits = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#sheetBody .ip-cell'))
+    .map(c => c.dataset.v || '').filter(Boolean));
+  say('   搜「足球」之后命中: ' + (ipHits.join(' ') || '（空）'));
+  if (ipHits.indexOf('task_sport') < 0) {
+    bad('[v1.9] 配图搜索没跨组：搜「足球」搜不到「日常」组里的 task_sport，命中 ' +
+      JSON.stringify(ipHits.slice(0, 8)));
   }
   await clickSel(page, '#sheetBody button[data-ipc="pIcon"]', '配图 → 重置');
   const ipBack = await page.locator('#sheetBody .ip-cell').count();
   say('   重置之后格子: ' + ipBack + ' 个');
   if (ipBack < 18) bad('[v42] 点了「重置」没回到整组：' + ipBack);
+  /* 分类那排是横滑的（22 个组铺 1100 多 px），而弹层那道滚动锁原来只看纵向：
+     .sheet-body 不溢（默认的「任务」组就十几张，一屏放得下）就把落在这排上的
+     touchmove 一并 preventDefault，分类左右划不动 —— 报上来的「不能左右滑动」。
+     合成事件滚不动是真的，所以断言按「有没有被 preventDefault」判，不看滚没滚。
+     这一条必须在面板内容矮的时候测，纵向一旦溢出，老代码也拦不到它。 */
+  const chipScroll = await page.evaluate(() => {
+    const box = document.querySelector('#sheetBody .ip-chips');
+    const chip = box && box.querySelector('.chip');
+    if (!box || !chip) return null;
+    const ev = new TouchEvent('touchmove', { cancelable: true, bubbles: true });
+    chip.dispatchEvent(ev);
+    return { over: box.scrollWidth > box.clientWidth + 1, prevented: ev.defaultPrevented };
+  });
+  if (!chipScroll) bad('[v1.9] 配图弹窗里找不到分类那排 chips');
+  else {
+    say('   分类横向溢出: ' + chipScroll.over + '；touchmove 被拦: ' + chipScroll.prevented);
+    if (chipScroll.over && chipScroll.prevented) {
+      bad('[v1.9] 分类横滑被弹层的滚动锁拦掉了（落点不在纵向可滚的内容上）');
+    }
+  }
   // 点遮罩收起来：这一格没有「完成」按钮，家长就是点外面关的
   await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
   await page.waitForTimeout(400);
@@ -2122,6 +2155,43 @@ async function walkTabs(page, tag) {
     .filter(i => i.complete && i.naturalWidth === 0).length);
   say('   没加载出来的图: ' + broken + ' 张');
   if (broken) bad('[v41] 换图弹层里有 ' + broken + ' 张图没加载出来');
+
+  /* v1.9：点「换」从「在列表里就地撑开」改成独立弹窗。就地撑开那个面板最多
+     120 张候选图（1100 多 px），夹在 7 维度 / 7 档宝箱 / 券卡中间，列表被顶得
+     找不着北。这里真点一次，查的是「开成了什么形状」。 */
+  await page.locator('#sheetBody button[data-ip]').first().click();
+  await page.waitForTimeout(600);
+  const pop = await page.evaluate(() => {
+    const b = document.querySelector('#sheetBody');
+    return {
+      chips: b.querySelectorAll('.ip-chips .chip').length,
+      back: !!b.querySelector('.ip-back'),
+      inline: Array.from(b.querySelectorAll('.ip-box')).filter(x => !x.hidden).length,
+    };
+  });
+  say('   点「换」之后：分类 ' + pop.chips + ' 个 / 退回按钮 ' + pop.back +
+    ' / 就地撑开 ' + pop.inline + ' 个');
+  if (!pop.chips || !pop.back) bad('[v1.9] 点「换」没开成配图弹窗：' + JSON.stringify(pop));
+  if (pop.inline) bad('[v1.9] 还有在列表里就地撑开的面板 ' + pop.inline + ' 个');
+
+  /* 分类那排横滑到右边，点一下会弹回最左边 —— 重画是整块 innerHTML 换掉，
+     滚动位置跟着一起没了，家长得从头再划一遍。这里直接量 scrollLeft。 */
+  await page.evaluate(() => { document.querySelector('#sheetBody .ip-chips').scrollLeft = 400; });
+  const nChip = await page.locator('#sheetBody .ip-chips .chip').count();
+  await page.locator('#sheetBody .ip-chips .chip').nth(nChip - 1).click();
+  await page.waitForTimeout(400);
+  const chipX = await page.evaluate(() =>
+    document.querySelector('#sheetBody .ip-chips').scrollLeft);
+  say('   分类滑到 400 再点最右一个：scrollLeft=' + chipX);
+  if (chipX < 5) bad('[v1.9] 点了分类之后那排又弹回最左边了');
+
+  // 退回一级列表：挑完图弹窗自己会退，这条按钮是给「看了不想改」留的
+  await page.locator('#sheetBody .ip-back').click();
+  await page.waitForTimeout(1200);
+  if (!(await page.locator('#sheetBody .sec-h h2').count())) {
+    bad('[v1.9] 点「回到列表」没退回一级列表');
+  }
+
   await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
   await page.waitForTimeout(300);
 
