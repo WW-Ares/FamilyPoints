@@ -54,9 +54,26 @@ function ic(name, size, color) {
 async function kg(path) {
   try { return await api('GET', path); } catch (e) { return null; }
 }
-const K_TIER_ICON = ['i-chest-wood', 'i-chest-bronze', 'i-chest-silver', 'i-chest-gold',
-  'i-chest-diamond', 'i-chest-king', 'i-chest-perfect'];
-function kBoxIcon(tier) { return K_TIER_ICON[(+tier || 1) - 1] || 'i-chest-wood'; }
+const K_TIER_ICON = ['bx_wood', 'bx_copper', 'bx_silver', 'bx_gold',
+  'bx_diamond', 'bx_king', 'bx_perfect'];
+function kBoxIcon(tier) { return K_TIER_ICON[(+tier || 1) - 1] || 'bx_wood'; }
+
+/* 箱子的图有两个来路：家长在「给它们换张图」里挑的那个（存在 box_tier.icon，
+   接口原样带回），和我们自己这套默认的（上面七个 token）。
+   两条路合在一个出口，是因为箱子出现在宝箱页、周期卡、直购列表、开箱动画好几处，
+   各写一遍的话，迟早有一处不认家长换过的那个。
+   图库那批是 icons/<token>.svg 的图片，雪碧图那套是 <use>，渲染方式不一样，
+   所以这里先问图库要不认识，不认识再回给 ic()。 */
+function kGlyph(icon, size) {
+  const px = size || 16;
+  const tok = String(icon == null ? '' : icon).trim();
+  if (tok && ICON_TOKENS[tok]) {
+    // encodeURIComponent：token 来自数据库，万一被塞了斜杠也飞不出 icons/ 这个目录
+    return '<img class="kgly" src="icons/' + encodeURIComponent(tok) + '.svg" alt="" ' +
+      'width="' + px + '" height="' + px + '" loading="lazy">';
+  }
+  return ic(tok, px);
+}
 /* 箱子叫什么。名字只有一个来源：接口给的 tier 对象里就带着「木箱 / 铜箱 / 银箱」，
    这里补的是「只有档位号」那一处（周期记录那格）。两头都加「箱」就会拼出
    「铜箱箱」—— v31 首屏自检就是这么抓到的。 */
@@ -156,6 +173,8 @@ const K_TAB_OF = {
   chest: 'chest',
   coupon: 'coupon', shop: 'coupon',
   mine: 'mine', wish: 'mine', atlas: 'mine', family: 'mine',
+  // 宝箱详情归在宝箱这一格底下：从宝箱页点进去，返回也回宝箱页
+  boxinfo: 'chest',
 };
 const K_TABS = [
   ['home', 'i-home', '首页'], ['task', 'i-task', '任务'], ['chest', 'i-chest-nav', '宝箱'],
@@ -708,7 +727,7 @@ async function kScreenChest() {
     const pt = tiers.filter(t => t.tier === p0.tier)[0] || {};
     h += '<button class="chest-pod" data-openbox="' + p0.box_id + '" data-tier="' + p0.tier +
       '" data-state="' + esc(p0.state || '') + '">' +
-      ic(kBoxIcon(p0.tier), 28) +
+      kGlyph(p0.icon || kBoxIcon(p0.tier), 28) +
       '<span class="chest-pod-g">' +
       '<span class="chest-pod-t">' + (openable
         ? '叮！你有 ' + num(pend.length) + ' 个宝箱可以打开'
@@ -727,7 +746,7 @@ async function kScreenChest() {
     esc(stName + ' · ' + lockName) + '</span></span>' +
     '<span style="font-size:12px;font-weight:700">' + esc(stSub) + '</span></div>' +
     '<div class="box-figure">' +
-    ic(kBoxIcon(cur ? cur.tier : (nt ? nt.tier : 1)), 118) +
+    kGlyph((cur && cur.icon) || kBoxIcon(cur ? cur.tier : (nt ? nt.tier : 1)), 118) +
     ic('i-star', 16, 'rgba(255,255,255,.50)') +
     ic('i-star', 12, 'rgba(255,255,255,.40)') +
     ic('i-star', 10, 'rgba(255,255,255,.34)') +
@@ -739,16 +758,17 @@ async function kScreenChest() {
       esc(kBoxName(curT)) + '保底 · ' + esc(guar) + '</span></div>' : '') +
     '</div>';
 
-  // 七档宝箱：七列并排，一列一档。列里从上到下 = 箱图标、档名、门槛分、两行内容。
-  // 原来这里是「一条横向阶梯 + 卡下七行明细」，同一件事写了两遍 ——
-  // 阶梯只说它叫什么，明细才说它给什么，孩子得把上下两处对起来才看得懂。
+  // 七档宝箱：七列并排，一列一档，列里只剩「箱图 + 档名 + 门槛」。
+  // 原来那一行「X 券 + N 卡」撤了：七列上头挤着 14 个数字，孩子一个也记不住，
+  // 真想知道「这一档到底给什么」就点右上那条「查看宝箱详情」—— 那儿才写全。
+  // 底下一条横线把七档串起来看走到哪一步，替掉原来每列各带一条的做法：
+  // 七条短进度讲的是同一个进度，切成七段反而看不出「我离下一档还差多少」。
   h += '<div class="card"><div class="hb" style="margin-bottom:12px">' +
     '<span class="card-title">七档宝箱</span>' +
-    '<span class="card-note">能量到了自己往上爬</span></div>' +
+    '<button class="card-link" type="button" data-go="boxinfo">查看宝箱详情 ›</button></div>' +
     '<div class="btcols">' + tiers.map(t => kTierCol(t, cur)).join('') + '</div>' +
-    '<hr class="rule">' +
-    '<div class="btnote">随机掉稀有道具：金箱 10% · 钻石箱 20% · 王者箱 40% · ' +
-    '完美箱 70%（其他宝箱没有随机道具）</div></div>';
+    kChestBar(energy, top) +
+    '</div>';
 
   // 星尘直接买
   const boxes = (shop && shop.boxes) || [];
@@ -761,7 +781,7 @@ async function kScreenChest() {
         const can = left > 0 && d.stardust >= b.price;
         return '<button class="card--buy" data-box="' + b.tier + '" data-p="' + b.price + '"' +
           (can ? '' : ' disabled') + '>' +
-          ic(kBoxIcon(b.tier), 22) +
+          kGlyph(b.icon || kBoxIcon(b.tier), 22) +
           '<span class="v" style="gap:3px;align-items:flex-start">' +
           '<span style="font-size:10.5px;font-weight:700">' + esc(kBoxName(b)) + '</span>' +
           '<span class="h" style="gap:2px">' + ic('i-stardust', 9, 'var(--stardust)') +
@@ -779,24 +799,90 @@ async function kScreenChest() {
   return kShell({}, h);
 }
 
-/* 七档各给什么，一列一档（v39）。从上到下：箱图标、档名、门槛分、两行内容。
-   木铜银没有卡，那一行就不画 —— 写「+0 卡」比不写更像在敷衍。
-   随机件的概率不在这七列里，挪到卡片最后那一句统一说，免得七列各自带一串百分比。 */
+/* 七档各给什么，一列一档。从上到下：箱图、档名、门槛分。
+   券和卡那两行搬去详情页了 —— 七列只有 46px 宽，塞不下还说不清，
+   那儿每一档有整行位置，能把「必得什么」和「还有机会多掉一件」分开写。
+   箱子 parties 到/没到靠底色区分：到了的深一档奶油，没到的浅一档，
+   当前这一档再压一道金边 —— 三个状态三层，不用读字就知道走到哪了。 */
 const BTIER_COLOR = {
   1: '#A9754A', 2: '#B07B4A', 3: '#7C8794', 4: '#B57A1F',
   5: '#2E8CA5', 6: '#7B4FB0', 7: '#D6537F',
 };
 function kTierCol(t, curTier) {
-  const cards = (t.cards || []).reduce((a, x) => a + (+x.count || 0), 0) || (+t.card_count || 0);
   const c = BTIER_COLOR[t.tier] || 'var(--ink)';
   const now = !!(curTier && curTier.tier === t.tier);
-  return '<div class="btcol' + (now ? ' is-now' : '') + '">' +
-    ic(kBoxIcon(t.tier), 28) +
+  const past = !!(curTier && t.tier <= curTier.tier);
+  return '<div class="btcol' + (now ? ' is-now' : (past ? ' is-past' : '')) + '">' +
+    kGlyph(t.icon || kBoxIcon(t.tier), 28) +
     '<div class="btcol-n" style="color:' + c + '">' + esc(t.name) + '</div>' +
     '<div class="btcol-s" style="color:' + c + '">' + num(t.threshold) + '</div>' +
-    '<div class="btcol-d">' + num(t.tickets) + ' 券</div>' +
-    (cards ? '<div class="btcol-d">+' + num(cards) + ' 卡</div>' : '') +
     '</div>';
+}
+
+/* 七档一条线：横贯整张卡，填到当前能量为止。
+   刻度故意不画 —— 七个点把一条线切成七段，看得最清楚的那一句「还差多少」
+   反而要数点才知道；留一条净线，眼睛自己对上去就是位置。 */
+function kChestBar(energy, top) {
+  const pct = top ? Math.max(0, Math.min(1, (+energy || 0) / top)) : 0;
+  return '<div class="chest-bar" role="progressbar" aria-valuenow="' +
+    num(energy) + '" aria-valuemax="' + num(top) + '">' +
+    '<span class="chest-bar-f" style="width:' + (pct * 100).toFixed(2) + '%"></span></div>';
+}
+
+/* 宝箱详情：从宝箱页「查看宝箱详情」进来。七档一张表，
+   左列哪一档、中列肯定拿到什么、右列有多大机会多掉一件。
+   概率原来写在宝箱页底下那一行小字里，但「金箱 10%」这四个字回答不了
+   「10% 出的是什么」—— 要写就得把那件东西写出来，那一行小字是装不下的。 */
+async function kScreenBoxInfo() {
+  const d = await kg('/api/boxes?member_id=' + S.me.id) || {};
+  const tiers = d.tiers || [];
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('boxinfo') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">宝箱详情</div>' +
+    '<div class="appbar-sub">每一档必定给什么 · 还有多大机会多掉一件</div></span></div>';
+
+  h += '<div class="card" style="padding:0">' +
+    '<div class="bxif-h">' +
+    '<span class="bxif-hc">宝箱</span>' +
+    '<span class="bxif-hc">必定拿到</span>' +
+    '<span class="bxif-hc">还有机会多掉一件</span></div>';
+  tiers.forEach(function (t) {
+    const c = BTIER_COLOR[t.tier] || 'var(--ink)';
+    const must = [num(t.tickets) + ' 张娱乐券'];
+    if (+t.card_count > 0) {
+      must.push(((t.cards || []).map(function (x) {
+        return num(x.count) + ' 张' + esc(x.name || RAR[x.rarity] || '卡');
+      }).join(' · ')) || (num(t.card_count) + ' 张卡'));
+    }
+    // 随机件的概率写 0 就是没有；木铜银没有随机件，那一列写「没有」，
+    // 不写是不会自己明白的 —— 空格会被读成「忘了填」。
+    const rate = Math.round((+t.random_rate || 0) * 100);
+    const pool = (t.random_pool || []).map(function (x) { return esc(x.label || ''); })
+      .filter(Boolean).join(' · ');
+    let rnd = '<span class="bxif-none">没有</span>';
+    if (rate > 0 && pool) {
+      rnd = '<span class="bxif-rate">' + num(rate) + '%</span>' +
+        '<span class="bxif-pool">' + pool + '</span>' +
+        (+t.diamond_rate > 0
+          ? '<span class="bxif-pool">还有 ' + Math.round(+t.diamond_rate * 100) +
+            '% 出钻石级卡</span>' : '');
+    }
+    h += '<div class="bxif-r">' +
+      '<span class="bxif-c">' + kGlyph(t.icon || kBoxIcon(t.tier), 30) +
+      '<b style="color:' + c + '">' + esc(t.name) + '</b>' +
+      '<span class="bxif-th">' + num(t.threshold) + ' 分能量</span></span>' +
+      '<span class="bxif-c bxif-must">' + must.join('<br>') + '</span>' +
+      '<span class="bxif-c bxif-rnd">' + rnd + '</span></div>';
+  });
+  h += '</div>';
+
+  if (tiers.length) {
+    h += '<div class="t-3" style="font-size:10px;line-height:1.7;margin:2px 4px">' +
+      '娱乐券放进券包就能用；卡抽到下星期之前不用管，抽重了会折成碎片。' +
+      '买来的箱子不含随机件，右侧那一列对它不算数。</div>';
+  }
+  return kShell({}, h);
 }
 
 /* 开箱结果里的一行。接口给的 given 有五六种形状，全在这里收口 ——
@@ -826,7 +912,7 @@ function kGivenLine(g) {
 function kPlayOpen(tier) {
   return new Promise(resolve => {
     sheet('<div class="box-stage is-in" id="kStage">' +
-      '<span class="box-stage-in" id="kStageIn">' + ic(kBoxIcon(tier), 96) + '</span>' +
+      '<span class="box-stage-in" id="kStageIn">' + kGlyph(kBoxIcon(tier), 96) + '</span>' +
       '<span class="box-stage-tip" id="kStageTip">把箱子搬过来</span></div>');
     const st = $('#kStage'), tip = $('#kStageTip');
     const beat = (cls, text, ms) => new Promise(r => {
@@ -1180,7 +1266,7 @@ async function kScreenShop() {
       '<div class="card"><div class="grid3" style="gap:8px">' + boxes.map(b => {
         const can = bleft > 0 && d.stardust >= b.price;
         return '<button class="card--buy" data-box="' + b.tier + '" data-p="' + b.price + '"' +
-          (can ? '' : ' disabled') + '>' + ic(kBoxIcon(b.tier), 22) +
+          (can ? '' : ' disabled') + '>' + kGlyph(b.icon || kBoxIcon(b.tier), 22) +
           '<span class="v" style="gap:3px;align-items:flex-start">' +
           '<span style="font-size:10.5px;font-weight:700">' + esc(kBoxName(b)) + '</span>' +
           '<span class="h" style="gap:2px">' + ic('i-stardust', 9, 'var(--stardust)') +
@@ -1753,24 +1839,24 @@ async function kScreenMine() {
     '<span class="icon-box" style="background:var(--pink-bg)">' + ic('i-wishstar', 19, 'var(--pink-deep)') + '</span>' +
     '<div class="row-grow"><div class="row-title">心愿屋</div>' +
     '<div class="row-sub">发起心愿 · 看进度 · 家庭许愿池</div></div>' +
-    ic('i-chevron', 16, 'var(--ink-line)') + '</div>' +
-    '<div class="row" data-go="atlas" style="cursor:pointer">' +
-    '<span class="icon-box" style="background:var(--purple-bg)">' + ic('i-cards', 19, 'var(--purple-deep)') + '</span>' +
-    '<div class="row-grow"><div class="row-title">图鉴</div>' +
-    '<div class="row-sub">已收集 ' + num(catN) + ' / ' + num(catT) + ' 张卡 · 碎片 ' +
-    num(hold.fragment) + '</div></div>' +
-    ic('i-chevron', 16, 'var(--ink-line)') + '</div>' +
-    '<div class="row" data-go="report" style="cursor:pointer">' +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
+  h += '<div class="row" data-go="report" style="cursor:pointer">' +
     '<span class="icon-box" style="background:var(--blue-bg)">' + ic('i-calendar', 19, 'var(--blue-deep)') + '</span>' +
     '<div class="row-grow"><div class="row-title">成长报告</div>' +
     '<div class="row-sub">星探时刻 · 七种能量 · 这一周的我 · 本月小结</div></div>' +
-    ic('i-chevron', 16, 'var(--ink-line)') + '</div>' +
-    '<div class="row" data-go="family" style="cursor:pointer">' +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
+  h += '<div class="row" data-go="family" style="cursor:pointer">' +
     '<span class="icon-box" style="background:#FFEEE0">' + ic('i-family', 19, 'var(--orange)') + '</span>' +
     '<div class="row-grow"><div class="row-title">家庭</div>' +
     '<div class="row-sub">' + num(S.members.length) + ' 口人' +
     (pool ? ' · 许愿池 ' + num(pool.collected_stardust) + ' / ' + num(pool.target_stardust) : '') +
     (rec.length ? ' · 走过 ' + num(rec.length) + ' 个周期' : '') + '</div></div>' +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
+  h += '<div class="row" data-go="atlas" style="cursor:pointer">' +
+    '<span class="icon-box" style="background:var(--purple-bg)">' + ic('i-cards', 19, 'var(--purple-deep)') + '</span>' +
+    '<div class="row-grow"><div class="row-title">图鉴</div>' +
+    '<div class="row-sub">已收集 ' + num(catN) + ' / ' + num(catT) + ' 张卡 · 碎片 ' +
+    num(hold.fragment) + '</div></div>' +
     ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
 
   h += '<div class="card" style="padding:0;overflow:hidden">' +
@@ -1902,7 +1988,7 @@ async function kScreenFamily() {
       '<span class="sect-note">最近 ' + num(hist.length) + ' 个</span></div>';
     hist.forEach(x => {
       h += '<div class="row">' +
-        '<span class="icon-box" style="background:#FFF6E0">' + ic(kBoxIcon(x.tier || 1), 20) + '</span>' +
+        '<span class="icon-box" style="background:#FFF6E0">' + kGlyph(x.icon || kBoxIcon(x.tier || 1), 20) + '</span>' +
         '<div class="row-grow"><div class="row-title">' + esc(x.start) + ' - ' + esc(x.end) + '</div>' +
         '<div class="row-sub">你那一周 能量 ' + num(x.energy) + ' · ' +
         (x.status === 'settled' ? '星尘 +' + num(x.stardust) : '进行中') + '</div></div></div>';
@@ -1918,6 +2004,7 @@ const K_SCREENS = {
   home: kScreenHome, task: kScreenTask, hall: kScreenHall, chest: kScreenChest,
   coupon: kScreenCoupon, shop: kScreenShop, report: kScreenReport, wish: kScreenWish,
   mine: kScreenMine, atlas: kScreenAtlas, family: kScreenFamily,
+  boxinfo: kScreenBoxInfo,
 };
 
 const CHILD = {};

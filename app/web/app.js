@@ -3378,13 +3378,6 @@ function amtStepper(id, val) {
     '<button type="button" class="st-btn" data-st="1" data-for="' + id +
     '" aria-label="多一个">+</button></div>';
 }
-/* 「接取」那句小注跟着所选的按钮走：写死的一句只对一种选择成立，
-   选了「多人接取」还写着「谁先点谁拿」就成了错的话。 */
-const SLOT_TIP = {
-  1: '谁先点谁拿',
-  2: '两个人都能领到，各一份',
-};
-
 /* 「写校准」这一格用的几张表。校准原来是一层弹窗，现在它是发布胶囊的第三格。 */
 const CALIB_TPL = [
   ['apology', '道歉修复（24 小时）'],
@@ -3438,12 +3431,13 @@ async function renderAdminPublish(v) {
       REWARD_OPTS.map((o, i) => '<button type="button" class="chip' + (i ? '' : ' on') +
         '" data-r="' + o[0] + '" data-d="' + o[2] + '">' + esc(o[1]) + '</button>').join('') +
       '</div></div>' +
-      '<div class="prow" id="pAmtBox"><span class="plab">数量</span>' +
-      amtStepper('pAmt', 5) + '</div>' +
-      '<p class="caption">星尘一周合计不超 20 · 箱只到银 · 卡不发稀有</p>' +
-      '<div class="prow"><span class="plab">配图</span>' +
-      iconField('pIcon', '', 'task', '') + '</div>' +
-      '<p class="caption">大厅里先看到的就是它</p>' +
+      // 数量和配图并成一行：两行各自只占屏宽的三分之一，却各占满一整行的高度。
+      // 并起来以后这一屏少一行，底部那颗「发出去」也跟着往上提一截。
+      '<div class="prow prow--pair">' +
+      '<span class="ppair" id="pAmtBox"><span class="plab">数量</span>' +
+      amtStepper('pAmt', 5) + '</span>' +
+      '<span class="ppair" id="pIconBox"><span class="plab">配图</span>' +
+      iconField('pIcon', '', 'task', '') + '</span></div>' +
       // 给谁：点孩子的名字就是派给他，点挂大厅就是谁都能接。不再分两层。
       '<div class="prow"><span class="plab">给谁</span><div class="chips">' +
       '<button type="button" class="chip on" data-to="hall">挂大厅</button>' +
@@ -3453,13 +3447,11 @@ async function renderAdminPublish(v) {
       '<div id="pHallOnly" class="pgrp">' +
       '<div class="prow"><span class="plab">接取</span><div class="chips">' +
       '<button type="button" class="chip on" data-s="1">单人接取</button>' +
-      '<button type="button" class="chip" data-s="2">多人接取</button></div>' +
-      '<span class="caption ptip" id="pSlotTip">' + esc(SLOT_TIP[1]) + '</span></div>' +
+      '<button type="button" class="chip" data-s="2">多人接取</button></div></div>' +
       '<div class="prow"><span class="plab">时限</span><div class="chips">' +
       '<button type="button" class="chip on" data-dl="1">今天内</button>' +
       '<button type="button" class="chip" data-dl="2">24 小时</button>' +
-      '<button type="button" class="chip" data-dl="0">不限时</button></div>' +
-      '<span class="caption ptip">到点没人接自动下线，不罚人</span></div>' +
+      '<button type="button" class="chip" data-dl="0">不限时</button></div></div>' +
       '</div></div>';
 
     /* 「发出去」贴在屏幕底边：这一屏填的东西多，按钮压在最下面要滚到底才
@@ -3488,9 +3480,17 @@ async function renderAdminPublish(v) {
       '<button type="button" class="chip" data-ce="ticket_min">扣娱乐时间</button>' +
       '<button type="button" class="chip" data-ce="none">只记下来</button></div>' +
       '<p class="caption" id="cHint">' + esc(CALIB_HINT.task) + '</p></div>' +
+      // 修复类型原来是个下拉。手机上的下拉要点开、再滚、再点，而这里总共只有
+      // 四五个选项；摊成按钮一眼看完，还能顺手给自己留一条。
+      // 「自己写一条」不是一个选项而是一个开关：点了才长出那一行输入框，
+      // 空白的输入框常年摆在那儿，等于不断问家长「要不要写点什么」。
       '<div class="field" id="cTplBox"><span class="field-label">修复类型</span>' +
-      '<select id="cTpl">' + CALIB_TPL.map(t => '<option value="' + t[0] + '">' +
-      esc(t[1]) + '</option>').join('') + '</select></div>' +
+      '<div class="chips">' + CALIB_TPL.map((t, i) =>
+        '<button type="button" class="chip' + (i ? '' : ' on') + '" data-ct="' + t[0] + '">' +
+        esc(t[1]) + '</button>').join('') +
+      '<button type="button" class="chip" data-ct="custom">自己写一条</button></div>' +
+      '<input id="cTplCustom" class="ip" placeholder="写清楚让他做什么" hidden>' +
+      '</div>' +
       '</div>' +
       '<button class="btn btn--primary btn--block" id="cGo">记下来</button>' +
       '<p class="footnote">金额、扣几分钟、负库存下限都在设置「校准与钱」那一组里，' +
@@ -3553,7 +3553,6 @@ function bindPublishForm() {
   $$('#view .chip[data-s]').forEach(c => c.addEventListener('click', () => {
     slots = +c.dataset.s;
     $$('#view .chip[data-s]').forEach(x => x.classList.remove('on')); c.classList.add('on');
-    tip('#pSlotTip', SLOT_TIP[slots] || '');
   }));
   $$('#view .chip[data-dl]').forEach(c => c.addEventListener('click', () => {
     dl = +c.dataset.dl;
@@ -3592,26 +3591,50 @@ function bindPublishForm() {
 function bindCalibForm() {
   let eff = 'task';
   let kid = (KIDS()[0] || {}).id || 0;
+  let tpl = (CALIB_TPL[0] || [])[0] || 'apology';
   const hint = $('#cHint'), tplBox = $('#cTplBox'), go = $('#cGo');
+  const chipsIn = sel => $$('#view ' + sel);
   $$('#view .chip[data-ckid]').forEach(c => c.addEventListener('click', () => {
     kid = +c.dataset.ckid;
     $$('#view .chip[data-ckid]').forEach(x => x.classList.remove('on')); c.classList.add('on');
   }));
-  $$('#view .chip[data-ce]').forEach(c => c.addEventListener('click', () => {
+  chipsIn('.chip[data-ce]').forEach(c => c.addEventListener('click', () => {
     eff = c.dataset.ce;
-    $$('#view .chip[data-ce]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    chipsIn('.chip[data-ce]').forEach(x => x.classList.remove('on')); c.classList.add('on');
     if (hint) hint.textContent = CALIB_HINT[eff] || '';
     if (tplBox) tplBox.hidden = eff !== 'task';
     if (go) go.textContent = eff === 'fine' ? '罚款并入许愿池' : '记下来';
   }));
+  /* 修复类型改成按钮之后，多了「自己写一条」这个出口：四项预设盖不住所有情况
+     （今天是抹了桌子，明天可能是给妹妹道个歉），与其让家长挑个近似的
+     然后心里嘀咕，不如让他写。输入框点出来才长出来 —— 空框常年摆着，
+     等于不断问家长「要不要写点什么」。 */
+  chipsIn('.chip[data-ct]').forEach(c => c.addEventListener('click', () => {
+    tpl = c.dataset.ct;
+    chipsIn('.chip[data-ct]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    const box = $('#cTplCustom');
+    if (box) {
+      box.hidden = tpl !== 'custom';
+      if (tpl === 'custom') box.focus();
+    }
+  }));
   $('#cGo').addEventListener('click', async () => {
-    const reason = $('#cWhy').value.trim();
+    const reason = ($('#cWhy').value || '').trim();
     if (!reason) return err({ message: '写清楚是哪件事，空着记不下来' });
+    // 自己写一条：那句话就是任务的完成标准，空着挂出去的任务没有标准，
+    // 最后一定变成「你到底做没做」的争论。
+    let std = '';
+    if (tpl === 'custom') {
+      std = (($('#cTplCustom') || {}).value || '').trim();
+      if (!std) return err({ message: '写上让他做什么，空着没法确认他做没做' });
+    }
     try {
-      const r = await api('POST', '/api/calibration', {
+      const body = {
         member_id: kid, level: CALIB_LEVEL[eff] || 1, reason: reason,
-        effect_type: eff, template: ($('#cTpl') || {}).value || 'apology',
-      });
+        effect_type: eff, template: tpl,
+      };
+      if (std) body.std = std;
+      const r = await api('POST', '/api/calibration', body);
       toast(r.task_id ? '记下了，修复任务已进他的清单' : '记下了');
       P_PUBSEG = 'mine';
       await render();
@@ -4142,13 +4165,18 @@ function pCalHTML(m, sel) {
      原来年月是卡片外面独立的一行，和标题、说明三层叠着，家长看到的是
      「9 月打分日历」下面又来一个「2026 年 9 月」，同一件事说两遍。 */
   let h = '<div class="card"><div class="cal-bar">' +
+    // 翻月做成孩子端那一对圆点块（不是描边小按钮）：白底 + 淡描边在奶白卡片上
+    // 等于隐形，家长看半天找不着上个月在哪翻。到头的那一边变成灰块，
+    // 不是把它禁用 —— 灰着摆在那儿，说的是「前面没有了」，禁用只是一团看不懂的浅。
     '<span class="cal-nav">' +
-    '<button type="button" data-mv="-1" aria-label="上个月">' + pic('i-chevron-left', 16) + '</button>' +
+    '<button type="button" class="cal-mv" data-mv="-1" aria-label="上个月">‹</button>' +
     /* 年月连着写（不带空格）：中间那两个空格一拆成三段，窄屏上「9 月」会被
        挤到第二行去，箭头和说明就跟着错位。这一行另外也不用数字字体。 */
     '<span class="month">' + Y + '年' + M + '月</span>' +
-    '<button type="button" data-mv="1"' + (ym >= ymOf(today) ? ' disabled' : '') +
-    ' aria-label="下个月">' + pic('i-chevron-right-dead', 16) + '</button></span>' +
+    (ym >= ymOf(today)
+      ? '<span class="cal-mv is-off" aria-hidden="true">›</span>'
+      : '<button type="button" class="cal-mv" data-mv="1" aria-label="下个月">›</button>') +
+    '</span>' +
     '<span class="caption">点一格看当天七项</span></div>' +
     '<div class="cal-grid" style="margin-top:10px">' +
     CAL_WD.map(d => '<span class="cal-wd">' + d + '</span>').join('');

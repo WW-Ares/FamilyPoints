@@ -449,28 +449,48 @@ async function walkTabs(page, tag) {
   const boxCols = await page.locator('#view .btcol').count();
   say('   七档: ' + boxCols + ' 列');
   if (boxCols !== 7) bad('[v39] 七档不是 7 列，是 ' + boxCols);
-  const hrefs = await page.evaluate(() => Array.from(
-    document.querySelectorAll('#view .btcol svg use')).map(u => u.getAttribute('href')));
-  say('   七档图标: ' + hrefs.join(' '));
-  if (hrefs.length !== 7) bad('[v39] 七档图标不是 7 个，是 ' + hrefs.length);
-  if (new Set(hrefs).size !== hrefs.length) bad('[v39] 七档宝箱的图标有重复：' + hrefs.join(' '));
+  /* v1.7：七档的图从雪碧图换成图库那套 bx_*（和家长「给它们换张图」里
+     能挑的是同一批），所以这里认的是 icons/<token>.svg 的地址。
+     七张必须各不相同 —— 全家长得一个样，这一档和那一档就分不出来了。 */
+  const srcs = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#view .btcol img')).map(u => u.getAttribute('src')));
+  say('   七档图: ' + srcs.join(' '));
+  if (srcs.length !== 7) bad('[v1.7] 七档的图不是 7 张，是 ' + srcs.length);
+  if (srcs.some(s => !/^icons\/bx_/.test(s || ''))) {
+    bad('[v1.7] 七档有哪一列没用图库那批宝箱图：' + srcs.join(' '));
+  }
+  if (new Set(srcs).size !== srcs.length) bad('[v1.7] 七档宝箱的图有重复：' + srcs.join(' '));
   for (const nm of ['木箱', '铜箱', '银箱', '金箱', '钻石箱', '王者箱', '完美箱']) {
     if (chest.indexOf(nm) < 0) bad('[v31] 宝箱页没出现「' + nm + '」');
   }
-  if (!/10%/.test(chest) || !/70%/.test(chest)) {
-    bad('[v31] 宝箱页没写随机件概率（概率只该写在这一页）');
-  }
-  /* v39：七档从「一条横向阶梯 ＋ 卡下七行明细」并成七列一列一档，
-     内容行进到列里，概率从每一列里收走、只在卡尾那一句出现一次。
-     列里再冒出百分比的话，孩子读到的是七个数字而不是一个结论。 */
+  /* v1.7：列里的「X 券 + N 卡」两行搬走了，概率那句紫色小字也撤了 ——
+     它们进了新建的「查看宝箱详情」那一屏。这儿留七份数字谁也记不住，
+     那儿每一档有整行位置慢慢说。所以这里反着查：写了就是没搬干净。 */
   const colTxt = await page.evaluate(() => Array.from(
     document.querySelectorAll('#view .btcol')).map(c => c.innerText.replace(/\s+/g, ' ')));
   say('   七档内容: ' + colTxt.join(' | '));
-  if (colTxt.filter(t => /券/.test(t)).length !== 7) bad('[v39] 七档里有哪一列没写券数');
-  if (colTxt.some(t => /%/.test(t))) bad('[v39] 七列的列里不该写概率');
-  if (chest.indexOf('随机掉稀有道具') < 0) bad('[v39] 宝箱页没写随机件概率那一句');
+  if (colTxt.filter(t => /券|张卡/.test(t)).length) bad('[v1.7] 七列里还写着「券 / 卡」那两行');
+  if (chest.indexOf('随机掉稀有道具') >= 0) bad('[v1.7] 宝箱页没撤掉概率那句小字');
   if (chest.indexOf('箱子里有什么，点开那一刻才抽') >= 0) {
     bad('[v39] 宝箱页还留着上一条卡尾文案');
+  }
+  /* 一条到底的总进度：七列下面那条横线。
+     原来每列各自一条短进度，讲的是同一个进度切成七段，反而看不出离下一档多远。
+     断言看宽度单调往前推 —— 一条 progression bar 最怕的就是画出来为 0。 */
+  const barInfo = await page.evaluate(() => {
+    const bar = document.querySelector('#view .chest-bar');
+    if (!bar) return null;
+    const f = bar.querySelector('.chest-bar-f');
+    return { w: bar.getBoundingClientRect().width,
+             fw: f ? parseFloat(f.style.width) : -1 };
+  });
+  if (!barInfo) bad('[v1.7] 七档下面没有那条总进度线');
+  else {
+    say('   总进度线: 轨道 ' + Math.round(barInfo.w) + 'px，走到 ' + barInfo.fw + '%');
+    if (!(barInfo.fw > 0)) bad('[v1.7] 总进度线没有填起来（' + barInfo.fw + '%）');
+  }
+  if (await page.locator('#view .chest-bar.chest-slots').count()) {
+    bad('[v1.7] 还留着旧的那条七格分段进度');
   }
   const buyBoxes = await page.locator('#view button[data-box]').count();
   say('   星尘直接买: ' + buyBoxes + ' 档');
@@ -502,6 +522,42 @@ async function walkTabs(page, tag) {
     }
   }
   await page.screenshot({ path: path.join(SHOT, 'kid-chest.png'), fullPage: true });
+
+  /* v1.7：七列右上角那条「查看宝箱详情 ›」—— 每一档必定给什么、还有多大机会
+     多掉一件，都在这一屏展开写。原来这些塞在七列底下，46px 宽的列装不下
+     「70% 出什么」这半句话，于是只写了个百分比，等于没说。
+     二级页要点进来、内容齐、并且能退回宝箱页（来路是宝箱页，不是首页）。 */
+  const linkCnt = await page.locator('#view .card-link[data-go="boxinfo"]').count();
+  if (linkCnt !== 1) bad('[v1.7] 七档右上没有「查看宝箱详情」那条链（' + linkCnt + ' 个）');
+  else {
+    await clickSel(page, '#view .card-link[data-go="boxinfo"]', '宝箱 → 宝箱详情');
+    await page.waitForTimeout(700);
+    const info = flat(await page.locator('#view').innerText());
+    say('   宝箱详情: ' + info.slice(0, 90));
+    if (info.indexOf('必定拿到') < 0) bad('[v1.7] 详情页没有「必定拿到」那一列');
+    if (info.indexOf('还有机会多掉一件') < 0) bad('[v1.7] 详情页没有随机件那一列');
+    for (const nm of ['木箱', '钻石箱', '完美箱']) {
+      if (info.indexOf(nm) < 0) bad('[v1.7] 详情页少了「' + nm + '」');
+    }
+    // 木铜银没有随机件，那一格要明写「没有」——留白会被读成「忘了填」
+    const infoRows = await page.locator('#view .bxif-r').count();
+    const noneCnt = await page.locator('#view .bxif-none').count();
+    const rateCells = (await page.locator('#view .bxif-rate').allInnerTexts()).map(flat);
+    say('   详情页: ' + infoRows + ' 行；没有随机件 ' + noneCnt + ' 档；概率 ' + rateCells.join(' '));
+    if (infoRows !== 7) bad('[v1.7] 详情页不是七行，是 ' + infoRows);
+    if (noneCnt + rateCells.length !== 7) bad('[v1.7] 随机件那一列有空档');
+    if (rateCells.join('') !== '10%20%40%70%') {
+      bad('[v1.7] 随机件概率不是 10/20/40/70：' + rateCells.join(' '));
+    }
+    const backTo = await page.locator('#view .appbar-back').getAttribute('data-go');
+    if (backTo !== 'chest') bad('[v1.7] 详情页返回不去宝箱页，去的是「' + backTo + '」');
+    await page.screenshot({ path: path.join(SHOT, 'kid-boxinfo.png'), fullPage: true });
+    await clickSel(page, '#view .appbar-back', '宝箱详情 → 返回');
+    await page.waitForTimeout(500);
+    if (!(await page.locator('#view .btcol').count())) {
+      bad('[v1.7] 详情页返回以后没回到宝箱页');
+    }
+  }
 
   // 券包页：六种券都摆着（×0 的置灰），核销入口和「为什么现在不能用」都要有
   await kidGo('coupon');
@@ -591,6 +647,19 @@ async function walkTabs(page, tag) {
   const mine = kidView.mine;
   for (const want of ['心愿屋', '图鉴', '成长报告', '家庭', '头像与皮肤']) {
     if (mine.indexOf(want) < 0) bad('[v31] 「我的」里没有「' + want + '」入口');
+  }
+  /* v1.7：「我的」四行走的顺序是 心愿屋 → 成长报告 → 家庭 → 图鉴。
+     图鉴原来是第二位：它回答的是「我收集到什么」，而来这一页的人多半是
+     来看自己这个月过得怎么样（成长报告）和家人（家庭）。顺序改了以后
+     这里按次序断言一遍 —— 只查「有没有」查不出排错队的那个。 */
+  // 按行的 data-go 查顺序，不用正文 indexOf：正文里别处也会提到这几个词，
+  // 拿第一次出现的位置排序，排的是「它最早在哪儿提到」而不是「它排在第几行」。
+  const mineGo = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#view .row[data-go]')).map(r => r.dataset.go));
+  say('   「我的」四行: ' + mineGo.slice(0, 4).join(' → '));
+  if (mineGo.slice(0, 4).join() !== 'wish,report,family,atlas') {
+    bad('[v1.7] 「我的」四行顺序不是 心愿屋→成长报告→家庭→图鉴，是 ' +
+        mineGo.slice(0, 4).join('→'));
   }
   if (mine.indexOf('升级进度') < 0) bad('[v31] 「我的」里没有升级进度');
   if (!/Lv\.\d/.test(mine)) bad('[v31] 「我的」里没显示等级');
@@ -1128,6 +1197,28 @@ async function walkTabs(page, tag) {
   if (!(await page.locator('#view .chip[data-ce="fine"]').count())) {
     bad('[v40] 「写校准」少了罚款那条处理方式');
   }
+  /* v1.7：修复类型从下拉改成按钮 + 「自己写一条」。下拉要点开、再滚、再点，
+     而这里总共才四五项；更要紧的是预设盖不住所有情况 ——
+     今天是抹桌子，明天可能是给妹妹道个歉，与其逼家长挑个近似的，
+     不如让他写。所以：预设是按钮；点「自己写一条」长出一个输入框；
+     空着不许提交（没有完成标准的任务最后一定变成「你到底做没做」）。 */
+  const ctChips = (await page.locator('#view .chip[data-ct]').allInnerTexts()).map(flat);
+  say('   修复类型: ' + ctChips.join(' / '));
+  if (ctChips.length < 5) bad('[v1.7] 修复类型按钮少于 5 颗：' + ctChips.join(' / '));
+  if (ctChips.filter(t => t.indexOf('自己写') >= 0).length !== 1) {
+    bad('[v1.7] 修复类型里没有「自己写一条」：' + ctChips.join(' / '));
+  }
+  if (await page.locator('#view #cTpl').count()) bad('[v1.7] 修复类型还留着下拉');
+  if (!(await page.locator('#view #cTplCustom[hidden]').count())) {
+    bad('[v1.7] 自定义那一格没藏起来（一进来就空着提示，等于一直在问）');
+  }
+  await clickSel(page, '#view .chip[data-ct="custom"]', '写校准 → 自己写一条');
+  if (!(await page.locator('#view #cTplCustom:not([hidden])').count())) {
+    bad('[v1.7] 点了「自己写一条」没长出输入框');
+  }
+  if (await page.locator('#view .chip[data-ct="custom"].on').count() !== 1) {
+    bad('[v1.7] 「自己写一条」没选中');
+  }
   /* 写任务：「给谁」原来分两层（先选「派给一个孩子」，再在这一层里选哪个孩子），
      多点一次、多占一排。现在一层：挂大厅 + 每个孩子各一颗按钮，点谁就是派给谁。 */
   await clickSel(page, '#view .seg-item[data-pseg="new"]', '发布 → 写任务');
@@ -1142,9 +1233,27 @@ async function walkTabs(page, tag) {
      一次说得完的，写死一句反而清楚，不用拆。差别在于「换了之后会不会变成错话」。 */
   const cardTxt0 = flat(await page.evaluate(() => Array.from(
     document.querySelectorAll('#view .pc')).map(c => c.innerText).join(' ᛁ ')));
-  for (const s of ['星尘一周合计不超20·箱只到银·卡不发稀有', '大厅里先看到的就是它',
-    '写成能核对的样子']) {
-    if (cardTxt0.indexOf(s) < 0) bad('[v1.6] 卡里少了这句小注：' + s);
+  /* v1.7：数量、配图、接取、时限四行后面的说明小字全撤了。理由写在别处那一版：
+     四句都是「一次说得完」的事，写在那里只会把一屏拉长；真要说清楚的那句
+     「写成能核对的样子」留在标题卡上，它是在教人怎么写标题，不是给控件做注脚。
+     所以这里反过来查：四条里任何一条还在，就是没删干净。 */
+  for (const s of ['星尘一周合计不超20·箱只到银·卡不发稀有', '大厅里先看到的就是它']) {
+    if (cardTxt0.indexOf(s) >= 0) bad('[v1.7] 卡里还留着该撤的小注：' + s);
+  }
+  if (cardTxt0.indexOf('写成能核对的样子') < 0) bad('[v1.6] 卡里少了标题那句提示');
+  /* v1.7：数量和配图搬到同一行。并起来这一屏少一行，按钮不用滚那么远。
+     断言看的是两个控件的前后位置差，不是「有没有」—— 分两行时它也照样在。 */
+  const pair = await page.evaluate(() => {
+    const a = document.querySelector('#view #pAmtBox'), b = document.querySelector('#view #pIconBox');
+    if (!a || !b) return null;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return { sameRow: Math.abs(ra.top - rb.top) < 6, ay: ra.top, by: rb.top, aw: ra.width, bw: rb.width };
+  });
+  if (!pair) bad('[v1.7] 页面上找不到「数量 / 配图」两组');
+  else {
+    say('   数量与配图: ' + (pair.sameRow ? '同一行' : '还在两行') +
+      '（数量 ' + Math.round(pair.aw) + 'px / 配图 ' + Math.round(pair.bw) + 'px）');
+    if (!pair.sameRow) bad('[v1.7] 数量与配图没排到同一行');
   }
   if (cardTxt0.indexOf('给谁') < 0) bad('[v1.6] 卡里找不到「给谁」那一行');
   // 「给谁」那一行不该带小注：选谁就是派给谁，六个字说得清的事不用再注一遍
@@ -1152,17 +1261,22 @@ async function walkTabs(page, tag) {
     .evaluate(el => el.closest('.prow') ? el.closest('.prow').innerText : ''));
   say('   给谁那一行: ' + toRowTxt);
   if (/接不走|谁先点|直接派/.test(toRowTxt)) bad('[v1.6] 「给谁」那行还挂着小注：' + toRowTxt);
-  /* 接取那句跟着所选走：写死的「谁先点谁拿」在「多人接取」那一档就成了错话。 */
-  const slotTip0 = flat(await page.locator('#view #pSlotTip').innerText());
+  /* v1.7：接取那句小注撤了 —— 「单人 / 多人」这两个词自己说得清，
+     底下再挂一句「谁先点谁拿」是把同一件事说两遍。这里只测按钮真换了
+     选中态：按键有没有反应比那句注脚重要。 */
   await page.locator('#view .chip[data-s="2"]').click();
   await page.waitForTimeout(300);
-  const slotTip1 = flat(await page.locator('#view #pSlotTip').innerText());
-  say('   接取小注: 「' + slotTip0 + '」→「' + slotTip1 + '」');
-  if (slotTip0 !== '谁先点谁拿') bad('[v1.6] 单人接取那句是「' + slotTip0 + '」');
-  if (slotTip1 === slotTip0) bad('[v1.6] 换了接取方式，底下的小注没跟着换');
-  if (slotTip1.indexOf('各一份') < 0) bad('[v1.6] 多人接取那句没说各一份：' + slotTip1);
+  if (!(await page.locator('#view .chip[data-s="2"].on').count())) {
+    bad('[v1.7] 点了「多人接取」没选中它');
+  }
+  if (await page.locator('#view .chip[data-s="1"].on').count()) {
+    bad('[v1.7] 选了多人，还高亮着「单人接取」');
+  }
   await page.locator('#view .chip[data-s="1"]').click();
   await page.waitForTimeout(200);
+  if (!(await page.locator('#view .chip[data-s="1"].on').count())) {
+    bad('[v1.7] 点回「单人接取」没选中它');
+  }
   // 点孩子的名字：直接派给他，同时「接取 / 时限」这两问没有意义，要收起来
   const footTip0 = flat(await page.locator('#view #pFootTip').innerText());
   const hallDisp0 = await page.locator('#view #pHallOnly').evaluate(el => el.style.display);
@@ -1407,15 +1521,20 @@ async function walkTabs(page, tag) {
   }
   // 上/下月
   const calNow = flat(await page.locator('#view .cal-bar .month').innerText());
-  if (await page.locator('#view .cal-nav button').nth(1).isEnabled()) {
-    bad('[月度统计] 已经在当月，「下个月」不该能点');
-  }
+  /* v1.7：翻月从两个小描边按钮换成孩子端那一对圆块。到头的那一边不是
+     「被禁用的按钮」而是一块灰的 —— 灰着摆在那儿说的是「前面没有了」，
+     禁用只是一团看不懂的浅。所以这里查的是它到底还是不是一颗按钮。 */
+  const mvBtnN = await page.locator('#view .cal-nav button.cal-mv').count();
+  const mvOffN = await page.locator('#view .cal-nav .cal-mv.is-off').count();
+  say('   翻月: 可点 ' + mvBtnN + ' 颗 / 到头灰着 ' + mvOffN + ' 颗');
+  if (mvOffN !== 1) bad('[v1.7] 到了当月，「下个月」没变成灰块（灰块 ' + mvOffN + ' 颗）');
+  if (mvBtnN !== 1) bad('[v1.7] 到了当月，翻月按钮不是 1 颗可点（' + mvBtnN + ' 颗）');
   // v23：翻月不许把页面顶回最上面。月历在打分页最底部，
   // 翻一次就要重新往下滚一遍的话，等于没法连着看几个月。
   await page.locator('#view .cal-bar .month').scrollIntoViewIfNeeded();
   await page.waitForTimeout(300);
   const scrollBefore = await page.evaluate(() => window.scrollY);
-  await page.locator('#view .cal-nav button').first().click();
+  await page.locator('#view .cal-nav button.cal-mv').first().click();
   await page.waitForTimeout(1200);
   const scrollAfter = await page.evaluate(() => window.scrollY);
   say('   翻月前后滚动位置: ' + scrollBefore + ' -> ' + scrollAfter);
@@ -1425,7 +1544,9 @@ async function walkTabs(page, tag) {
   const calPrev = flat(await page.locator('#view .cal-bar .month').innerText());
   say('   切月份: ' + calNow + ' -> ' + calPrev);
   if (calNow === calPrev) bad('[月度统计] 点「上个月」月份没变');
-  await page.locator('#view .cal-nav button').nth(1).click();
+  // 回当月。停在当月时右箭头是灰块（不是按钮），翻走之后它才变回按钮，
+  // 所以这里按「第二颗」取。
+  await page.locator('#view .cal-nav button.cal-mv').nth(1).click();
   await page.waitForTimeout(1200);
   // 点某一天，看当天七项
   let dayBtn = page.locator('#view button.cal-cell.is-full').first();

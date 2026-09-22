@@ -482,12 +482,67 @@ body.kid .pick-desc { font-size: calc(9.5 * var(--u-sm)); color: var(--ink-3); l
    留着 1fr（下限 = min-content）时，七个「14 券」把这张卡的最小宽度顶到 296，
    320 屏上整页被撑宽 6px —— 就是这一处。 */
 body.kid .btcols { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+/* 每档一个框：到过的深一档奶油，没到的浅一档，当前那档再压一道金边。
+   三个状态三层底色，不用读字就知道走到哪儿了 —— 能量这条线是这一页的主线，
+   孩子在这页只问「我到哪一档了」。 */
 body.kid .btcol {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 9px 2px; border-radius: 14px;
-  background: #FFFDF8; border: 1px solid #F0E6D8;
+  padding: 9px 2px; border-radius: 12px;
+  background: #FFF8EC; border: 1px solid #EFD9B4;
 }
-body.kid .btcol.is-now { background: #FFFBEF; border-color: #F5D9A0; }
+body.kid .btcol.is-past { background: #FFF1D9; }
+body.kid .btcol.is-now {
+  background: #FFF1D9; border-color: #EFC07A;
+  box-shadow: 0 2px 0 #F3DFB8;
+}
+/* 图库那批 icon 是 120×120 的 SVG（自带圆底），这里不垫背景也不描边 */
+body.kid .kgly { display: block; }
+
+/* 标题右边那条「查看宝箱详情 ›」：不做成按钮的样子，是一条带下划线的橙字。
+   旁边就有一个大号标题，再摆一颗实心按钮的话，两个都在抢第一眼。 */
+body.kid .card-link {
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; font-size: calc(11 * var(--u-sm)); font-weight: 700;
+  color: var(--orange); text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 七档一条线：一条到底，填到当前能量为止。刻度不画 ——
+   七个点会把「还差多少」变成一道数数题。 */
+body.kid .chest-bar {
+  position: relative; height: 8px; margin-top: 11px; overflow: hidden;
+  border-radius: var(--r-pill); background: #F6E7CE;
+  border: 1px solid #EFD9B4;
+}
+body.kid .chest-bar-f {
+  display: block; height: 100%; border-radius: var(--r-pill);
+  background: linear-gradient(90deg, #FFC46B, #E8722A);
+}
+
+/* 宝箱详情页那张表。三列：哪一档 / 必定拿到 / 还有机会多掉一件。
+   列宽按内容的分量给：中间那列最长，右边那列要有地方写清单，另一档留给箱子名。 */
+body.kid .bxif-h, body.kid .bxif-r {
+  display: grid; grid-template-columns: 84px 1fr 1.15fr; gap: 8px;
+  align-items: start; padding: 11px 12px;
+}
+body.kid .bxif-h { padding: 9px 12px; }
+body.kid .bxif-hc {
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700; color: var(--ink-2);
+}
+body.kid .bxif-r + .bxif-r { border-top: 1px solid #F2E7D6; }
+body.kid .bxif-c { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+body.kid .bxif-c b { font-size: calc(12.5 * var(--u)); font-weight: 700; }
+body.kid .bxif-th { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
+body.kid .bxif-must, body.kid .bxif-pool {
+  font-size: calc(11 * var(--u-sm)); line-height: 1.6; color: var(--ink);
+}
+body.kid .bxif-pool { color: #8A7359; }
+body.kid .bxif-none { font-size: calc(10.5 * var(--u-sm)); color: #A08E7A; }
+body.kid .bxif-rate {
+  align-self: flex-start; padding: 2px 8px; border-radius: var(--r-pill);
+  background: #FFE9D2; color: #C25A18;
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 700;
+}
 /* 这两行原来是 nowrap。320 上「钻石箱」正好卡在列宽边缘，写死不断行就只有溢出
    一条路；改成允许换行，宽屏下它照样是一行（列宽 37 > 字宽 31）。 */
 body.kid .btcol-n { font-size: calc(11 * var(--u)); font-weight: 700; text-align: center; }
@@ -500,7 +555,7 @@ body.kid .btnote { font-size: calc(10 * var(--u-sm)); line-height: 1.6; color: #
    画布里的落点折算成百分比，换个机型也不会散开。 */
 body.kid .box-figure { position: relative; display: grid; place-items: center; margin: 13px 0; }
 body.kid .box-figure > svg { position: absolute; }
-body.kid .box-figure > svg:first-child { position: static; }
+body.kid .box-figure > :first-child { position: static; }
 body.kid .box-figure > svg:nth-child(2) { left: 8%;  top: 14%; }
 body.kid .box-figure > svg:nth-child(3) { left: 75%; top: 19%; }
 body.kid .box-figure > svg:nth-child(4) { left: 5%;  top: 69%; }

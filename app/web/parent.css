@@ -356,12 +356,16 @@ body.grown .cal-nav .month {
   font-size: calc(15 * var(--u)); font-weight: 700;
   color: var(--ink-title); white-space: nowrap;
 }
-body.grown .cal-nav button {
-  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  border-radius: 9px; border: 1px solid var(--card-line); background: #fff;
-  cursor: pointer; color: var(--ink-2);
+/* 翻月这对块跟孩子端同一套长相：一个实心圆块加一个箭头，到头的那一边变灰。
+   原来是白底加淡描边的小按钮，在奶白卡片上几乎看不见，等于把「上个月」
+   藏起来了。28 是这一端按得稳的最小尺寸（孩子端 24）。 */
+body.grown .cal-mv {
+  width: 28px; height: 28px; flex: none; font-family: var(--font-cn);
+  display: grid; place-items: center; font-size: calc(17 * var(--u)); line-height: 1;
+  border: 0; border-radius: 14px; cursor: pointer;
+  background: var(--orange-light); color: var(--wood-deep, #6B4213);
 }
-body.grown .cal-nav button:disabled { opacity: .38; cursor: not-allowed; }
+body.grown .cal-mv.is-off { background: var(--line); color: var(--ink-3); cursor: default; }
 body.grown .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
 body.grown .cal-wd { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); text-align: center; padding-bottom: 2px; }
 body.grown .cal-cell {
@@ -819,8 +823,13 @@ body.grown .prow > .chips { display: flex; gap: calc(6 * var(--u)); flex-wrap: w
 body.grown .prow > .field, body.grown .prow > .ip { flex: 1 1 auto; min-width: 0; }
 /* 派给某个孩子之后整个收起来的那两问 */
 body.grown .pgrp { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
-/* 接取 / 时限两行的那一句小注挂在行尾 */
-body.grown .ptip { margin-left: auto; }
+/* 数量 + 配图并排：两组各占一半。原来两行各占一整行，一屏要多滚一屏。
+   min-width:0 是让步进化器 / 选图按钮能被压进半栏的前提。 */
+body.grown .prow--pair { gap: calc(12 * var(--u)); }
+body.grown .ppair {
+  flex: 1 1 0; min-width: 0;
+  display: flex; align-items: center; gap: calc(7 * var(--u));
+}
 
 /* ------------------------------------------------------------------ 我的记录 · 自定义区间 */
 /* 开始 / 结束并排两栏。原来上下各占一行，弹层里多出的一行正好把

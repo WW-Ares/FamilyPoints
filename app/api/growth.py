@@ -40,6 +40,9 @@ def post_calibration(ctx):
                           dimension_code=ctx.p("dimension_code"),
                           effect_type=ctx.p("effect_type", "none"),
                           amount=ctx.f("amount", 0), template=ctx.p("template"),
+                          # std 只在家长选「自己写一条」时有值，说的是那条修复
+                          # 具体让他做什么；没写就照预设来。
+                          repair_std=(ctx.p("std") or None),
                           operator_id=me["id"], auto_task=ctx.truthy("auto_task", True))
     if not r.get("ok"):
         raise ApiError(r.get("msg", "记不下来"))

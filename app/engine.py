@@ -1667,8 +1667,12 @@ def cycle_snapshot(cycle_id):
         "fixed_score": c["fixed_score"], "bonus_energy": c["bonus_energy"],
         "energy": c["energy"], "countable_days": c["countable_days"],
         "ratio": c["threshold_ratio"], "status": c["status"],
-        "tier": {"tier": t["tier"], "name": t["name"], "threshold": t["threshold"]} if t else None,
+        # icon 跟着给出去：宝箱页中间那只大箱子按它渲染，家长在「给它们换张图」
+        # 里换过的图要能落到这一屏，不然那里改完只有七列跟着变，中间还是老样子。
+        "tier": {"tier": t["tier"], "name": t["name"], "threshold": t["threshold"],
+                 "icon": t["icon"]} if t else None,
         "next_tier": {"tier": n["tier"], "name": n["name"], "threshold": n["threshold"],
+                      "icon": n["icon"],
                       "need": round(n["threshold"] * c["threshold_ratio"] - c["energy"], 2)} if n else None,
         "awarded": c["tier_awarded"], "stardust_grant": c["stardust_grant"],
         "tiers": box_tiers_brief(),
@@ -3571,7 +3575,8 @@ def pending_cash_count():
 # 校准（三层）
 # ---------------------------------------------------------------------------
 def add_calibration(member_id, level, reason, *, dimension_code=None, effect_type="none",
-                    amount=0, template=None, operator_id=None, auto_task=True):
+                    amount=0, template=None, operator_id=None, auto_task=True,
+                    repair_std=None):
     """level 1 自校准 / 2 联动校准 / 3 契约校准。"""
     if not (reason or "").strip():
         return {"ok": False, "msg": "校准必须写清楚是哪件事"}
@@ -3626,8 +3631,11 @@ def add_calibration(member_id, level, reason, *, dimension_code=None, effect_typ
         # 完成标准换成让他自己提方案。
         own = bool(consume_armed(member_id, "choose_consequence"))
         tpl = template or "redo"
-        task_id = create_repair_task(member_id, reason, template=tpl, operator_id=operator_id,
-                                     own_choice=own)
+        # repair_std：家长自己写的那条修复方式（不是四选一里挑的）。
+        # 传下来就当完成标准用，任务里写的是他写的那句话；
+        # 不传的话才由 template 去查预设 —— 自定义那条别被预设吞掉。
+        task_id = create_repair_task(member_id, reason, template=tpl, std=repair_std,
+                                     operator_id=operator_id, own_choice=own)
         effect = {"task_id": task_id, "template": "own" if own else tpl, "own_choice": own}
     elif effect_type == "device":
         effect = {"detail": "设备改到公共区域使用，3 天后自动恢复"}
