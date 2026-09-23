@@ -57,7 +57,9 @@ STAR_ROUND = 0.09    # 尖角倒圆的宽度，同样为了圆润
 STAR_DY = 0.0955     # 星形外接圆中心与视觉中心的偏差，补回来才看着正
 
 APP_NAME = "家庭积分"
-THEME = "#FF8A3D"        # 与 index.html 的 theme-color 同步
+THEME = "#FFD08A"        # 页面顶部那档 --bg-top。iOS / 安卓拿它画状态栏（地址栏）那一整条，
+                         # 写深橙会在顶部横出一条跟页面对不上的色带。三处同值：
+                         # 这里（写进 site.webmanifest）/ index.html 的 meta / app.js 启动时那一条。
 BG = "#FFFBF3"           # 孩子端 --bg-btm，启动闪屏底色
 
 

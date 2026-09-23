@@ -621,8 +621,13 @@ async function boot() {
     // 看出来，但家长端的装饰层会漏到孩子端头上）。
     document.body.classList.toggle('kid', !S.isParent);
     document.body.classList.toggle('grown', S.isParent);
+    /* iOS 加到主屏之后，状态栏那一整条（15 Pro Max 上 59px）是拿这个值画的，
+       页面从它底下才开始画 —— 值必须等于页面顶部那一档 --bg-top #FFD08A，
+       写深橙就是顶部横着一条跟页面对不上的色带。v1.8 只把 index.html 那条
+       改了，被这里在启动时又盖回图标那档橙，等于白改，真机上看还是深橙。
+       三处（这条 / index.html / site.webmanifest）必须同一个值，少一处都漏。 */
     const tc = document.querySelector('meta[name="theme-color"]');
-    if (tc) tc.setAttribute('content', '#FF8A3D');
+    if (tc) tc.setAttribute('content', '#FFD08A');
     if (S.isParent) {
       // hash 里有合法的屏就用它，刷新后还停在原来那一屏；旧屏名在 pPick 里换掉
       S.view = pPick(S.view);

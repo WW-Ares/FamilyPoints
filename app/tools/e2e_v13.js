@@ -207,6 +207,58 @@ async function walkTabs(page, tag) {
 }
 
 (async () => {
+  /* ---------- 先查三条「Chrome 里量不出来」的静态规矩 ----------
+     这三条都只在 iOS 真机上现，本机 Chrome 一样都验不了：
+       · env(safe-area-inset-*) 在 Chrome 里恒为 0，安全区那 34px 根本不存在；
+       · auto-zoom 是 WKWebView 自己的行为，Chrome 聚焦输入框不放大；
+       · 状态栏那一整条是 iOS 拿 theme-color 画的，Chrome 没这条带子。
+     所以只能对源码本身查。三条都是拿真机截图按像素量出来的，别再改回去。 */
+  (function staticRules() {
+    const WEB = path.join(__dirname, '..', 'web');
+    const read = f => fs.readFileSync(path.join(WEB, f), 'utf8');
+    // 同一个选择器可能出现多次（横屏那条在 @media 里），每一条都要查
+    const blocks = (css, sel) => {
+      const out = [];
+      for (let i = css.indexOf(sel + ' {', 0); i >= 0; i = css.indexOf(sel + ' {', i + 1)) {
+        out.push(css.slice(i, css.indexOf('}', i) + 1));
+      }
+      return out;
+    };
+
+    // ① 底栏高度里不许含安全区
+    for (const [f, sel] of [['parent.css', 'body.grown #tabs'],
+                            ['child.css', 'body.kid #tabs']]) {
+      const bs = blocks(read(f), sel);
+      if (!bs.length) { bad('[底栏] ' + f + ' 里找不到 ' + sel); continue; }
+      bs.forEach((b, i) => {
+        if (/safe-area-inset-bottom/.test(b)) {
+          bad('[底栏] ' + f + ' 的 ' + sel + '（第 ' + (i + 1) + ' 条）又含安全区了 → ' +
+            'iOS 上会比安卓高 34px，货架被拉长、胶囊浮在离屏幕底 47px 的地方');
+        }
+      });
+    }
+
+    // ② theme-color 三处同值，且必须等于页面顶部那档 --bg-top
+    const g = (s, re) => (s.match(re) || [])[1];
+    const top = g(read('parent-tokens.css'), /--bg-top:\s*(#[0-9A-Fa-f]{6})/);
+    const meta = g(read('index.html'), /name="theme-color" content="(#[0-9A-Fa-f]{6})"/);
+    const run = g(read('app.js'), /setAttribute\('content', '(#[0-9A-Fa-f]{6})'\)/);
+    const man = g(read('site.webmanifest'), /"theme_color":\s*"(#[0-9A-Fa-f]{6})"/);
+    say('   [theme-color] --bg-top ' + top + ' / meta ' + meta + ' / 启动时 ' + run +
+      ' / manifest ' + man);
+    if (!top || top !== meta || meta !== run || meta !== man) {
+      bad('[theme-color] 四处不一致（--bg-top ' + top + ' / meta ' + meta + ' / 启动时 ' +
+        run + ' / manifest ' + man + '）：iOS 拿这个值画状态栏那 59px，' +
+        '不一致就是顶部横着一条跟页面对不上的色带');
+    }
+
+    // ③ iOS 输入框字号兜底：聚焦时算出来的字号 < 16px，WKWebView 会把整页放大
+    if (!/input[\s\S]{0,300}?textarea\s*\{\s*font-size:\s*16px\s*!important/.test(read('style.css'))) {
+      bad('[iOS] style.css 里那条「输入框字号不低于 16px」的兜底没了 —— ' +
+        '搜索框一聚焦就会把整页放大，键盘收起也不还原');
+    }
+  })();
+
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   const ctx = await browser.newContext({ viewport: { width: 414, height: 900 } });
   const page = await ctx.newPage();

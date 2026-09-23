@@ -13,6 +13,7 @@ COPY 清单可以是对的，但打包脚本漏带了某个文件；也可以反
 """
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -45,8 +46,18 @@ def port_busy(port):
         s.close()
 
 
+def _pack_key(p):
+    """按「日期 + 版本号」排，不能按文件名字符串排。
+       v1.10 一出来就踩到了：字符串序里 `v1.10` 排在 `v1.8` / `v1.9` **前面**
+       （'1' < '8' < '9'），原来那句 `sorted(...)[-1]` 于是拿的是上一版的包，
+       验得一路绿灯，验的却是旧代码。v1.10 实测就是这么被骗过一次：
+       包里的 seed_data 已经是 1.10，这里却报「版本 1.9」。"""
+    m = re.search(r"family-points-v(\d+)\.(\d+)-(\d{8})\.tar\.gz$", p.name)
+    return (m.group(3), int(m.group(1)), int(m.group(2))) if m else ("", 0, 0)
+
+
 def main():
-    packs = sorted((APP / "dist").glob("family-points-*.tar.gz"))
+    packs = sorted((APP / "dist").glob("family-points-*.tar.gz"), key=_pack_key)
     if not packs:
         print("dist/ 下没有包，先跑 python tools/pack_release.py")
         return 1

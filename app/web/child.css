@@ -44,9 +44,9 @@ body.kid .content {
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
   /* 底栏是 fixed、高 --h-tabbar，不留够这一截，每页最后一块都压在底栏下面点不到。
-     末尾再加一份安全区：底栏自己的 padding-bottom 里含了 34px，底部空档不含的话，
-     有刘海的机型上最后一块会被那块实底货架盖住一条。 */
-  padding: 0 var(--pad) calc(var(--h-tabbar) + 16px + var(--safe-b));
+     这里**不再加安全区**：底栏自己也不含（见 #tabs），多留的那 34px 会变成
+     底栏上方凭空多出来的一段空白，iOS 上比安卓多出一截。 */
+  padding: 0 var(--pad) calc(var(--h-tabbar) + 16px);
   display: flex; flex-direction: column; gap: var(--gap-card);
   scrollbar-width: none;
 }
@@ -65,10 +65,13 @@ body.kid #tabs {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
   width: 100%; max-width: var(--bar-w); z-index: 30;
   display: flex; align-items: center; justify-content: center;
-  padding: 0 var(--pad) calc(10px + var(--safe-b, env(safe-area-inset-bottom, 0px)));
+  padding: 0 var(--pad) 10px;
   /* 底色归底栏自己画，一直铺到屏幕底，只留上面两个圆角 —— 跟家长端同一个改法。
      原来是一条「透明 → 奶油」的渐变，底下那截安全区跟页面底色同色，
-     看着就是「没铺满」。 */
+     看着就是「没铺满」。
+     padding-bottom 里那 34px 安全区去掉了（跟家长端同一处、同一原因）：
+     留着的话 iOS 上底栏比安卓高 34px，胶囊被拉长、离屏幕底 44px 浮着。
+     现在胶囊离屏幕底 10px，跟安卓一样，安全区那截由壳子这块实底铺满。 */
   background: var(--card);
   border-top: 0;
   border-radius: var(--r-nav) var(--r-nav) 0 0;
@@ -732,7 +735,7 @@ body.kid .dstar { font-size: calc(11 * var(--u)); color: var(--gold-deep); margi
    实测横屏下最后一块内容整段压在药丸底下、滚到底也看不见（844x390 差 60px）。 */
 @media (max-height: 560px) {
   body.kid { --h-tabbar: calc(58 * var(--u)); }
-  body.kid #tabs { padding-bottom: calc(6 * var(--u) + var(--safe-b, env(safe-area-inset-bottom, 0px))); }
+  body.kid #tabs { padding-bottom: calc(6 * var(--u)); }
   body.kid #tabs .tabbar-pill { padding: calc(4 * var(--u)) calc(5 * var(--u)); }
   body.kid #tabs button { padding: calc(3 * var(--u)) 0; gap: calc(2 * var(--u)); }
   body.kid #tabs button svg { width: calc(18 * var(--u)); height: calc(18 * var(--u)); }

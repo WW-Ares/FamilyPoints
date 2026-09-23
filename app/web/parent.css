@@ -31,9 +31,10 @@ body.grown #view {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--gap-card);
   padding: var(--pad);
-  /* 底栏那点高度里含着安全区（#tabs 的 padding-bottom 自己加了 34px），
-     底部空档也得跟着含，不然有刘海的机型上最后一块会被货架盖住一条。 */
-  padding-bottom: calc(var(--h-tabbar) + 16px + var(--safe-b));
+  /* 底栏是 fixed、铺到屏幕底，内容尾巴要留出它那一整截（--h-tabbar 就是它的高度）。
+     这里**不加安全区**：底栏自己也不含安全区（见下面 #tabs），多留的那 34px 会变成
+     底栏上方凭空多出来的一段空白，iOS 上比安卓多出一截。 */
+  padding-bottom: calc(var(--h-tabbar) + 16px);
   scrollbar-width: none;
 }
 body.grown #view::-webkit-scrollbar { width: 0; }
@@ -45,7 +46,16 @@ body.grown #view > * { flex-shrink: 0; }
    padding-bottom（12×--u 加安全区那 34px）露的全是页面底色，真机上量到胶囊
    下沿离屏幕底 47px 空在那里，就是「底栏没顶到低」。
    现在底归壳子自己画，一直铺到屏幕底，只留上面两个圆角；导航项位置一点不动，
-   改的只是「谁在画这块底」。孩子端同一处同一改法。 */
+   改的只是「谁在画这块底」。孩子端同一处同一改法。
+
+   下半截：padding-bottom 里那 34px 安全区**去掉了**。
+   v1.8 只改了「谁在画底」，高度没动 —— 于是 iOS 上底栏是 12+62+12+34 ＝ 128px，
+   安卓（env 恒为 0）是 94px，同一台机器同一套界面，iOS 上整条货架被拉长 34px，
+   胶囊跟着往上浮，看着就是「胶囊被拉长、没贴到最底」。真机量过：白色货架
+   从 y=797 铺到 932，导航项（图标+字）底下还空着 47px。
+   现在等于把安全区那 34px 交给壳子自己画的那块白底，胶囊落到离屏幕底 12×--u
+   （≈13px）—— 跟安卓一模一样；home indicator 那条横线落在胶囊下方的白底里，
+   压不到图标和字（字下沿离屏幕底还有 25px）。 */
 body.grown #tabs {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: 0;
   width: 100%; max-width: var(--bar-w); z-index: 20;
@@ -55,7 +65,7 @@ body.grown #tabs {
   border-radius: var(--r-nav) var(--r-nav) 0 0;
   box-shadow: 0 -10px 26px -18px rgba(120, 78, 30, .5);
   backdrop-filter: none; -webkit-backdrop-filter: none;
-  padding: calc(12 * var(--u)) calc(12 * var(--u)) calc(12 * var(--u) + env(safe-area-inset-bottom, 0px));
+  padding: calc(12 * var(--u));
 }
 body.grown .nav-pill {
   /* 底色归壳子之后，胶囊自己不用再画一层：白压白看不出边界，只会让导航项
@@ -757,7 +767,7 @@ body.grown .dr-row .dr-v.no { color: var(--warn); }
    横屏下还滚不到底。格内是竖向排列（图标在上、字在下），48 够放 19+2+13。 */
 @media (max-height: 560px) {
   body.grown { --h-tabbar: calc(64 * var(--u)); }
-  body.grown #tabs { padding: calc(8 * var(--u)) calc(12 * var(--u)) calc(8 * var(--u) + env(safe-area-inset-bottom, 0px)); }
+  body.grown #tabs { padding: calc(8 * var(--u)) calc(12 * var(--u)); }
   body.grown .nav-pill { height: calc(48 * var(--u)); padding: calc(4 * var(--u)); }
   body.grown .nav-item { gap: calc(2 * var(--u)); }
   body.grown .nav-item .ico { width: calc(19 * var(--u)); height: calc(19 * var(--u)); }

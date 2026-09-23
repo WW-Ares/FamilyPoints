@@ -827,3 +827,21 @@ table.cal td { padding: 2px; }
 .av-pick { border: 2px solid transparent; background: transparent; border-radius: 50%;
   padding: 2px; cursor: pointer; line-height: 0; justify-self: center; }
 .av-pick.on { border-color: var(--brand); }
+
+/* ------------------------------------------------------------------ iOS：输入框聚焦放大
+   WKWebView / Safari 有一条死规定：被聚焦的输入框自己算出来的字号小于 16px 时，
+   它会把整页放大（auto-zoom），放大的是**可视区**而不是布局。后果是右边一整片
+   被推出屏幕；键盘收起它也不还原，而弹层那道滚动锁（app.js:78 那个 IIFE）又拦掉了
+   手指平移，于是「点一下搜索框 → 界面被放大、左右划不动、右边看不见」。
+   报上来的那条就是发布页配图弹窗里的搜索框（`.ip-q`，13×--u ≈ 14.2px）。
+
+   全站的输入框字号都是 calc(13~15 * --u)：430 宽上 14.2~16.4px，窄一点的机器
+   （393 / 375）基本全在 16 以下，所以这不是一处的事，是一整类。
+   只把「能敲字的控件」抬到 16px 这条线，各处的字号设计一个不动；
+   ≤600px 才生效，桌面端一像素不变。
+   !important 是因为 `.pin` / `.ip-q` / `.field textarea` 这些都是类选择器，
+   元素选择器堆多少个都输给一个类，不加就只能逐个类去补、将来新加一处就漏一处。 */
+@media (max-width: 600px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select, textarea { font-size: 16px !important; }
+}
