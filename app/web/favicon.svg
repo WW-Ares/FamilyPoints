@@ -6,12 +6,12 @@
 <stop offset="1" stop-color="#E8722A"/>
 </linearGradient></defs>
 <rect width="64" height="64" rx="14.5" fill="url(#g)"/>
-<!-- 罗盘徽章（与 login/badge-compass.svg 同形）。标签页只有 16~32px，
-     米圈和橙圆那两层在小尺寸下糊成一团，只留白底圈 + 四角星 + 圆心。 -->
-<circle cx="32" cy="32" r="20.5" fill="#FFF6E8"/>
-<g transform="translate(32 32) scale(0.82) translate(-22 -22)">
-<path fill="#FF8A3D" d="M22 0L27.7 16.3L44 22L27.7 27.7L22 44L16.3 27.7L0 22L16.3 16.3L22 0Z"/>
-<path fill="#E8722A" transform="translate(22 0)" d="M0 0L5.7 16.3L0 22L0 0Z"/>
-<circle cx="22" cy="22" r="3.1" fill="#FFF"/>
+<!-- 罗盘徽章，与 login/badge-compass.svg 同形（76 空间等比缩到 64 空间的 20.5/36）。
+     标签页只有 16~32px，中间那圈橙环会和底图糊在一起，所以沿用图标版：奶圈接白盘 + 大星。 -->
+<g transform="translate(32 32) scale(0.5694) translate(-38 -38)">
+<circle fill="#FFF3E2" cx="38" cy="38" r="36"/>
+<circle fill="#FFFFFF" cx="38" cy="38" r="29"/>
+<g transform="translate(9.4 9.4) scale(1.3)"><path fill="#FF8A3D" d="M22 0L27.7 16.3L44 22L27.7 27.7L22 44L16.3 27.7L0 22L16.3 16.3L22 0Z"/></g>
+<circle fill="#FFFFFF" cx="38" cy="38" r="4.5"/>
 </g>
 </svg>
