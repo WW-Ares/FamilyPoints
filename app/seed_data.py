@@ -576,4 +576,4 @@ SCHEMA_VERSION = "42"
 
 # 对外版本号。v1.2 是本项目的第一版对外发布，此前 v3–v39 的内部编号作废。
 # 登录页与家长端「我的」页脚显示的是它，不是 SCHEMA_VERSION。
-APP_VERSION = "1.12"
+APP_VERSION = "1.13"

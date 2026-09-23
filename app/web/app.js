@@ -597,6 +597,12 @@ function pGo(v) {
    等于每次都得重新找一遍。所以来路那一屏的位置要记下来，回去的时候还给它。
    只有往回走才还，点进下一层和切底栏照旧回到顶上。 */
 const VIEW_POS = {};
+/* 切屏时「该落在哪儿」。原来 viewPosRestore 是当场把 scrollTop 写进去的，
+   可那时 #view 里还是上一屏的内容 —— 上一屏没那么高，想落 800 就只滚到 300，
+   浏览器把超出的一截直接钳掉。所以改成先把这个值挂在这儿，render() 把新内容
+   填完（高度才是对的）再落；底下那次同步写入只当兜底，render 挂了也不至于
+   停在上一屏的位置上。 */
+let VIEW_SET = null;
 function viewPosSave(v) {
   const el = $('#view');
   if (!el || !v) return;
@@ -610,6 +616,7 @@ function viewPosRestore(v, back) {
   const top = back ? (VIEW_POS[v] || 0) : 0;
   // 用完就丢：下次从别的地方再来这一屏，落点该是顶上，不是上一次的老位置
   if (back) delete VIEW_POS[v];
+  VIEW_SET = top;
   el.scrollTop = top;
   const c = el.querySelector('.content');
   if (c) c.scrollTop = top;
@@ -629,10 +636,20 @@ function pPick(fallback) {
   if (map[fallback]) return map[fallback];
   return pValid(fallback) ? fallback : 'home';
 }
+/* 手机上右滑返回、安卓返回键走的是这一条路，不是 pGo。
+   原来这儿只换屏不换位置：从长列表滚到第七条点进详情，再滑回来落在顶端，
+   「刚才看到哪儿了」全丢。所以跟 pGo 用同一套 —— 先记走的那屏，
+   目标是来路就把位置还回去，不是（前进、或者从别处跳来）照旧回顶上。 */
 function pFromHash() {
   if (!S.isParent || !S.me) return;
   const v = String(location.hash || '').replace(/^#/, '');
-  if (pValid(v) && v !== S.view) { if (v !== 'settings') P_SETGRP = ''; S.view = v; renderTabs(); render(); }
+  if (!pValid(v) || v === S.view) return;
+  const back = P_FROM[S.view] === v;
+  viewPosSave(S.view);
+  if (v !== 'settings') P_SETGRP = '';
+  S.view = v;
+  viewPosRestore(v, back);
+  renderTabs(); render();
 }
 window.addEventListener('popstate', pFromHash);
 window.addEventListener('hashchange', pFromHash);
@@ -647,6 +664,10 @@ async function pg(path, fallback) {
 /* ------------------------------------------------------------------ 启动 */
 async function boot() {
   window.__APP_BOOTED__ = true;   // 供 index.html 的启动探测读，防止白屏无声失败
+  // 滚动位置由这个 app 自己管（VIEW_POS 那套）。浏览器那份「回到上次的位置」
+  // 认的是整个文档的滚动，可真正滚的是 #view / .content 两个盒子，
+  // 它插手只会把落点搅乱，右滑返回时尤其明显。
+  try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) { }
   try {
     const b = await api('GET', '/api/bootstrap');
     S.members = b.members || [];
@@ -1398,9 +1419,15 @@ async function render() {
       '<div class="ds muted">' + esc(_msg) + '</div>' +
       '<div class="ds muted">退出去再进来一次；还是这样，把上面这句记下来。</div></div>';
   }
-  v.scrollTop = keepV;
+  // 落点：切屏入口指定了就按指定的来（VIEW_SET，见上面那条注释），
+  // 没指定就用「这一屏刚才滚到哪儿」—— 同一屏里点一下「同意」不该弹回顶上。
+  const want = VIEW_SET;
+  VIEW_SET = null;
+  const setV = (want != null ? want : keepV);
+  const setC = (want != null ? want : keepC);
+  v.scrollTop = setV;
   const newC = v.querySelector('.content');
-  if (newC) newC.scrollTop = keepC;
+  if (newC) newC.scrollTop = setC;
   // 口径全书目录里那些行落到细页的哪一段。放在最后一行：上面刚把滚动位置
   // 写回「上一屏」的值，先滚会被当场盖掉（孩子端那份在 CHILD.render 里，
   // 靠一帧延迟躲同一个坑，见那边的注释）。

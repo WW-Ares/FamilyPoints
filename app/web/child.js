@@ -679,11 +679,52 @@ function kNewsSheet() {
 }
 
 /* ============================================================ 任务（我的任务） */
+/* 任务页里的心愿卡。心愿也是要靠一条条条件慢慢凑出来的活，只是它长得慢；
+   挂在心愿屋里，孩子想不起来去看，任务页就成了天天会开的那个地方。
+   这儿只给「名字 + 进度 + 状态」，交一条、付星尘、「我做到了」那些按钮
+   仍留在心愿屋 —— 同一件事不在两个地方各摆一套按钮，整卡点进去就是心愿屋。 */
+function kTaskWishCard(x) {
+  const p = x.progress || {};
+  const pc = (p.known && p.percent != null) ? Math.max(0, Math.min(100, p.percent)) : 0;
+  let tag;
+  if (!p.known) tag = '<span class="pill pill--gray">等条件</span>';
+  else if (p.done) tag = '<span class="tag ok">可以兑现</span>';
+  else {
+    // 「要 2 条，已经做到 1 条，还差 1 条」整句太长，小标里只留「还差 N …」这一截
+    const m = String(p.text || '').match(/还差[^，,。]*/);
+    tag = '<span class="tag gold">' + esc(m ? m[0] : pc + '%') + '</span>';
+  }
+  return '<div class="card card--tight" data-go="wish" style="cursor:pointer">' +
+    '<div class="h g10">' +
+    '<span class="icon-box" style="flex:0 0 34px;width:34px;height:34px;background:var(--pink-bg)">' +
+    glyph(x.icon, 'wish', 18) + '</span>' +
+    '<div class="grow v g3" style="min-width:0">' +
+    '<div class="row-title">' + esc(x.title) + '</div>' +
+    // 靠人判的条件（manual）没有百分比，给它一条进度条等于编数字，所以只出文字
+    (p.known && !p.manual
+      ? '<div class="h g8"><span class="bar" style="flex:1;height:6px"><i style="width:' + pc + '%' +
+        (p.done ? ';background:linear-gradient(90deg,#9BD8B4,#57B981)' : '') +
+        '"></i></span><span class="num t-2" style="font-size:10.5px">' + pc + '%</span></div>'
+      : '') +
+    '<div class="row-sub">' + esc(p.known ? (p.text || '') : '等爸爸妈妈定条件') + '</div>' +
+    '</div>' + tag + '</div></div>';
+}
+/* 还等着定条件的那一行。不显示的话，孩子会以为刚许的愿丢了。 */
+function kTaskWishPending(x) {
+  return '<div class="card" data-go="wish" style="cursor:pointer"><div class="row">' +
+    '<span class="icon-box" style="background:var(--purple-bg)">' +
+    glyph(x.icon, 'wish', 18) + '</span>' +
+    '<div class="row-grow"><div class="row-title">' + esc(x.title) + '</div>' +
+    '<div class="row-sub">等爸爸妈妈定条件</div></div>' +
+    '<span class="pill pill--gray">等条件</span></div></div>';
+}
+
 async function kScreenTask() {
   const mid = S.me.id;
   const hl = await api('GET', '/api/tasks/hall');
   const act = await kg('/api/activity?group=given&days=1&limit=60');
   const hs = await kg('/api/tasks/mine?days=30');
+  const ws = await kg('/api/wishes');
   const mine = (hl.doing || []).filter(t => t.assignee_id === mid);
   const doing = mine.filter(t => t.status !== 'submitted');   // 待做 + 在做，两种都是手上的活
   const waits = mine.filter(t => t.status === 'submitted');
@@ -694,6 +735,18 @@ async function kScreenTask() {
     '<button class="seg-item is-on">我的任务</button>' +
     '<button class="seg-item" data-go="hall">任务大厅' +
     (fresh.length ? ' · ' + fresh.length : '') + '</button></div>';
+
+  // 心愿排在最上面：它是长期的活，是「我为什么在做下面这些」。
+  // 数据现取，家长改了条件、进度变了这边跟着变，不存第二份。
+  const wAll = (ws && ws.items) || [];
+  const wAct = wAll.filter(x => x.status === 'active');
+  const wPend = wAll.filter(x => x.status === 'wished');
+  if (wAct.length || wPend.length) {
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-wishstar', 16, 'var(--pink-deep)') + '我的心愿</span>' +
+      '<span class="sect-note">进行中 ' + num(wAct.length) + ' 个 · 点开看要做到什么</span></div>' +
+      wAct.map(kTaskWishCard).join('') + wPend.map(kTaskWishPending).join('');
+  }
 
   h += '<div class="sect-head"><span class="sect-title">' +
     ic('i-clock', 16, 'var(--purple)') + '在做</span>' +
@@ -3140,11 +3193,18 @@ document.addEventListener('click', function (e) {
 
 window.addEventListener('popstate', kFromHash);
 window.addEventListener('hashchange', kFromHash);
+/* 右滑返回 / 安卓返回键走这一条路，不走 kGo。原来只换屏不换位置，
+   心愿屋、成长报告这些从长列表点进去的，滑回来就掉到顶上。
+   跟 kGo 一样：先记走的那屏，目标是来路就把位置还回去。 */
 function kFromHash() {
   if (S.isParent || !S.me) return;
   const v = String(location.hash || '').replace(/^#/, '');
   if (kValid(v) && v !== S.view) {
+    const back = ((S.from || {})[S.view] === v);
+    if (typeof viewPosSave === 'function') viewPosSave(S.view);
     S.view = v;
+    if (typeof viewPosRestore === 'function') viewPosRestore(v, back);
+    else if (typeof scrollTop0 === 'function') scrollTop0();
     renderTabs();
     render();
   }
