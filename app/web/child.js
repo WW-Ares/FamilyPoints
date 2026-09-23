@@ -253,8 +253,11 @@ function kGo(v) {
   // 记一句「从哪来」。二级页（报告 / 心愿屋 / 图鉴 / 家庭）的返回要看它：
   // 原来返回按钮写死 data-go="home" / "mine"，于是从「我的」进成长报告，
   // 点返回掉回首页；心愿屋从首页也能进，返回的却是「我的」。
+  // 往回走时不记反的那一笔：A → B → 返回 A 若又记 S.from[A]=B，
+  // 下次从 A 点进 B 会被当成返回，落在 B 的老位置而不是顶上。
   if (!S.from) S.from = {};
-  S.from[v] = S.view;
+  if (back) delete S.from[S.view];
+  else S.from[v] = S.view;
   S.view = v;
   kHash(v);
   // render() 会把滚动位置还回去，换屏要先清成 0，不然新的一屏停在上一屏的位置。
@@ -689,10 +692,17 @@ function kTaskWishCard(x) {
   let tag;
   if (!p.known) tag = '<span class="pill pill--gray">等条件</span>';
   else if (p.done) tag = '<span class="tag ok">可以兑现</span>';
-  else {
-    // 「要 2 条，已经做到 1 条，还差 1 条」整句太长，小标里只留「还差 N …」这一截
+  else if (p.manual) {
+    // 靠人判的那一条后端给的是 percent=null，硬凑一个「0%」等于编数字。
+    // 按它走到哪一步说话：交上去了等确认 / 上次没过 / 还没交。
+    tag = '<span class="tag gold">' +
+      (p.pending ? '等爸爸妈妈确认' : (p.rejected ? '上次没通过' : '等爸爸妈妈看')) + '</span>';
+  } else {
+    // 「要 2 条，已经做到 1 条，还差 1 条」整句太长，小标里只留「还差 N …」这一截。
+    // 取不到就退回百分比；百分比也没有（不该发生）就只说还在做。
     const m = String(p.text || '').match(/还差[^，,。]*/);
-    tag = '<span class="tag gold">' + esc(m ? m[0] : pc + '%') + '</span>';
+    tag = '<span class="tag gold">' +
+      esc(m ? m[0] : (p.percent != null ? pc + '%' : '还在做')) + '</span>';
   }
   return '<div class="card card--tight" data-go="wish" style="cursor:pointer">' +
     '<div class="h g10">' +
@@ -3202,6 +3212,8 @@ function kFromHash() {
   if (kValid(v) && v !== S.view) {
     const back = ((S.from || {})[S.view] === v);
     if (typeof viewPosSave === 'function') viewPosSave(S.view);
+    // 往回走就把来路那一条丢掉，不往回写（理由见 kGo 那条注释）
+    if (back && S.from) delete S.from[S.view];
     S.view = v;
     if (typeof viewPosRestore === 'function') viewPosRestore(v, back);
     else if (typeof scrollTop0 === 'function') scrollTop0();

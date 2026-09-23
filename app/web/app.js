@@ -581,7 +581,12 @@ function pGo(v) {
   // 这一跳是不是「返回上级」：目标是当前屏记下的来路，就是往回走。
   const back = P_FROM[S.view] === v;
   viewPosSave(S.view);
-  P_FROM[v] = S.view;
+  // 返回的时候不能反过来再写一句「目标的来路是这儿」。写了的话：
+  // A → B（记 P_FROM[B]=A）→ 返回 A（又记 P_FROM[A]=B）→ 再点进 B，
+  // 会被当成「返回」，落在 B 上次滚到的地方，而那次是正经点进去，该落顶上。
+  // 所以往回走只把来路那一条丢掉，不往回写。
+  if (back) delete P_FROM[S.view];
+  else P_FROM[v] = S.view;
   S.view = v;
   // 离开设置页就把「正在看哪一组」清掉。不清的话：设置 → 周期与假期 →
   // 底栏切走 → 再进设置，会直接落在上一次那一组里，一级那七行看不见了。
@@ -616,7 +621,9 @@ function viewPosRestore(v, back) {
   const top = back ? (VIEW_POS[v] || 0) : 0;
   // 用完就丢：下次从别的地方再来这一屏，落点该是顶上，不是上一次的老位置
   if (back) delete VIEW_POS[v];
-  VIEW_SET = top;
+  // 带上屏名：render() 只认「给我这一屏的落点」。15 秒那次轮询也会起 render，
+  // 它跟切屏那次是两码事，别把切屏的落点拿去用。
+  VIEW_SET = { v: v, top: top };
   el.scrollTop = top;
   const c = el.querySelector('.content');
   if (c) c.scrollTop = top;
@@ -646,6 +653,8 @@ function pFromHash() {
   if (!pValid(v) || v === S.view) return;
   const back = P_FROM[S.view] === v;
   viewPosSave(S.view);
+  // 往回走就把来路那一条丢掉，不往回写（理由见 pGo 那条注释）
+  if (back) delete P_FROM[S.view];
   if (v !== 'settings') P_SETGRP = '';
   S.view = v;
   viewPosRestore(v, back);
@@ -667,7 +676,12 @@ async function boot() {
   // 滚动位置由这个 app 自己管（VIEW_POS 那套）。浏览器那份「回到上次的位置」
   // 认的是整个文档的滚动，可真正滚的是 #view / .content 两个盒子，
   // 它插手只会把落点搅乱，右滑返回时尤其明显。
-  try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) { }
+  // 宽屏（电脑版式）下那两个盒子都不滚，滚的是 body —— 那份归浏览器管，别关掉。
+  try {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = (window.innerWidth >= 900 ? 'auto' : 'manual');
+    }
+  } catch (e) { }
   try {
     const b = await api('GET', '/api/bootstrap');
     S.members = b.members || [];
@@ -1375,6 +1389,13 @@ function memberAddSheet(after) {
 /* ------------------------------------------------------------------ 路由 */
 async function render() {
   const v = $('#view');
+  // 切屏指定的落点要在这一开头就取走，不能等到最后。render 是 async，
+  // 中间 await 的时候可能又起一次（券倒计时归零那一下 startTkTick 是同步跑的，
+  // 见下面），那一次收尾在先，会把落点消费掉，外层再用就取到空值，
+  // 退回「上一屏滚到哪儿」把正确落点盖掉。取到手就清掉，渲染抛错也不留残值。
+  const _vs = VIEW_SET;
+  if (_vs && _vs.v === S.view) VIEW_SET = null;
+  const want = (_vs && _vs.v === S.view) ? _vs.top : null;
   // 换内容之前先把滚动位置攥住：家长端滚的是 #view 自己，孩子端滚的是它里面
   // 那个 .content。innerHTML 一清，两个 scrollTop 都归零，再填回来也不会自己
   // 回到刚才那一屏 —— 于是每次保存、每次点「同意」，页面都弹回顶上。
@@ -1419,10 +1440,8 @@ async function render() {
       '<div class="ds muted">' + esc(_msg) + '</div>' +
       '<div class="ds muted">退出去再进来一次；还是这样，把上面这句记下来。</div></div>';
   }
-  // 落点：切屏入口指定了就按指定的来（VIEW_SET，见上面那条注释），
+  // 落点：切屏入口指定了就按指定的来（want，在函数开头取的），
   // 没指定就用「这一屏刚才滚到哪儿」—— 同一屏里点一下「同意」不该弹回顶上。
-  const want = VIEW_SET;
-  VIEW_SET = null;
   const setV = (want != null ? want : keepV);
   const setC = (want != null ? want : keepC);
   v.scrollTop = setV;
