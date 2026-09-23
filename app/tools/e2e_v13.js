@@ -709,13 +709,21 @@ async function walkTabs(page, tag) {
 
   /* v38：结算只发一只箱子，箱子里有什么点开那一刻才抽。
      演示库给女儿留了一只没点开的箱，这里把它走完整条路：
-     提醒卡 → 四拍动画 → 结果屏 → 提醒卡消失。 */
+     提醒条 → 点箱子 → 四拍动画 → 结果屏 → 提醒条消失。
+     提醒条只是提醒，开箱入口在 hero 卡上那只箱子本身（原来那「点我打开」
+     按钮撤了：提醒在上、箱子在下，孩子得先看懂「上面那条」指的是什么）。 */
   const alert = page.locator('#view .chest-pod');
+  const fig = page.locator('#view button.box-figure');
   if (!(await alert.count())) {
-    bad('[v38] 宝箱页没有「有箱子可以开」的提醒卡（演示库留了一只待开箱）');
+    bad('[v38] 宝箱页没有「有箱子可以开」的提醒条（演示库留了一只待开箱）');
+  } else if (!(await fig.count())) {
+    bad('[宝箱] 有待开箱，但 hero 卡上那只箱子不是开箱键（应为 button.box-figure）');
   } else {
+    if (await page.locator('#view button.chest-pod').count()) {
+      bad('[宝箱] 提醒条又成了按钮：开箱入口只该有 hero 卡上那只箱子一个');
+    }
     say('   待开箱提醒: ' + flat(await alert.innerText()).slice(0, 50));
-    await alert.click();
+    await fig.click();
     await page.waitForTimeout(2700);          // 四拍动画走完，结果铺出来
     const openTxt = flat(await page.locator('#sheetBody').innerText());
     say('   开箱结果: ' + openTxt.slice(0, 80));
@@ -728,7 +736,7 @@ async function walkTabs(page, tag) {
     else await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
     await page.waitForTimeout(1000);
     if (await page.locator('#view .chest-pod').count()) {
-      bad('[v38] 箱子已经开过了，提醒卡还挂着');
+      bad('[v38] 箱子已经开过了，提醒条还挂着');
     }
   }
   await page.screenshot({ path: path.join(SHOT, 'kid-chest.png'), fullPage: true });

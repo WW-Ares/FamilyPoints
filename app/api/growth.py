@@ -740,6 +740,12 @@ def catalog(ctx):
                       "effect": json.loads(it["effect_json"] or "{}"),
                       "price": it["price"], "purchasable": bool(it["purchasable"]),
                       "shelf_life_days": it["shelf_life_days"], "icon": it["icon"],
+                      # 家长端「券 · 卡 · 有效期」那一页要把这几条写出来（持有上限、
+                      # 续期价、续几次、到期返还）。它们本来就在 item 表上躺着，
+                      # 少给一次前端就得自己写死一套，早晚跟库里的值对不上。
+                      "max_hold": it["max_hold"],
+                      "renew_cost_pct": it["renew_cost_pct"], "renew_times": it["renew_times"],
+                      "expire_refund": it["expire_refund"],
                       "owned": o.get("qty", 0), "source": o.get("source", ""),
                       "effect_key": it["effect_key"]})
     items.sort(key=lambda x: (order.get(x["rarity"], 9), x["card_no"]))

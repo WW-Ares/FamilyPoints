@@ -123,6 +123,40 @@ function kSlots(energy, tiers, plain) {
   return h + '</div>';
 }
 const K_TASK_STATE = { claimed: '在做', submitted: '等确认', pending: '待做' };
+const WD_NAME = ['日', '一', '二', '三', '四', '五', '六'];
+/* 「2026-09-19」在 iOS Safari 里被当成 UTC 午夜，直接 new Date(day).getDay()
+   在东八区会往前偏一天。按年月日自己拼一个本地时间，星期才对得上。 */
+function kDayWeekday(day) {
+  const m = String(day || '').match(/^(\d{4})-(\d\d)-(\d\d)$/);
+  return m ? WD_NAME[new Date(+m[1], +m[2] - 1, +m[3]).getDay()] : '';
+}
+/* 宝箱卡上那条「一格一天」。
+
+   原来这里是 chest-slots：七个点按「能量 ÷ 7」往里填，看得出攒了多少，
+   看不出哪天打了分、哪天压根忘了打。现在一格一天，从周期头那天排到周期尾
+   （周六起），打过分的这天点亮并把当天的分写在格子里；没打分的日子空着 ——
+   空着不是扣分，也不是做错了什么，只是「这天还没打分」。
+   今天那一格描一圈白边，提醒今天这一格还等着。
+
+   格子的填充看有没有分：is-on 点亮（6 分也算，只要是那天打过）；
+   is-future 还没到的日子。is-today 是另一条轴上加的「今天是这一格」标记，
+   跟有没有分无关，所以它可能跟上面任何一个同时出现。 */
+function kDaysRow(days, todayS) {
+  const list = days || [];
+  if (!list.length) return '';
+  let h = '<div class="chest-days">';
+  for (const d of list) {
+    const v = +d.score || 0;
+    // 「今天」是附加标记，不是一种状态：这天有没有打过分别的句子里已经写了
+    // （有没有点亮），今天是另一件事，两个类要能同时落在一格上。
+    const cls = (v > 0 ? ' is-on' : (d.day > todayS ? ' is-future' : ' is-off')) +
+      (d.day === todayS ? ' is-today' : '');
+    h += '<span class="cd' + cls + '">' +
+      '<span class="cd-b">' + (v > 0 ? num(v) : '&ndash;') + '</span>' +
+      '<span class="cd-w">' + esc(kDayWeekday(d.day)) + '</span></span>';
+  }
+  return h + '</div>';
+}
 /* 七维度的颜色，跟 web/icons/dim_*.svg 里那个圆底是同一个值（tools/build_icons.py 生成）。
    首页七分矩阵拿它画拿到的那一格：颜色本身就是「哪一项」，不用再把名字写一遍。 */
 const DIM_COLOR = {
@@ -177,6 +211,8 @@ const K_TAB_OF = {
   chest: 'chest',
   coupon: 'coupon', shop: 'coupon',
   mine: 'mine', wish: 'mine', atlas: 'mine', family: 'mine',
+  // 怎么玩这一组挂在「我的」底下：它跟图鉴、成长报告同层，都是孩子自己翻的东西
+  guide: 'mine', guide7: 'mine', guidebox: 'mine', guidecard: 'mine',
   // 宝箱详情归在宝箱这一格底下：从宝箱页点进去，返回也回宝箱页
   boxinfo: 'chest',
 };
@@ -185,6 +221,16 @@ const K_TABS = [
   ['coupon', 'i-coupon', '券包'], ['mine', 'i-me', '我的'],
 ];
 function kValid(v) { return !!K_TAB_OF[v]; }
+
+/* 「新」这个标记记在浏览器本地，不记到账号上：它是给「这一屏改了、你还没看过」
+   用的，同一个人两台设备各出现一次不是问题；写进库里反而要为它加一次网络往返，
+   而且孩子把浏览器数据清了就会又冒出来，那时更奇怪。 */
+function kSeen(key) {
+  try { return localStorage.getItem('kseen.' + key) === '1'; } catch (e) { return true; }
+}
+function kMarkSeen(key) {
+  try { localStorage.setItem('kseen.' + key, '1'); } catch (e) { /* 无痕模式里写不进去，随它 */ }
+}
 
 function kHash(v, push) {
   if (location.hash === '#' + v) return;
@@ -702,22 +748,32 @@ async function kScreenChest() {
   const top = tiers.length ? tiers[tiers.length - 1].threshold : 49;
   const energy = +c.energy || 0;
   const cur = c.tier, nt = c.next_tier;
-  const lockName = kBoxName(cur) || '还没有箱子';
-  // 保底说的是「手上这只箱子」会给什么，不是下一档。状态行已经报了还差多少分，
-  // 保底行再报下一档的话，同一张卡上两行在讲两件不同的事。
-  const curT = (cur ? tiers.filter(t => t.tier === cur.tier)[0] : null)
-    || (nt ? tiers.filter(t => t.threshold === nt.threshold)[0] : null);
-  const guar = curT
-    ? (num(curT.tickets) + ' 张娱乐券' + (curT.card_count ? ' + ' + num(curT.card_count) + ' 张卡' : ''))
-    : '';
   // 状态行的三种样子：手上真有箱待开 / 这周已经领过 / 还锁着。
   // 「有没有箱」排在「结没结算」前面 —— 结算完但还没开掉的那只，说的是「可以开啦」。
   const pend = (d.pending || []);
   const p0 = pend[0];
   const settled = !!(c.status && c.status !== 'open');
+  /* 手上那只箱子优先：上周结算发下来还没开的、或者开了自选还没挑完的，
+     这张卡的主角是它。原来主角按「本周攒到哪一档」定，于是出现
+     「可以开啦 · 钻石箱」配「点我开箱」，而手上明明躺着只银箱 ——
+     上面那条待开胶囊和这张卡在讲两只不同的箱子，孩子按哪个都对不上。
+     本周的档位该说，但要等手上这只处理完才轮到它上台。 */
+  const held = p0 ? { tier: p0.tier, name: p0.name, icon: p0.icon } : null;
+  const lockName = (held ? kBoxName(held) : '') || kBoxName(cur) || '还没有箱子';
+  // 保底说的是「手上这只箱子」会给什么，不是下一档。状态行已经报了还差多少分，
+  // 保底行再报下一档的话，同一张卡上两行在讲两件不同的事；手上那只待开时，
+  // 保底也跟着它走。
+  const curT = (cur ? tiers.filter(t => t.tier === cur.tier)[0] : null)
+    || (nt ? tiers.filter(t => t.threshold === nt.threshold)[0] : null);
+  const guarT = (held ? tiers.filter(t => t.tier === held.tier)[0] : null) || curT;
+  const guar = guarT
+    ? (num(guarT.tickets) + ' 张娱乐券' + (guarT.card_count ? ' + ' + num(guarT.card_count) + ' 张卡' : ''))
+    : '';
   const stLock = !p0 && !settled;
   const stName = p0 ? '可以开啦' : (settled ? '本周已领' : '已锁定');
-  const stSub = p0 ? '点我开箱，看看有什么'
+  const stSub = p0 ? (p0.state === 'unpicked'
+    ? '点下面的宝箱，把卡挑完'
+    : '点下面的宝箱，开箱看看有什么')
     : (settled ? '下周六结算再发'
       : (nt ? '还差 ' + num(nt.need) + ' 分到' + kBoxName(nt) : '这一周刚开始，慢慢来'));
 
@@ -731,12 +787,14 @@ async function kScreenChest() {
   // 所以它只报「有一只，点我」—— 先把结果写在上面就没悬念了。
   // 点它时要知道这是「还没开」还是「开了没挑完」：后一种再往开箱接口走会被后端拒
   // （那箱已经算开过了）。整行先存着，点击时取回来。
+  // 有箱待开：上面这条只报「有一只」，是一句提醒，不是按钮。
+  // 开箱入口只有下面 hero 卡上那只箱子本身 —— 看到的和点的必须是同一样东西，
+  // 上面挂一个「点我打开」而箱子在下面，孩子得先看懂「上面那条」指的是什么。
   S.pendBoxes = pend;
   if (p0) {
     const openable = p0.state !== 'unpicked';
     const pt = tiers.filter(t => t.tier === p0.tier)[0] || {};
-    h += '<button class="chest-pod" data-openbox="' + p0.box_id + '" data-tier="' + p0.tier +
-      '" data-state="' + esc(p0.state || '') + '">' +
+    h += '<div class="chest-pod">' +
       kGlyph(p0.icon || kBoxIcon(p0.tier), 28) +
       '<span class="chest-pod-g">' +
       '<span class="chest-pod-t">' + (openable
@@ -744,9 +802,17 @@ async function kScreenChest() {
         : '还有 ' + num(p0.need) + ' 张卡没挑完') + '</span>' +
       '<span class="chest-pod-s">' + (openable
         ? esc(p0.name) + (pt.threshold ? ' · 上周攒到 ' + num(pt.threshold) + ' 分' : '')
-        : '挑完它才算真的到手') + '</span></span>' +
-      '<span class="chest-pod-go">点我打开</span></button>';
+        : '挑完它才算真的到手') + '</span></span></div>';
   }
+
+  // hero 卡上那只箱子就是开箱键。待开时它是 <button>，点它开箱；
+  // 没有待开箱的时候是个普通 div，点了没反应，别做出「能点」的样子。
+  const fig = kGlyph((held ? (held.icon || kBoxIcon(held.tier)) : null)
+    || (cur && cur.icon) || kBoxIcon(cur ? cur.tier : (nt ? nt.tier : 1)), 118) +
+    ic('i-star', 16, 'rgba(255,255,255,.50)') +
+    ic('i-star', 12, 'rgba(255,255,255,.40)') +
+    ic('i-star', 10, 'rgba(255,255,255,.34)') +
+    ic('i-star', 14, 'rgba(255,255,255,.44)');
 
   h += '<div class="hero" style="padding:15px">' +
     '<div class="hb">' +
@@ -755,17 +821,14 @@ async function kScreenChest() {
     '<span style="font-size:13px;font-weight:700">' +
     esc(stName + ' · ' + lockName) + '</span></span>' +
     '<span style="font-size:12px;font-weight:700">' + esc(stSub) + '</span></div>' +
-    '<div class="box-figure">' +
-    kGlyph((cur && cur.icon) || kBoxIcon(cur ? cur.tier : (nt ? nt.tier : 1)), 118) +
-    ic('i-star', 16, 'rgba(255,255,255,.50)') +
-    ic('i-star', 12, 'rgba(255,255,255,.40)') +
-    ic('i-star', 10, 'rgba(255,255,255,.34)') +
-    ic('i-star', 14, 'rgba(255,255,255,.44)') +
-    '</div>' +
-    kSlots(energy, tiers).replace('class="chest-slots"', 'class="chest-slots" style="margin:12px 0"') +
+    (p0
+      ? '<button class="box-figure is-openable" type="button" data-openbox="' + p0.box_id +
+        '" data-tier="' + p0.tier + '" data-state="' + esc(p0.state || '') + '">' + fig + '</button>'
+      : '<div class="box-figure">' + fig + '</div>') +
+    kDaysRow(c.days, todayStr()) +
     (guar ? '<div class="h g8">' + ic('i-star', 12, '#FFE9A8') +
       '<span style="font-size:12px;font-weight:700">' +
-      esc(kBoxName(curT)) + '保底 · ' + esc(guar) + '</span></div>' : '') +
+      esc(kBoxName(guarT)) + '保底 · ' + esc(guar) + '</span></div>' : '') +
     '</div>';
 
   // 七档宝箱：七列并排，一列一档，列里只剩「箱图 + 档名 + 门槛」。
@@ -927,115 +990,177 @@ async function kScreenBoxInfo() {
   return kShell({}, h);
 }
 
-/* 开箱结果里的一行。接口给的 given 有五六种形状，全在这里收口 ——
-   开箱、重抽、自选三处都画同一份东西，各写一遍迟早少一样。 */
-function kGivenLine(g) {
-  if (!g) return '';
-  if (g.type === 'ticket') return '娱乐券 ×' + num(g.qty);
-  if (g.type === 'stardust') return '星尘 +' + num(g.qty);
-  if (g.type === 'card') {
-    return (RAR[g.rarity] || '') + '卡「' + esc(g.name) + '」' +
-      (g.picked ? ' · 你自己挑的' : '') +
-      (g.fragment ? '（超出上限，拆成 ' + num(g.fragment) + ' 碎片）' : '');
+/* 开箱结果里的一件东西。接口给的 given 有五六种形状，图标也在接口那一侧定
+   （谁发的东西谁知道它长什么样）—— 这里只把它收成「一张图 + 名字 + 一句注」，
+   开箱、重抽、自选三处画同一张卡，各写一遍迟早少一样。 */
+const K_RAR_TAG = { common: '普通', rare: '稀有', legend: '传说', diamond: '钻石' };
+function kItemCell(g) {
+  if (!g) return null;
+  if (g.type === 'ticket') {
+    return { icon: g.icon || 'rw_ticket_fun', name: '娱乐券',
+             tag: '+' + num(g.qty) + ' 张', tone: 'fun' };
   }
-  if (g.type === 'diamond') return '钻石级「' + esc(g.name) + '」';
-  if (g.type === 'random') return '随机件：' + esc(g.label || g.name || '');
-  return esc(g.name || '');
+  if (g.type === 'stardust') {
+    return { icon: g.icon || 'rw_stardust', name: '星尘',
+             tag: '+' + num(g.qty), tone: 'gold' };
+  }
+  if (g.type === 'card') {
+    return { icon: g.icon || 'rw_card', name: g.name,
+             tag: (K_RAR_TAG[g.rarity] || '') + '卡', tone: g.rarity || 'common',
+             note: g.fragment ? '多出来的拆成 ' + num(g.fragment) + ' 碎片'
+               : (g.picked ? '你自己挑的' : '') };
+  }
+  if (g.type === 'diamond') {
+    return { icon: g.icon || 'bx_diamond', name: g.name, tag: '钻石级', tone: 'diamond' };
+  }
+  if (g.type === 'random') {
+    return { icon: g.icon || 'rw_gift', name: g.label || g.name || '额外一件',
+             tag: '随机件', tone: 'random' };
+  }
+  return { icon: g.icon || 'rw_gift', name: g.name || '', tag: '', tone: 'common' };
+}
+
+/* 一件东西一张卡：图大字大，数量写在下头。逐张弹出来（animation-delay 依次压后），
+   一箱开出三四样的时候，是一样一样落到手上，不是啪一下全铺出来。
+   稀有度只改卡面和描边的颜色，不另外加特效 —— 一屏里五颜六色地闪，反而看不出
+   哪件是好的。 */
+function kItemCard(g, i) {
+  const c = kItemCell(g);
+  if (!c) return '';
+  return '<div class="oi oi--' + c.tone + '" style="animation-delay:' +
+    (140 + i * 110) + 'ms">' +
+    '<span class="oi-ic">' + kGlyph(c.icon, 42) + '</span>' +
+    '<span class="oi-nm">' + esc(c.name) + '</span>' +
+    (c.tag ? '<span class="oi-tag">' + esc(c.tag) + '</span>' : '') +
+    (c.note ? '<span class="oi-note">' + esc(c.note) + '</span>' : '') +
+    '</div>';
 }
 
 /* ============================================================ 开箱这一套（v38） */
 /* 结算只发箱子，箱子里有什么是点开那一刻才抽的。所以开箱是一段有过程的动作，
    不是一次静默发货：四拍动画，然后铺结果。直购箱付完星尘当场开，走同一段。
    两条路的差别只在「开头有没有那四拍」，结果屏是同一张 —— 各写一份的话，
-   打出来的箱和买来的箱迟早有一边少显示一样东西。 */
+   打出来的箱和买来的箱迟早有一边少显示一样东西。
 
-/* 四拍：搬过来 → 晃一晃 → 发光 → 开。总长压在 2.2 秒上下。
+   v1.11 起这一套摆在屏幕正中，箱子背后一圈光跟着它转：箱子长在正中间才像个
+   开箱，从底下升上来的那张卡片，看着像一条通知。 */
+
+/* 四拍：搬过来 → 晃一晃 → 发光 → 开。总长压在 1.9 秒上下。
    再长就不像「打开了」，像在下载。返回 Promise，动画走完才 resolve。 */
-function kPlayOpen(tier) {
+function kPlayOpen(tier, boxName) {
   return new Promise(resolve => {
-    sheet('<div class="box-stage is-in" id="kStage">' +
-      '<span class="box-stage-in" id="kStageIn">' + kGlyph(kBoxIcon(tier), 96) + '</span>' +
-      '<span class="box-stage-tip" id="kStageTip">把箱子搬过来</span></div>');
+    sheet('<div class="kop is-in" id="kStage">' +
+      // 光晕外面套一层跟卡片同宽的裁剪刀口：它放大时溢出的那圈本来是全透明的，
+      // 裁掉不损失什么；不裁的话，放大后的圆会撑出弹层的可滚动区域，
+      // 屏幕上就多出横竖两条滚动条（`.sheet-body` 是 overflow-y:auto，横向跟着变 auto）。
+      '<div class="kop-glow"><div class="kop-rays"></div></div>' +
+      '<div class="kop-box" id="kStageIn">' + kGlyph(kBoxIcon(tier), 124) + '</div>' +
+      '<div class="kop-title">' + esc(boxName || kBoxName(tier)) + '</div>' +
+      '<div class="kop-tip" id="kStageTip">把箱子搬过来</div></div>',
+      null, { center: true });
     const st = $('#kStage'), tip = $('#kStageTip');
     const beat = (cls, text, ms) => new Promise(r => {
-      if (st) st.className = 'box-stage ' + cls;
+      if (st) st.className = 'kop ' + cls;
       if (tip) tip.textContent = text;
       setTimeout(r, ms);
     });
+    // 「开！」那一拍整屏白闪一下，下一帧才是结果 —— 这一下是留给「开了」的。
+    const boom = () => {
+      const f = document.createElement('div');
+      f.className = 'kop-flash';
+      document.body.appendChild(f);
+      setTimeout(() => { if (f.parentNode) f.parentNode.removeChild(f); }, 640);
+    };
     (async () => {
-      await beat('is-in', '把箱子搬过来', 500);
-      await beat('is-shake', '晃一晃，里面有东西在响', 560);
-      await beat('is-glow', '有亮光从缝里冒出来', 560);
-      await beat('is-burst', '开！', 460);
+      await beat('is-in', '把箱子搬过来', 450);
+      await beat('is-shake', '晃一晃，里面有东西在响', 500);
+      await beat('is-glow', '有亮光从缝里冒出来', 500);
+      const burst = beat('is-burst', '开！', 470);
+      boom();
+      await burst;
       resolve();
     })();
   });
 }
 
-/* 「点我打开」走这条。抽什么是接口那一刻定的（在后端），动画跟它并行跑 ——
+/* 点宝箱卡上那只箱子走这条。抽什么是接口那一刻定的（在后端），动画跟它并行跑 ——
    孩子看到的是箱子在动，不是转圈等接口。 */
 async function kOpenBoxFlow(boxId, tier, row) {
   // 开了、自选还没挑完的那只：箱子里别的东西早就到手了，这一屏只补「接着挑」。
   // 再往 /open 走会被后端拒（那一箱已经算开过了），孩子只会看到一句看不懂的报错。
   if (row && row.state === 'unpicked') {
-    kOpenResult({ box_id: boxId, name: row.name,
+    kOpenResult({ box_id: boxId, tier: row.tier, name: row.name, icon: row.icon,
                   need_pick: { qty: row.need || 1, options: row.options || [] } });
     return;
   }
+  // 这只箱子从点下去这一刻就在开了，顶上那条「你有箱子可以开」当场收起。
+  // 等弹层关掉再收的话，开箱动画和结果屏那几秒里页面还挂着一句「可以打开」，
+  // 弹层下面露出一条，看着像没点着。接口要是失败，catch 里会重画把它找回来。
+  const pod = $('#view .chest-pod');
+  if (pod) pod.classList.add('is-gone');
   try {
     const [r] = await Promise.all([
       api('POST', '/api/boxes/' + boxId + '/open', {}),
       kPlayOpen(+tier || 1),
     ]);
     kOpenResult(r);
+    // 后端那只确实开掉了，底下这一页按最新的待开列表重画：还有第二只就换成
+    // 「还有 1 个」，没有了整条就不出现。孩子直接点遮罩关掉弹层也走这条，
+    // 不能只赌他会去点「知道了」（那条才重画）。
+    await render();
   } catch (e) { closeSheet(); err(e); await render(); }
 }
 
 /* 直购箱那边（app.js 的 confirmBuyBox）付完星尘接这一段。
    app.js 先加载、这里的名字还不存在，所以它用 typeof 兜了一下。 */
 async function kOpenBoxAnimThenShow(r) {
-  await kPlayOpen((r && r.tier) || 1);
+  await kPlayOpen((r && r.tier) || 1, r && r.name);
   kOpenResult(r);
 }
 
 /* 开箱结果。有自选件就把候选摆在这一屏底下，挑完才算真的到手 ——
-   再跳一层「挑卡」页的话，孩子很可能在半路退出去，那几张就悬着。 */
+   再跳一层「挑卡」页的话，孩子很可能在半路退出去，那几张就悬着。
+
+   结果和动画一样摆在屏幕正中：一件东西一张卡，图大字大，一样一样落下来。
+   原来是一列小字，一箱开出三四样的时候得逐行读才知道拿了什么。 */
 function kOpenResult(r) {
-  const given = (r.given || []).map(kGivenLine).filter(Boolean);
+  const list = (r.given || []).filter(Boolean);
   const need = (r.need_pick && (r.need_pick.options || []).length) ? r.need_pick : null;
   // resume：这一箱早就开过了，东西也已经在手上，只是那几张自选还悬着。
   // 再写「开出来了」是在骗他 —— 什么都没重开。
-  const head = r.resume ? '接着把这只箱挑完'
-    : (esc(r.name || '宝箱') + ' 开出来了');
-  let h = '<h3>' + head + '</h3><div class="hr"></div>';
-  if (given.length) {
-    h += given.map(x => '<div class="kv"><span class="k">·</span>' +
-      '<span class="v" style="text-align:right">' + x + '</span></div>').join('');
+  const head = r.resume ? '接着把这只箱挑完' : '开出来了';
+
+  let h = kOpenHead(r, head);
+  if (list.length) {
+    h += '<div class="oi-grid' + (list.length === 1 ? ' is-one' : '') + '">' +
+      list.map(kItemCard).join('') + '</div>';
+  } else if (!need) {
+    h += '<div class="kop-empty">这一箱没有别的件</div>';
   }
-  if (r.note) h += '<div class="notice" style="margin-top:10px">' + esc(r.note) + '</div>';
+  if (r.note) h += '<div class="kop-note">' + esc(r.note) + '</div>';
 
   if (!need) {
-    h += '<button class="btn wide" id="kOk" style="margin-top:14px">知道了</button>';
+    h += '<button class="btn wide kop-go" id="kOk">收下</button>';
     sheet(h, box => {
-      // 关掉之后要重画一遍宝箱页：那只箱子已经开过了，提醒卡不能还挂着。
+      // 关掉之后要重画一遍宝箱页：那只箱子已经开过了，提醒条不能还挂着。
       $('#kOk', box).addEventListener('click', async () => { closeSheet(); await render(); });
-    });
+    }, { center: true });
     return;
   }
 
   const qty = Math.max(1, +need.qty || 1);
-  h += '<div class="sect-head"><span class="sect-title">' +
-    ic('i-cards', 16, 'var(--purple-deep)') + '挑 ' + num(qty) + ' 张带走</span>' +
-    '<span class="sect-note">点一下选中，再点一下取消</span></div>' +
-    '<div class="grid2">' + need.options.map(o =>
+  h += '<div class="kop-pick">' +
+    '<div class="kop-pick-h">再挑 ' + num(qty) + ' 张带走</div>' +
+    '<div class="t-3" style="font-size:10.5px;text-align:center;margin:-4px 0 9px">' +
+    '点一下选中，再点一下取消</div>' +
+    '<div class="oi-grid is-pick">' + need.options.map(o =>
       '<button type="button" class="pick-card" data-pick="' + esc(o.code) + '">' +
-      '<span class="icon-box" style="background:var(--purple-bg);margin:0 auto">' +
-      glyph(o.icon, 'card', 22) + '</span>' +
+      '<span class="pc-ic">' + kGlyph(o.icon || 'rw_card', 34) + '</span>' +
       '<span class="pick-name">' + esc(o.name) + '</span>' +
       '<span class="pick-desc">' + esc(o.desc || '') + '</span></button>').join('') + '</div>' +
-    '<button class="btn wide" id="kPickGo" disabled style="margin-top:14px"></button>' +
-    '<div class="t-3" style="font-size:10px;line-height:1.6;margin-top:8px">' +
-    '挑完就不能改了。这一箱里别的东西已经在你手上了。</div>';
+    '<button class="btn wide kop-go" id="kPickGo" disabled></button>' +
+    '<div class="t-3" style="font-size:10px;line-height:1.6;margin-top:8px;text-align:center">' +
+    '挑完就不能改了。这一箱里别的东西已经在你手上了。</div></div>';
 
   sheet(h, box => {
     const cells = $$('.pick-card', box);
@@ -1045,7 +1170,7 @@ function kOpenResult(r) {
       cells.forEach(c => c.classList.toggle('on', sel.indexOf(c.dataset.pick) >= 0));
       const left = qty - sel.length;
       go.disabled = left > 0;
-      go.textContent = left > 0 ? ('还差 ' + num(left) + ' 张，选好了才能按') : '就这 ' + num(qty) + ' 张';
+      go.textContent = left > 0 ? ('还差 ' + num(left) + ' 张，选好了才能按') : '就这 ' + num(qty) + ' 张，收下';
     };
     cells.forEach(c => c.addEventListener('click', () => {
       const code = c.dataset.pick;
@@ -1060,20 +1185,28 @@ function kOpenResult(r) {
       go.disabled = true;
       try {
         const res = await api('POST', '/api/boxes/' + r.box_id + '/pick', { codes: sel });
-        const lines = (res.given || []).map(kGivenLine).filter(Boolean);
-        sheet('<h3>收好了</h3><div class="hr"></div>' +
-          lines.map(x => '<div class="kv"><span class="k">·</span>' +
-            '<span class="v" style="text-align:right">' + x + '</span></div>').join('') +
-          '<button class="btn wide" id="kOk" style="margin-top:14px">知道了</button>',
+        const got = (res.given || []).filter(Boolean);
+        sheet(kOpenHead(res, '拿到手了') +
+          '<div class="oi-grid' + (got.length === 1 ? ' is-one' : '') + '">' +
+          got.map(kItemCard).join('') + '</div>' +
+          '<button class="btn wide kop-go" id="kOk">收下</button>',
           b => {
             $('#kOk', b).addEventListener('click', async () => {
               closeSheet(); await render();
             });
-          });
+          }, { center: true });
       } catch (e) { err(e); go.disabled = false; sync(); }
     });
     sync();
-  });
+  }, { center: true });
+}
+
+/* 结果屏顶上那一行：箱子图 + 箱名 + 「开出来了 / 拿到手了」。 */
+function kOpenHead(r, head) {
+  return '<div class="kop-head">' +
+    '<span class="kop-hb">' + kGlyph(r.icon || kBoxIcon(r.tier || 1), 40) + '</span>' +
+    '<span class="kop-ht"><span class="kop-hn">' + esc(kBoxName(r) || '宝箱') + '</span>' +
+    '<span class="kop-hs">' + esc(head) + '</span></span></div>';
 }
 
 /* ============================================================ 券包 · 我的券 */
@@ -1900,6 +2033,17 @@ async function kScreenMine() {
     '<div class="row-sub">已收集 ' + num(catN) + ' / ' + num(catT) + ' 张卡 · 碎片 ' +
     num(hold.fragment) + '</div></div>' +
     ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
+  /* 怎么玩排在图鉴底下，是这一组的最末一行（设计稿 G 屏：图鉴 y=305、怎么玩 y=352）。
+     它跟图鉴、成长报告同层，都是孩子自己翻的东西 ——
+     不占底栏那一格，也不做成弹层：看不懂的时候他会自己回来翻第二遍，
+     弹层关掉就没了。第一次挂个「新」，点进去看过就收；徽标靠右，跟行尾同一条竖线。 */
+  h += '<div class="row" data-go="guide" style="cursor:pointer">' +
+    '<span class="icon-box" style="background:#FFF3E2">' + ic('i-book', 19, 'var(--orange)') + '</span>' +
+    '<div class="row-grow"><div class="row-title">怎么玩</div>' +
+    '<div class="row-sub">七分怎么来的 · 箱子怎么到手 · 券和卡怎么用</div></div>' +
+    (kSeen('guide') ? '' :
+      '<span class="pill" style="padding:1px 6px;font-size:9.5px">新</span>') +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
 
   h += '<div class="card" style="padding:0;overflow:hidden">' +
     '<div class="hb" style="padding:13px;cursor:pointer" id="kAvRow">' +
@@ -1919,6 +2063,343 @@ async function kScreenMine() {
 
   h += '<div class="footnote">' + ic('i-lock', 12, 'var(--ink-line)') +
     '这是你自己的页面 · 爸妈那端不显示等级</div>';
+  return kShell({}, h);
+}
+
+/* ============================================================ 怎么玩 */
+/* 目录按「他一天会碰到的东西」排：每天打分、周末拿箱子、平时花券花卡。
+   不按系统模块排 —— 那样第一条得叫「打分规则」，那是给家长看的词。 */
+/* 图标只能用两处有的：ic() 走雪碧图（candy-icons.js 里那 43 个 token），
+   kGlyph() 走 icons/<token>.svg 图片。dim_* 与 rw_ticket_* 不在雪碧图里，
+   传进去 ic() 会返回空字符串（它按名单过滤），所以要图就得走 kGlyph。 */
+/* 第 1 步到第 3 步。孩子读得懂的三句，比一张流程图有用。 */
+const K_GUIDE_STEPS = [
+  ['1', '#FFE06B', '#B87A0C', '每天做七件事', '一天最多拿 7 分'],
+  ['2', '#5CA8E8', '#FFFFFF', '一周攒起来', '攒到一定的分，就有一个宝箱'],
+  ['3', '#8C6BD6', '#FFFFFF', '换你想要的东西', '星星可以存着，也能买券和卡'],
+];
+/* 五张入口卡落在三页上：前一张进「每天 7 分」，中间三张都进「宝箱和星星」，
+   各自滚到那一段，最后一张进「券和卡」。
+   [去哪一屏, 页内锚点, 图标, 圆底, 标题, 副标题] */
+const K_GUIDE_LIST = [
+  ['guide7', '', 'i-check', '#FF8A3D', '每天 7 分是什么', '七个格子，做到几个亮几个'],
+  ['guidebox', 'kb-energy', 'i-calendar', '#FFB021', '周能量', '一周的总数，周六重新开始'],
+  ['guidebox', 'kb-star', 'i-stardust', '#FFC93D', '星星（星尘）', '不会过期，存着慢慢花'],
+  ['guidebox', 'kb-chest', 'i-chest-nav', '#B8824A', '七个宝箱', '攒得越多，箱子越厉害'],
+  ['guidecard', '', 'i-coupon', '#FF5E9E', '券和卡', '玩的时间、小特权、还能惊喜'],
+];
+/* 从目录点「周能量 / 星星 / 七个宝箱」时先记下要停在哪一段。
+   三张卡落在同一页上，进来直接停在那一块，省得自己往下找第二次。 */
+let kGuideTo = '';
+function kGoGuide(v, anchor) {
+  kGuideTo = anchor || '';
+  kGo(v);
+}
+
+async function kScreenGuide() {
+  // 表格里那个「新」到这儿就算看过了，下次进「我的」不再挂
+  kMarkSeen('guide');
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('guide') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">怎么玩</div>' +
+    '<div class="appbar-sub">想知道分怎么来的，点开看</div></span></div>';
+
+  h += '<div class="card kd-hero">' +
+    '<span class="kd-chip">三分钟看懂</span>' +
+    '<div class="kd-h1">这个游戏怎么玩</div>' +
+    '<div class="kd-p">每天把事情做好，就有分。<br>' +
+    '攒够一周的分，换宝箱和星星。<br>' +
+    '宝箱里有玩的时间和道具卡。</div></div>';
+
+  h += '<div class="sect-head"><span class="sect-title">就这三步</span></div>';
+  h += '<div class="card card--tight">' + K_GUIDE_STEPS.map(s =>
+    '<div class="hb kd-step">' +
+    '<span class="kd-n" style="background:' + s[1] + ';color:' + s[2] + '">' + s[0] + '</span>' +
+    '<div class="row-grow"><div class="row-title">' + esc(s[3]) + '</div>' +
+    '<div class="row-sub">' + esc(s[4]) + '</div></div></div>').join('') + '</div>';
+
+  h += '<div class="sect-head"><span class="sect-title">想知道哪一块，点进去</span></div>';
+  h += '<div class="card card--tight">' + K_GUIDE_LIST.map(g =>
+    '<div class="row" data-guide="' + g[0] + '" data-anchor="' + g[1] + '" style="cursor:pointer">' +
+    '<span class="kd-ic" style="background:' + g[3] + '">' + ic(g[2], 19, '#FFFFFF') + '</span>' +
+    '<div class="row-grow"><div class="row-title">' + esc(g[4]) + '</div>' +
+    '<div class="row-sub">' + esc(g[5]) + '</div></div>' +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>').join('') + '</div>';
+
+  h += '<div class="kd-note">' + ic('i-info', 15, '#C98A3C') +
+    '还有不懂的？直接问爸爸妈妈。规矩是全家一起定的，也能一起改。</div>';
+  return kShell({}, h);
+}
+
+/* 七项每一项：一句「这是管什么的」+ 三条能自己对照的具体事。
+
+   这三条不是评分标准。分数由爸爸妈妈按这一天的样子给，不是「做到三件算一分」——
+   写成换算，这一页就变成一张打卡表了（红线上写得清楚：不把日常包装成任务）。
+   清单只回答一件事：这一项到底指什么。
+
+   活力写的是「吃饭」不是「运动」。历史资料（原始规则、打分表、游戏化设计 v2、
+   规则全书 v10~v29）里这一项从头到尾都是「吃饭表现」，`seed_data` 里那句
+   「运动、户外、精力释放」是后来写歪的，家长端设计稿上也是「运动、户外」。
+   设计稿这一屏已经改成吃饭口径，代码跟着改；`seed_data` 那句要单独拍板后再动。 */
+const K_DIM_GUIDE = [
+  ['dim_heart', '心能', '#EC7B72', '生气、难过的时候，能自己稳下来',
+    ['想发火了，去冷静角坐一会儿，或者深呼吸五次',
+      '不打人、不摔东西，哭的时间比上次短',
+      '能说出「我很生气，因为……」']],
+  ['dim_study', '智识', '#6FA8DC', '写作业、学习，自己做得下来',
+    ['作业自己写完，不抄别人的',
+      '不用大人一遍遍催，坐得住',
+      '写完自己再看一遍，订正错的地方']],
+  ['dim_vigor', '活力', '#F5A75D', '好好吃饭，把身体养得结实',
+    ['自己坐桌前吃完，不用追着喂',
+      '不挑食，碗里的饭菜基本吃掉',
+      '吃饭时不吵不闹，不影响别人']],
+  ['dim_bond', '羁绊', '#EFA8B8', '跟家里人好好说话，互相照应',
+    ['有礼貌，会说「请」「谢谢」',
+      '吵完架能说对不起，抱一下和好',
+      '家里人难受的时候，会去陪着、安慰一句']],
+  ['dim_craft', '匠力', '#C9905F', '家里的活，主动搭把手',
+    ['分到的活自己做完，不用别人替',
+      '看见乱了主动收拾，不等人说',
+      '做完把东西放回原处，跟大人说一声']],
+  ['dim_clean', '洁净', '#7FC4C9', '把自己收拾干净',
+    ['早晚刷牙、洗脸',
+      '饭前便后洗手',
+      '按时洗澡换衣服，指甲剪短']],
+  ['dim_order', '秩序', '#B58BD9', '自己的东西，用完放回原处',
+    ['玩具玩完收回筐里',
+      '书本和文具摊完摆回去',
+      '自己的房间保持整齐']],
+];
+
+async function kScreenGuide7() {
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('guide7') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">每天 7 分</div>' +
+    '<div class="appbar-sub">七件小事，做到就有分</div></span></div>';
+
+  /* 七格示意：前五格是「今天已经拿到的」，后两格浅棕是「还没拿到的」。
+     一格一色，跟首页那排格子长得一样，孩子一眼认出来这是在说什么。 */
+  h += '<div class="card">' +
+    '<div class="row-title" style="margin-bottom:10px">一天有七件小事</div>' +
+    '<div class="kd-cells">' + K_DIM_GUIDE.map((d, i) =>
+      '<span class="kd-cell" style="background:' + (i < 5 ? d[2] : '#F1E9DC') + '"></span>').join('') +
+    '</div>' +
+    '<div class="t-2" style="font-size:11.5px;line-height:1.8;margin-top:11px">' +
+    '七件各 1 分，做到的那件是彩色的。<br>' +
+    '没做到的是浅棕色，不算错，也不扣分。<br>' +
+    '七件全做到，那天就是 7 分。</div></div>';
+
+  h += '<div class="sect-head"><span class="sect-title">是哪七件</span></div>';
+  h += '<div class="card" style="padding:6px 14px">' + K_DIM_GUIDE.map(d =>
+    '<div class="kd-dim">' +
+    '<div class="hb">' + kGlyph(d[0], 26) +
+    '<div class="row-grow"><div class="row-title">' + esc(d[1]) + '</div>' +
+    '<div class="row-sub">' + esc(d[3]) + '</div></div></div>' +
+    '<div class="v g6" style="margin-top:8px">' +
+    d[4].map(x => '<div class="gd-li">' + esc(x) + '</div>').join('') +
+    '</div></div>').join('') + '</div>';
+
+  h += '<div class="kd-note">' + ic('i-info', 15, '#C98A3C') +
+    '不用每一条都做到，看的是这一天整体的样子。拿不准就直接问爸爸妈妈。</div>';
+
+  h += '<div class="card" style="background:#FFF2E3">' +
+    '<div class="row-title" style="color:#A2601F;margin-bottom:8px">谁来打分？</div>' +
+    '<div class="t-2" style="font-size:11.5px;line-height:1.8">' +
+    '晚上爸爸妈妈打分。他们忘打了，那天算 7 分，不是你丢的。<br>' +
+    '已经发给你的星星和券不会收回，以前的账也不会翻出来重算。</div></div>';
+  return kShell({}, h);
+}
+
+
+/* ============================================================ 宝箱与星星（说明） */
+/* 说明页里那条「一格一天」的示意。跟首页那排格子不一样：首页的格子里写着分数，
+   这里画成三行（星期 / 色条 / 分数），像一张小图表 —— 说明页讲的是
+   「颜色从哪来」，横着读一遍比一格一格看更清楚。
+
+   今天那一格：星期用橙色，色条留浅底加一圈金边，下面写「今天」。
+   没打分的日子写「—」，不是 0 —— 0 分是「做到了 0 件」，没打分是
+   「这天还没填」，两件事不能长成同一个样子。 */
+function kGuideDays(days, todayS) {
+  const list = days || [];
+  if (!list.length) return '';
+  let wk = '', bar = '', nv = '';
+  for (const d of list) {
+    const v = +d.score || 0;
+    const today = d.day === todayS;
+    const cls = v > 0 ? ' is-on' : (d.day > todayS ? ' is-future' : ' is-off');
+    const tc = today ? ' is-today' : '';
+    wk += '<span class="kwd-w' + tc + '">' + esc(kDayWeekday(d.day)) + '</span>';
+    // 只有「今天还没打分」那格才留浅底加金边。今天已经拿分了，它就该是
+    // 一块正常的金色 —— 今天这个身份由橙色的星期和数字来说。
+    bar += '<span class="kwd-b' + cls + (today && v <= 0 ? ' is-today' : '') + '"></span>';
+    nv += '<span class="kwd-n' + (v > 0 ? ' is-on' : '') + tc + '">' +
+      (v > 0 ? num(v) : (today ? '今天' : '&ndash;')) + '</span>';
+  }
+  return '<div class="kwd-row">' + wk + '</div>' +
+    '<div class="kwd-row">' + bar + '</div>' +
+    '<div class="kwd-row">' + nv + '</div>';
+}
+
+/* 七个箱子各给什么，一句话说完。门槛和张数从接口拿，家长在设置里改过就跟着变；
+   「还有惊喜 / 卡更难得 / 最好的东西」这几句是给顶尖三档的口气，跟着档位序走。
+   中间那档（有卡但卡数写不满）按接口给的 card_count 写清楚张数，不编。 */
+function kBoxSay(t, i, n) {
+  const head = '攒到 ' + num(t.threshold) + ' 分 · ';
+  if (i === n - 1) return head + num(t.tickets) + ' 张，最好的东西';
+  if (i === n - 2) return head + num(t.tickets) + ' 张，卡更难得';
+  if (t.card_count > 0) return head + num(t.tickets) + ' 张，还有 ' + num(t.card_count) + ' 张卡';
+  if (+t.random_rate > 0) return head + num(t.tickets) + ' 张，还有惊喜';
+  return head + '有 ' + num(t.tickets) + ' 张玩的时间';
+}
+
+/* 门槛与保底都从接口拿，不写死：家长在设置里改过门槛，这一页跟着变，
+   否则孩子照着旧数字攒分，攒到了却换不到东西。
+   三张卡（周能量 / 星星 / 七个箱子）都落在这一屏，所以三块各带一个 id，
+   从目录点进来时滚到对应那一段（见 CHILD.render 里的 kGuideTo）。 */
+async function kScreenGuideBox() {
+  const mid = S.me.id;
+  const d = await api('GET', '/api/boxes?member_id=' + mid);
+  const tiers = d.tiers || [];
+  const cyc = d.cycle || {};
+  const days = cyc.days || [];
+  const top = tiers.length ? tiers[tiers.length - 1].threshold : 49;
+  // 「用星星买」那半句点名的是商店里挂着的三档，别自己写死「金 / 钻石 / 王者」
+  const buyable = tiers.filter(t => t.purchasable).map(t => kBoxName(t)).join(' / ');
+
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('guidebox') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">宝箱和星星</div>' +
+    '<div class="appbar-sub">攒分换箱子，星星能存着</div></span></div>';
+
+  h += '<div class="card" id="kb-energy">' +
+    '<div class="row-title" style="margin-bottom:12px">一周攒多少分</div>' +
+    kGuideDays(days, todayStr()) +
+    '<div class="t-2 kd-body">' +
+    '一周从星期六开始，七天一轮。<br>' +
+    '格子上的颜色是那天拿到的分，所以七天下来就是一周的总数。<br>' +
+    '七天都拿满是 ' + num(top) + ' 分，能换最好的箱子。</div></div>';
+
+  h += '<div class="card" id="kb-chest">' +
+    '<div class="row-title">七个箱子，越往上越好</div>' +
+    '<div class="t-3" style="font-size:11px;line-height:1.6;margin-top:7px">' +
+    '攒够分箱子就送到你手上，要你自己点开才看得到里面。</div>' +
+    '<div class="kd-boxlist">' + tiers.map((t, i) =>
+      '<div class="hb kd-boxrow">' +
+      kGlyph(t.icon || kBoxIcon(t.tier), 26) +
+      '<span class="kd-boxn">' + esc(kBoxName(t)) + '</span>' +
+      '<span class="kd-boxd">' + esc(kBoxSay(t, i, tiers.length)) + '</span></div>').join('') +
+    '</div></div>';
+
+  h += '<div class="card kd-soft" id="kb-star">' +
+    '<div class="row-title" style="color:#B87A0C;margin-bottom:10px">星星（星尘）怎么用</div>' +
+    '<div class="v g7">' +
+    '<div class="gd-li">一周结束那天，这周的固定分换成星星给你</div>' +
+    '<div class="gd-li">星星不会过期，也不会被人收回去</div>' +
+    '<div class="gd-li">可以买券、买箱子、投进许愿池、换零花钱</div>' +
+    '</div></div>';
+
+  h += '<div class="card">' +
+    '<div class="row-title" style="margin-bottom:12px">箱子怎么到手</div>' +
+    '<div class="kd-nrow">' +
+    '<span class="kd-n kd-n--sm" style="background:#40C769;color:#FFFFFF">1</span>' +
+    '<span class="kd-ntxt">攒够分，免费送一个</span></div>' +
+    '<div class="kd-nrow">' +
+    '<span class="kd-n kd-n--sm" style="background:#4A80E8;color:#FFFFFF">2</span>' +
+    '<span class="kd-ntxt">用星星买' + (buyable ? '（' + esc(buyable) + '，一周 '
+      + num(d.purchase_limit || 1) + ' 次）' : '') + '</span></div></div>';
+
+  h += '<div class="footnote">' + ic('i-info', 12, 'var(--ink-line)') +
+    '箱子到手之后超过一周没开，系统会替你开掉，东西不会丢。</div>';
+  return kShell({}, h);
+}
+
+/* ============================================================ 券和卡（说明） */
+const K_TICKET_ICON = {
+  ticket_fun: 'rw_ticket_fun', ticket_company: 'rw_ticket_company',
+  ticket_choice: 'rw_ticket_choice', ticket_exempt: 'rw_ticket_exempt',
+  ticket_solo: 'rw_ticket_solo', ticket_friend: 'rw_ticket_friend',
+};
+/* 一张券「能干什么」，一句话。数字全部从接口来（时长在 effect.minutes、
+   每周张数在 weekly_limit），家长改过价改过时长这句话就跟着变 —— 写死
+   「30 分钟」的文案，家长一改设置就开始骗人。 */
+const K_TICKET_SAY = {
+  ticket_fun: t => '可以玩 ' + num((t.effect || {}).minutes || 30) + ' 分钟',
+  ticket_company: t => '指定一个人陪你 ' + num((t.effect || {}).minutes || 30) + ' 分钟',
+  ticket_choice: t => '今天听你说了算' + (t.weekly_limit === 1 ? '，一周一张' : ''),
+  ticket_exempt: t => '免一次额外家务' + (t.weekly_limit === 1 ? '，一周一张' : ''),
+  ticket_solo: () => '和爸爸或妈妈出门一次，两小时，去哪、做什么你说了算',
+  ticket_friend: t => '请同学来家里玩半天' + (t.weekly_limit === 1 ? '，一周一张' : ''),
+};
+/* 卡按稀有度分四级，每一级多少天到期。这个数在库里的 item.shelf_life_days 上
+   （普通 90 / 稀有 90 / 传说 120 / 钻石 NULL = 永久），图鉴接口会带出来，
+   所以这里按稀有度取一次，不写死。 */
+function kShelfSay(items) {
+  const days = {};
+  (items || []).forEach(x => {
+    if (days[x.rarity] === undefined) days[x.rarity] = x.shelf_life_days;
+  });
+  const one = (r, name) => days[r] ? name + ' ' + num(days[r]) + ' 天' : (days[r] === null ? name + ' 永久' : '');
+  return [one('common', '普通'), one('rare', '稀有'), one('legend', '传说')]
+    .filter(Boolean).join('，') + '，钻石永久';
+}
+
+async function kScreenGuideCard() {
+  const mid = S.me.id;
+  const shop = await kg('/api/shop?member_id=' + mid);
+  const st = await kg('/api/tickets/state?member_id=' + mid);
+  const cat = await kg('/api/catalog?member_id=' + mid);
+  // 按价钱从便宜到贵排。设计稿这份顺序就是这个，跟「先攒够了买得起哪个」一致。
+  const tickets = ((shop && shop.tickets) || []).slice()
+    .sort((a, b) => (+a.price || 0) - (+b.price || 0));
+  const ex = (cat && cat.exchange) || {};
+
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('guidecard') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">券和卡</div>' +
+    '<div class="appbar-sub">换来的东西怎么用</div></span></div>';
+
+  h += '<div class="card">' +
+    '<div class="row-title" style="margin-bottom:6px">六种券，用星星买</div>' +
+    '<div class="kd-tklist">' + tickets.map(t => {
+      const say = (K_TICKET_SAY[t.code] || (() => t.desc || ''))(t);
+      return '<div class="hb kd-tkrow">' +
+        kGlyph(K_TICKET_ICON[t.code] || t.icon || 'rw_ticket', 26) +
+        '<span class="kd-tkn">' + esc(t.name) + '</span>' +
+        '<span class="kd-tkp">' + num(t.price) + ic('i-stardust', 11, '#B87A0C') + '</span>' +
+        '<span class="kd-tkd">' + esc(say) + '</span></div>';
+    }).join('') + '</div></div>';
+
+  // 玩的时间那三条：张数、间隔、收工。全是设置项，能从接口拿的就不写死
+  //（收工时间两条在 ticket_use_state 里，见那边的 curfew_school / curfew_weekend）。
+  const s = st || {};
+  h += '<div class="card kd-lilac">' +
+    '<div class="row-title" style="color:#5B3FD6;margin-bottom:10px">玩的时间怎么用</div>' +
+    '<div class="v g7 kd-lilac-p">' +
+    '<div class="gd-li">一张 ' + num(s.minutes || 30) + ' 分钟，白天一轮最多 '
+    + num(s.single_max || 3) + ' 张，晚上 ' + num(s.evening_max || 2) + ' 张</div>' +
+    '<div class="gd-li">中间停超过 ' + num(s.renew_within_minutes || 10)
+    + ' 分钟，这一轮就结束，休息 ' + num(s.cooldown_minutes || 60) + ' 分钟再来</div>' +
+    '<div class="gd-li">上学日 ' + esc(s.curfew_school || '21:30') + ' 前要停，周末和假期 '
+    + esc(s.curfew_weekend || '22:00') + ' 前停</div>' +
+    '</div></div>';
+
+  h += '<div class="card">' +
+    '<div class="row-title" style="margin-bottom:10px">道具卡：开箱才有，商店不卖</div>' +
+    '<div class="v g7">' +
+    '<div class="gd-li">四个等级：普通、稀有、传说、钻石，越往上越难得</div>' +
+    '<div class="gd-li">' + esc(kShelfSay(cat && cat.items)) + '</div>' +
+    '<div class="gd-li">快到期会提醒你，没用完的会退回一半星星</div>' +
+    '<div class="gd-li">重复的卡会变成碎片，攒够 ' + num(ex.pick || 20)
+    + ' 片能自己挑一张钻石卡（' + num(ex.random || 10) + ' 片是随机给一张）</div>' +
+    '</div></div>';
+
+  h += '<div class="kd-hard">' + ic('i-lock', 15, '#B33A2E') +
+    '不管拿到什么卡什么券，每天那 7 分照算，谁也不能免掉。</div>';
   return kShell({}, h);
 }
 
@@ -2047,6 +2528,8 @@ const K_SCREENS = {
   coupon: kScreenCoupon, shop: kScreenShop, report: kScreenReport, wish: kScreenWish,
   mine: kScreenMine, atlas: kScreenAtlas, family: kScreenFamily,
   boxinfo: kScreenBoxInfo,
+  guide: kScreenGuide, guide7: kScreenGuide7, guidebox: kScreenGuideBox,
+  guidecard: kScreenGuideCard,
 };
 
 const CHILD = {};
@@ -2083,6 +2566,18 @@ CHILD.render = async function () {
   try {
     el.innerHTML = await fn();
     CHILD.bind();
+    // 目录页有三张卡都进「宝箱和星星」这一屏，各自停在不同那一段。
+    // 落地要等一帧：外层的 render() 收尾时会把滚动位置写回「上一屏」的值
+    //（app.js render() 末尾那两行），在这儿同步滚会被它当场盖掉 ——
+    // 实测 guidebox 的 scrollTop 一直停在 0，而隔一帧再滚就是对的。
+    if (kGuideTo) {
+      const to = kGuideTo;
+      kGuideTo = '';
+      requestAnimationFrame(() => {
+        const box = document.getElementById(to);
+        if (box) box.scrollIntoView({ block: 'start' });
+      });
+    }
     startTkTick();
     startTicketPoll();
   } catch (e) {
@@ -2121,6 +2616,11 @@ CHILD.bind = function () {
   if (ex) ex.addEventListener('click', () => cashSheet());
   const dp = $('#kDep', el);
   if (dp) dp.addEventListener('click', () => kDepositSheet());
+  // 「怎么玩」目录里的五张入口卡。中间三张落在同一屏（宝箱和星星）上，
+  // 各自带一个锚点，进去以后滚到那一段 —— 不能只给一屏，否则点「星星」
+  // 和点「七个宝箱」看到的是同一个页顶。
+  $$('[data-guide]', el).forEach(b => b.addEventListener('click', () =>
+    kGoGuide(b.dataset.guide, b.dataset.anchor)));
 
   // 成长报告底部那张月历：点一格看当天七项。明细就在 KCAL 里，不再跑接口。
   $$('[data-kcd]', el).forEach(b => b.addEventListener('click', () => {
@@ -2156,7 +2656,7 @@ CHILD.bind = function () {
   }));
   // 付星尘那一个按钮不在这里绑：bindWishActions 里已经绑过并带上了确认，
   // 两边都挂监听的话点一下会跑两遍（弹层叠两层、接口发两次）。
-  // 宝箱页顶部那张「点我打开」。待开箱的箱子不管动画播多久，都在这里点开；
+  // 宝箱页 hero 卡上那只箱子。待开的那只不管动画播多久，都在这里点开；
   // 开了但自选没挑完的那只，点下去是回到结果屏接着挑（后端 pick 那一支负责收尾）。
   $$('#view button[data-openbox]').forEach(b => b.addEventListener('click', () => {
     const row = ((S.pendBoxes || []).filter(x => x.box_id === +b.dataset.openbox)[0]) || null;

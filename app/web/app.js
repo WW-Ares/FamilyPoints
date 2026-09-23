@@ -52,10 +52,15 @@ function err(e) { toast(e && e.message ? e.message : String(e)); }
 
 /* 配图面板正开在弹层里时记着是哪一个（发布页那处用它，见 ipOpen）。 */
 let ipSheetId = '';
-function sheet(html, onOpen) {
+/* opts.center：这一层摆在屏幕正中。孩子端开箱那一套走这条 —— 箱子在屏幕中间
+   才像个开箱，从底下升上来像一张通知。默认还是从底下升上来。
+   每次打开都显式设一遍、不靠上次的残留：开完箱紧跟着弹一个确认框，
+   框还悬在屏幕中间、底下那套动效却没了，看着像卡住。 */
+function sheet(html, onOpen, opts) {
   const box = $('#sheetBody');
   ipSheetId = '';                    // 换了一层新内容，原来认领的那个面板作废
   box.innerHTML = html;
+  $('#sheet').classList.toggle('is-center', !!(opts && opts.center));
   $('#sheet').classList.add('on');
   if (onOpen) onOpen(box);
 }
@@ -533,8 +538,30 @@ const P_TAB_OF = {
   publish: 'publish',
   me: 'me', chest: 'me', shop: 'me', family: 'me', wish: 'me', kid: 'me',
   settings: 'me',
+  // 口径全书这一组也挂在「我的」底下：它跟宝箱与券、商店与汇率同层，
+  // 都是家长自己翻的东西，不占底栏那一格。
+  rules: 'me', rulescore: 'me', ruleticket: 'me',
 };
 function pValid(v) { return !!(v && P_TAB_OF[v]); }
+
+/* 二级页的返回目标。孩子端有 S.from（kBack 查它），家长端原来是每页
+   把 back: 'me' 写死 —— 从「规则说明」再进一层「打分 · 周期 · 结算」，
+   点返回就跳过中间那层掉回「我的」。这里补一张同样的来路表，
+   新开的那几页用它；老页面仍传字面量，行为一点不变。 */
+const P_FROM = {};
+function pBack(v) {
+  const f = P_FROM[v];
+  if (f && pValid(f) && f !== v) return f;
+  return P_TAB_OF[v] || 'home';
+}
+/* 目录行落到细页的哪一段。进屏前记下，render() 收尾时落一次 —— 三张卡都进
+   同一屏、只看页顶，孩子／家长自己得再往下找一遍。 */
+let P_ANCHOR = '';
+function pGoAnchor(v, anchor) {
+  if (!pValid(v)) return;
+  P_ANCHOR = anchor || '';
+  pGo(v);
+}
 
 function pHash(v, push) {
   if (location.hash === '#' + v) return;
@@ -549,6 +576,7 @@ function pHash(v, push) {
 function pGo(v) {
   if (!pValid(v)) return;
   if (v === S.view) { pHash(v, false); render(); return; }
+  P_FROM[v] = S.view;
   S.view = v;
   // 离开设置页就把「正在看哪一组」清掉。不清的话：设置 → 周期与假期 →
   // 底栏切走 → 再进设置，会直接落在上一次那一组里，一级那七行看不见了。
@@ -1307,6 +1335,8 @@ async function render() {
         logs: renderAdminLogs, chest: renderParentChest, shop: renderParentShop,
         family: renderFamily, wish: renderParentWish, settings: renderAdminSettings,
         kid: renderKidDetail, history: renderKidHistory,
+        rules: renderAdminRules, rulescore: renderAdminRulesCore,
+        ruleticket: renderAdminRulesTicket,
       };
       await (P[S.view] || renderAdminHome)(v);
     } else {
@@ -1332,6 +1362,15 @@ async function render() {
   v.scrollTop = keepV;
   const newC = v.querySelector('.content');
   if (newC) newC.scrollTop = keepC;
+  // 口径全书目录里那些行落到细页的哪一段。放在最后一行：上面刚把滚动位置
+  // 写回「上一屏」的值，先滚会被当场盖掉（孩子端那份在 CHILD.render 里，
+  // 靠一帧延迟躲同一个坑，见那边的注释）。
+  if (P_ANCHOR) {
+    const to = P_ANCHOR;
+    P_ANCHOR = '';
+    const el = document.getElementById(to);
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
 }
 
 /* ------------------------------------------------------------------ 星球等级 */
@@ -4624,18 +4663,27 @@ async function renderAdminMe(v) {
       '<span class="chev">›</span></div>').join('') + '</div></div>';
 
   const rows = [
-    ['i-family', '家庭页', '全家能量 · 许愿池 · 成员', 'family'],
-    ['i-chest', '宝箱与券', '七档门槛 · 直购价 · 概率', 'chest'],
-    ['i-shop', '商店与汇率', '六种券 · 折合金额', 'shop'],
-    ['i-wishpool', '心愿与许愿池', '两个孩子的愿望各走到哪一步', 'wish'],
+    ['i-family', '家庭页', '全家能量 · 许愿池 · 成员', 'family', 'go'],
+    ['i-chest', '宝箱与券', '七档门槛 · 直购价 · 概率', 'chest', 'go'],
+    // 口径全书夹在「宝箱与券」下面：家长最常要改的是门槛、券价、按轮那套闸门，
+    // 跟它相邻；再往里一层才是打分周期、券卡有效期两页。
+    ['i-nav-quill', '规则说明（口径全书）', '打分周期 · 券卡有效期 · 四条红线', 'rules', 'rules'],
+    ['i-shop', '商店与汇率', '六种券 · 折合金额', 'shop', 'go'],
+    ['i-wishpool', '心愿与许愿池', '两个孩子的愿望各走到哪一步', 'wish', 'go'],
   ];
   h += '<div class="stack--sm" style="display:flex;flex-direction:column;gap:8px">' +
     '<span class="sec-title">家里的事</span>' +
     '<div class="card card--tight" style="padding:6px">' +
-    rows.map(r => '<div class="row" data-go="' + r[3] + '">' + pic(r[0], 20) +
-      '<div class="row-body"><span class="row-title">' + esc(r[1]) + '</span>' +
-      '<span class="row-sub">' + esc(r[2]) + '</span></div>' +
-      '<span class="chev">›</span></div>').join('') +
+    rows.map(r => {
+      // 「新」只在没看过时挂一次，看完自己消失 —— 跟孩子端「怎么玩」同一套。
+      const nw = (r[2].indexOf('四条红线') >= 0 && !kSeen('prules'))
+        ? '<span class="pill pill--orange" style="margin-left:6px;padding:1px 6px;font-size:9.5px">新</span>' : '';
+      return '<div class="row"' + (r[4] === 'rules'
+        ? ' data-act="rules"' : ' data-go="' + r[3] + '"') + '>' + pic(r[0], 20) +
+        '<div class="row-body"><span class="row-title">' + esc(r[1]) + nw + '</span>' +
+        '<span class="row-sub">' + esc(r[2]) + '</span></div>' +
+        '<span class="chev">›</span></div>';
+    }).join('') +
     '<div class="row" data-go="settings">' + pic('i-gear', 20) +
     '<div class="row-body"><span class="row-title">设置</span>' +
     '<span class="row-sub">价格 · 门槛 · 额度，改完就生效</span></div>' +
@@ -4671,7 +4719,268 @@ async function renderAdminMe(v) {
       LOG_FILTER.mine = true; LOG_FILTER.group = ''; LOG_FILTER.member_id = '';
       pGo('logs');
     }
+    if (k === 'rules') { kMarkSeen('prules'); pGo('rules'); }
   }));
+}
+
+/* ================================================================== 家长端 · 规则说明（口径全书） */
+/* 这一组三页：一页目录（rules）+ 两页细的（rulescore 打分周期结算 / ruleticket 券卡有效期）。
+   跟孩子端「怎么玩」讲的是同一套规则，只是那份是儿童版 —— 那边七岁能自己读，
+   这边是给家长对口径用的，所以数字一律从设置与接口现取，不写死。
+
+   目录里的行不是摆设：能落到细页某一节的都带了锚点（data-rules + data-anchor），
+   点过去直接停在那一段，跟孩子端那三张入口卡同一个走法。 */
+
+/* 从 /api/settings 那棵树上按 key 取一项。取不到就给兜底 —— 说明书不能因为
+   少了一个旋钮就整页白掉，而家长看到的数字必须是家里现在这套。 */
+function pCfg(sett, key, fallback) {
+  const gs = (sett && sett.groups) || [];
+  for (const g of gs) for (const it of (g.items || [])) {
+    if (it.key === key) return it.value;
+  }
+  return fallback;
+}
+/* 一行「名字 + 一句话」，右边一个 ›。有 target 才带箭头 —— 不带箭头的行
+   点不动，就别做出能点的样子。 */
+function pRuleRow(title, sub, target, anchor) {
+  const attrs = target ? ' data-rules="' + target + '" data-anchor="' + (anchor || '') + '"' : '';
+  return '<div class="row"' + attrs + '>' +
+    '<div class="row-body"><span class="row-title">' + esc(title) + '</span>' +
+    '<span class="row-sub">' + esc(sub) + '</span></div>' +
+    (target ? '<span class="chev">›</span>' : '') + '</div>';
+}
+function pRuleGroup(name, rows) {
+  return '<div class="stack--sm" style="display:flex;flex-direction:column;gap:8px">' +
+    '<span class="sec-title">' + esc(name) + '</span>' +
+    '<div class="card card--tight" style="padding:6px">' +
+    rows.map(r => pRuleRow(r[0], r[1], r[2], r[3])).join('') + '</div></div>';
+}
+
+async function renderAdminRules(v) {
+  kMarkSeen('prules');
+  const sett = await pg('/api/settings', null);
+  const top = pCfg(sett, 'box.perfect_require_fixed_49', true) ? 49 : 49;
+
+  let h = pHead({ title: '规则说明', back: pBack('rules'),
+    sub: '新成员的说明书 · 也是念给孩子听的那份' });
+
+  h += '<div class="card kd-hero kd-hero--gold">' +
+    '<div class="kd-h1" style="font-size:calc(16 * var(--u))">这套系统的三条定调</div>' +
+    '<div class="v g7 kd-hero-p" style="margin-top:10px">' +
+    '<div class="gd-li">判据是可计算、可申述、可审计，不做排行榜、不做连击</div>' +
+    '<div class="gd-li">家长在裁判席：不计分、没有周期、没有宝箱券卡</div>' +
+    '<div class="gd-li">任何券卡都不能让每天固定 7 分失效（四条红线之一）</div>' +
+    '</div></div>';
+
+  const G = pCfg(sett, 'box.thresholds', [7, 14, 21, 28, 35, 42, 49]);
+  const lo = G[0], hi = G[G.length - 1];
+  h += pRuleGroup('基础', [
+    ['谁在计分', '只有孩子进循环；家长没有每日 7 分与宝箱', 'rulescore', 'rs-dims'],
+    ['两套账：周能量 / 星尘', '周能量周期末归零只定档；星尘永久、不清零', 'rulescore', 'rs-settle'],
+    ['周期与打分', '周六起 ' + num(7) + ' 天；七维各 1 分，周满 ' + num(hi),
+      'rulescore', 'rs-dims'],
+  ]);
+  h += pRuleGroup('产出', [
+    ['七档宝箱', '门槛 ' + num(lo) + ' 到 ' + num(hi) + '；保底券 2~' + num(14) + ' 张，王箱起带随机件',
+      'rulescore', 'rs-settle'],
+    ['星尘四个出口', '换零花钱（月 60）、买券、直购箱、投许愿池', 'rulescore', 'rs-settle'],
+    ['星球等级', '按累计获得的星尘算，花掉不掉级；不给特权', 'rulescore', 'rs-settle'],
+  ]);
+  h += pRuleGroup('券与卡', [
+    ['六种券的价格与限制', '7 / 10 / 12 / 15 / 22 / 30 星尘，后四种每周一张', 'ruleticket', 'rt-price'],
+    ['娱乐券按「轮」算', '一轮白天 3 张 / 晚间 2 张，硬停止卡的是结束时间', 'ruleticket', 'rt-round'],
+    ['23 张卡分四级', '普通 90 天 / 稀有 90 / 传说 120 / 钻石永久', 'ruleticket', 'rt-expire'],
+  ]);
+  h += pRuleGroup('执行', [
+    ['校准三层，一次只走一层', '自校准不扣分；联动给后果；契约只处理违约', 'rulescore', 'rs-miss'],
+    ['修复任务四类', '道歉 24h / 实物 48h / 行为重做当天 / 关系补偿 48h', 'rulescore', 'rs-miss'],
+    ['偷玩游戏与抄作业', '偷玩降级为公开使用 3 天；抄作业可撤销当日智识 1 分', 'rulescore', 'rs-miss'],
+  ]);
+  h += pRuleGroup('念给孩子听', [
+    // 这一行**不带箭头**：家长账号进不去孩子端那一屏（两端是两套登录），
+    // 挂个点了没反应的 › 就是骗人。设计稿上画了箭头，这里按能力来。
+    ['孩子端「怎么玩」', '同一套规则的儿童版，七岁能自己读'],
+  ]);
+
+  h += '<div class="card kd-cut">' +
+    '<div class="kd-cut-t">四条红线（锁死，改不了）</div>' +
+    '<div class="t-2" style="font-size:calc(12 * var(--u));line-height:1.8;color:#8A7359">' +
+    '不羞辱人格 · 不碰安全与健康 · 不追溯已发奖励<br>' +
+    '任何券卡都不能让每天固定 ' + num(pCfg(sett, 'score.daily_full', 7)) + ' 分失效</div></div>';
+
+  v.innerHTML = h;
+  $$('#view [data-rules]').forEach(el => el.addEventListener('click',
+    () => pGoAnchor(el.dataset.rules, el.dataset.anchor)));
+  $$('#view [data-back]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.back)));
+}
+
+/* --------------------------------------------------------- 打分 · 周期 · 结算 */
+async function renderAdminRulesCore(v) {
+  const sett = await pg('/api/settings', null);
+  const per = pCfg(sett, 'score.dimension_score', 1);
+  const full = pCfg(sett, 'score.daily_full', 7);
+  const backfill = pCfg(sett, 'score.backfill_days', 2);
+  const cwin = pCfg(sett, 'score.correct_window_hours', 24);
+  const expCap = pCfg(sett, 'score.explore_weekly_cap', 7);
+
+  let h = pHead({ title: '打分 · 周期 · 结算', back: pBack('rulescore'),
+    sub: '口径集中在这一页说清' });
+
+  /* 七个维度只在孩子端那一份（K_DIM_GUIDE）上维护一套：颜色、名字、一句「管什么」。
+     两端各写一份，迟早改一头忘一头 —— 说明书上一项写吃饭、另一项写运动，
+     就是那么来的。这里取它的第 2/3/4 个字段。 */
+  h += '<div class="card" id="rs-dims">' +
+    '<div class="row-title">七个维度，各 ' + num(per) + ' 分</div>' +
+    '<div class="t-3" style="font-size:calc(11 * var(--u-sm));line-height:1.6;margin-top:7px">' +
+    '假期版换三个：智识→计划执行、匠力→家务分担、秩序→房间自理</div>' +
+    '<div style="margin-top:12px">' + K_DIM_GUIDE.map(d =>
+      '<div class="kd-tab">' + kGlyph(d[0], 22) +
+      '<span class="kd-nm">' + esc(d[1]) + '</span>' +
+      '<span class="kd-ds">' + esc(d[3]) + '</span></div>').join('') +
+    '</div></div>';
+
+  h += '<div class="card" id="rs-score">' +
+    '<div class="row-title">打分页四态，状态由后端一处给</div>' +
+    '<div style="margin-top:12px">' +
+    '<div class="kd-bullet"><span class="kd-kw" style="color:#E8722A">未打</span>' +
+    '<span class="kd-ds">今天还没打，点一项记一项，不加保存按钮</span></div>' +
+    '<div class="kd-bullet"><span class="kd-kw" style="color:#5B3FD6">补卡</span>' +
+    '<span class="kd-ds">往日欠着；能往回翻 ' + num(backfill) + ' 天，截止次日 12:00</span></div>' +
+    '<div class="kd-bullet"><span class="kd-kw" style="color:#2F7FE8">修改</span>' +
+    '<span class="kd-ds">打过之后 ' + num(cwin) + ' 小时内可改可撤，原记录不删</span></div>' +
+    '<div class="kd-bullet"><span class="kd-kw" style="color:#8A7359">超时</span>' +
+    '<span class="kd-ds">过了窗口就锁死，只剩家长调整那条路</span></div>' +
+    '</div></div>';
+
+  h += '<div class="card kd-warm" id="rs-settle">' +
+    '<div class="kd-warm-t">结算口径：每个数从哪来</div>' +
+    '<div class="v g7">' +
+    '<div class="gd-li">周能量 = 固定分 + 星探 + 任务能量 + 家长调整</div>' +
+    '<div class="gd-li">额外分（星探 + 任务）每周最多 ' + num(expCap) + '，超出自动转星尘</div>' +
+    '<div class="gd-li">星尘在结算那一刻，按本周固定分一次性入账</div>' +
+    '<div class="gd-li">最高那档还要求固定分满 ' + num(full * 7) + '，凑不出来就是凑不出来</div>' +
+    '</div></div>';
+
+  h += '<div class="card" id="rs-miss">' +
+    '<div class="row-title">忘打卡兜底</div>' +
+    '<div class="v g7" style="margin-top:10px">' +
+    '<div class="gd-li">20:00 提醒打分；次日 12:00 前可以补</div>' +
+    '<div class="gd-li">12:00 仍空白：自动按满分 ' + num(full) + ' 分记，同时判家长忘打卡，'
+    + num(100) + ' 星尘进许愿池</div>' +
+    '<div class="gd-li">有起点：起用日与孩子开号日之前不判；回看窗口默认 7 天</div>' +
+    '</div></div>';
+
+  v.innerHTML = h;
+  $$('#view [data-back]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.back)));
+}
+
+/* --------------------------------------------------------- 券 · 卡 · 有效期 */
+/* 这一页写的是最容易踩坑的三处：券价与限制、娱乐券的「轮」、卡的有效期。
+   一个数字都不写死 —— 券价和时长从 /api/shop 来（家长改过价就跟着变），
+   闸门从设置来，卡的持有上限与到期返还从图鉴接口来（它们本来就是 item 表上的列）。
+   写死的话，家长在设置页改完，这一页立刻变成一本错的说明书。 */
+async function renderAdminRulesTicket(v) {
+  const kid = KIDS()[0];
+  const kidId = kid ? kid.id : '';
+  const sett = await pg('/api/settings', null);
+  const shop = kidId ? await pg('/api/shop?member_id=' + kidId, null) : null;
+  const st = kidId ? await pg('/api/tickets/state?member_id=' + kidId, null) : null;
+  const cat = kidId ? await pg('/api/catalog?member_id=' + kidId, null) : null;
+
+  const tickets = ((shop && shop.tickets) || []).slice()
+    .sort((a, b) => (+a.price || 0) - (+b.price || 0));
+  const items = (cat && cat.items) || [];
+
+  /* 按稀有度取一次「这一级归哪一档」。同一个稀有度上所有卡的这几个数是一样的
+     （见 seed_data 的 SHELF / MAXHOLD / REFUND），所以拿第一条就够了。 */
+  const byRarity = {};
+  items.forEach(x => { if (!byRarity[x.rarity]) byRarity[x.rarity] = x; });
+  const rar = r => byRarity[r] || {};
+  const shelfSay = ['common', 'rare', 'legend']
+    .map(r => {
+      const it = rar(r);
+      const nm = { common: '普通', rare: '稀有', legend: '传说' }[r];
+      if (!it.shelf_life_days) return '';
+      return nm + ' ' + num(it.shelf_life_days) + ' 天';
+    }).filter(Boolean).join(' / ') || '普通 90 天 / 稀有 90 / 传说 120';
+  const holdSay = ['common', 'rare', 'legend']
+    .map(r => {
+      const it = rar(r);
+      const nm = { common: '普通', rare: '稀有', legend: '传说' }[r];
+      return it.max_hold ? nm + ' ' + num(it.max_hold) : '';
+    }).filter(Boolean).join(' / ') || '普通 3 / 稀有 3 / 传说 2';
+  const refundSay = ['common', 'rare', 'legend']
+    .map(r => {
+      const it = rar(r);
+      const nm = { common: '普通', rare: '稀有', legend: '传说' }[r];
+      return it.expire_refund ? nm + ' ' + num(it.expire_refund) : '';
+    }).filter(Boolean).join(' / ') || '普通 8 / 稀有 15 / 传说 40';
+
+  /* 券的限制那半句：娱乐券与陪伴券不限量，其余四种每周一张。weekly_limit
+     是接口给的（NULL = 不限量），不自己数着写。 */
+  const limitSay = t => t.weekly_limit ? '每周 ' + num(t.weekly_limit) + ' 张' : '不限量';
+  const T_EX = {
+    ticket_fun: t => num((t.effect || {}).minutes || 30) + ' 分钟屏幕时间，' + limitSay(t),
+    ticket_company: t => '指定一位家人陪 ' + num((t.effect || {}).minutes || 30) + ' 分钟，' + limitSay(t),
+    ticket_choice: t => '一次决定权，' + limitSay(t),
+    ticket_exempt: t => '免一次额外家务，对匠力无效',
+    ticket_solo: () => '出门一次 2 小时，去哪做什么由孩子定；每月一次「不用券」的一对一要另排',
+    ticket_friend: t => '邀同学来家里玩半天，' + limitSay(t),
+  };
+
+  const s = st || {};
+  const renewPct = (rar('common').renew_cost_pct !== undefined && rar('common').renew_cost_pct !== null)
+    ? rar('common').renew_cost_pct : 20;
+  const renewDays = pCfg(sett, 'card.renew_days', 90);
+  const sameCycle = pCfg(sett, 'card.same_cycle_limit', 1);
+  const warnDays = pCfg(sett, 'notify.card_expire_days', 14);
+  const delayMax = pCfg(sett, 'holiday.delay_max_per_year', 2);
+  const dailyFull = pCfg(sett, 'score.daily_full', 7);
+
+  let h = pHead({ title: '券 · 卡 · 有效期', back: pBack('ruleticket'),
+    sub: '最容易踩坑的三处' });
+
+  h += '<div class="card" id="rt-price">' +
+    '<div class="row-title">六种券：价格与限制</div>' +
+    '<div class="kd-tklist">' + (tickets.length ? tickets : [
+      { code: 'ticket_fun', name: '娱乐券', price: 7 },
+    ]).map(t =>
+      '<div class="hb kd-tkrow">' +
+      '<span class="kd-tkn">' + esc(t.name) + '</span>' +
+      '<span class="kd-tkp">' + num(t.price) + '</span>' +
+      '<span class="kd-tkd">' + esc((T_EX[t.code] || (() => t.desc || ''))(t)) + '</span></div>'
+    ).join('') + '</div></div>';
+
+  h += '<div class="card kd-lilac" id="rt-round">' +
+    '<div class="row-title" style="color:#5B3FD6;margin-bottom:10px">娱乐券按「轮」算，不按次</div>' +
+    '<div class="v g7 kd-lilac-p">' +
+    '<div class="gd-li">后一张的提交时刻距前一张结束 ≤ ' + num(s.renew_within_minutes || 10)
+    + ' 分钟，算同一轮</div>' +
+    '<div class="gd-li">一轮上限：白天 ' + num(s.single_max || 3) + ' 张 / 晚间 '
+    + num(s.evening_max || 2) + ' 张，加时各 +1</div>' +
+    '<div class="gd-li">硬停止判的是结束时间：上学日 ' + esc(s.curfew_school || '21:30')
+    + '，周末假期 ' + esc(s.curfew_weekend || '22:00') + '</div>' +
+    '<div class="gd-li">一轮结束休息 ' + num(s.cooldown_minutes || 60)
+    + ' 分钟；续费窗口看提交时刻，时段看此刻</div>' +
+    '</div></div>';
+
+  h += '<div class="card" id="rt-expire">' +
+    '<div class="row-title">有效期三步</div>' +
+    '<div class="v g7" style="margin-top:10px">' +
+    '<div class="gd-li">剩 ' + num(warnDays) + ' 天进提醒期；花原值 ' + num(renewPct)
+    + '% 星尘续 ' + num(renewDays) + ' 天，每张一次</div>' +
+    '<div class="gd-li">到期未用折半返还：' + esc(refundSay) + ' 星尘</div>' +
+    '<div class="gd-li">假期顺延保护窗：免费顺延，一年最多 ' + num(delayMax) + ' 次</div>' +
+    '</div></div>';
+
+  h += '<div class="card kd-cut">' +
+    '<div class="kd-cut-t">卡的护栏</div>' +
+    '<div class="t-2" style="font-size:calc(12 * var(--u));line-height:1.8;color:#8A7359">' +
+    '持有上限：' + esc(holdSay) + '；同类卡每周期最多用 ' + num(sameCycle) + ' 张<br>' +
+    '任何卡都不能让每天固定 ' + num(dailyFull) + ' 分失效（locked，改不了）</div></div>';
+
+  v.innerHTML = h;
+  $$('#view [data-back]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.back)));
 }
 
 /* ================================================================== 家长端 · 家庭页 */

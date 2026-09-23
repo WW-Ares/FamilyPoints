@@ -825,6 +825,11 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
         # 今天面值是不是翻倍了。界面据这句说清楚「为什么一张券能换 60 分钟」，
         # 不然孩子会以为是系统算错了。
         "weekend_double": weekend_double_on(day) and bool(item and item["code"] == FUN_CODE),
+        # 上面那个 curfew 是「今天」生效的那条。说明页讲的是规律，要把
+        # 两条收工时间一起写出来（孩子记住的是「几点收工」，不是「今天几点」），
+        # 所以这里把两条都给出去，免得前端为了另一个值再发一次请求。
+        "curfew_school": _hm_text(_hhmm(db.cfg("ticket.curfew_school", "21:30"), 21 * 60 + 30)),
+        "curfew_weekend": _hm_text(_hhmm(db.cfg("ticket.curfew_weekend", "22:00"), 22 * 60)),
         "single_max": single, "evening_max": evening_max,
         "cooldown_minutes": cooldown, "renew_within_minutes": window,
         "used_total": st["total"], "used_evening": st["evening"],
@@ -1654,6 +1659,33 @@ def box_tiers_brief():
     return out
 
 
+def cycle_days(cycle_id):
+    """这一周期七天各自的固定分，宝箱卡上那条「一格一天」读的就是它。
+
+    没打分的那天也要给出来：卡片上那一格得画成「没点亮」，
+    前端少一天就不知道剩下的格子该摆在星期几。数组长度按 countable_days
+    （默认 7），从 start_date 起一天一格。
+
+    口径跟 growth_report 里那条一样：只看固定分（is_fixed=1）、不算作废的。
+    探索加分不占格子，它本来也不属于「那天的七个维度的账」。
+    """
+    c = db.query_one("SELECT * FROM cycle WHERE id=?", (cycle_id,))
+    if not c:
+        return []
+    n = int(c["countable_days"] or 7)
+    start = parse_day(c["start_date"])
+    rows = db.query(
+        "SELECT day, SUM(value) v FROM score_entry"
+        " WHERE member_id=? AND voided=0 AND is_fixed=1 AND day>=? AND day<=?"
+        " GROUP BY day", (c["member_id"], c["start_date"], c["end_date"]))
+    got = {r["day"]: float(r["v"] or 0) for r in rows}
+    out = []
+    for i in range(n):
+        d = fmt(start + timedelta(days=i))
+        out.append({"day": d, "score": round(got.get(d, 0.0), 2)})
+    return out
+
+
 def cycle_snapshot(cycle_id):
     c = recalc_cycle(cycle_id)
     if not c:
@@ -1667,6 +1699,8 @@ def cycle_snapshot(cycle_id):
         "fixed_score": c["fixed_score"], "bonus_energy": c["bonus_energy"],
         "energy": c["energy"], "countable_days": c["countable_days"],
         "ratio": c["threshold_ratio"], "status": c["status"],
+        # 七天各自的固定分，一格一天的画法要它。空的那天也在里面（score=0）。
+        "days": cycle_days(c["id"]),
         # icon 跟着给出去：宝箱页中间那只大箱子按它渲染，家长在「给它们换张图」
         # 里换过的图要能落到这一屏，不然那里改完只有七列跟着变，中间还是老样子。
         "tier": {"tier": t["tier"], "name": t["name"], "threshold": t["threshold"],
@@ -2798,17 +2832,23 @@ def _grant_random(member_id, rnd, tier_name, box_id, *, cycle_id=None, operator_
     kind = "box_free" if source == "box" else "box_reroll"
     ri = rnd.get("resolved_item")
     rkind = rnd.get("kind")
+    # 前端要把这一件画成一张带图的物品卡，所以这里顺带把图标给出去。
+    # 只给名字的话，界面只能画出一行字，随机件那几种形状一个都认不出来。
+    icon = ""
     if ri and rkind in ("ticket", "card"):
         grant_item(member_id, ri, rnd.get("qty", 1), source="box", kind=kind,
                    ref_type="box_open", ref_id=box_id, cycle_id=cycle_id,
                    operator_id=operator_id,
                    note="%s 随机件：%s" % (tier_name, rnd.get("label") or rnd.get("name")))
+        row = db.query_one("SELECT icon FROM item WHERE id=?", (ri,))
+        icon = (row["icon"] if row else "") or ""
     elif rkind == "bonus" and rnd.get("code") == "minutes":
         qty = float(rnd.get("qty", 0) or 0)
         if qty:
             add_ledger(member_id, kind, cycle_id=cycle_id, day=today(), minutes=qty,
                        ref_type="box_open", ref_id=box_id, operator_id=operator_id,
                        note="%s 随机件：今天多 %g 分钟" % (tier_name, qty))
+        icon = "sys_clock"
     elif rkind == "privilege":
         priv = item_by_code(rnd.get("code", ""))
         if priv:
@@ -2816,9 +2856,11 @@ def _grant_random(member_id, rnd, tier_name, box_id, *, cycle_id=None, operator_
                        ref_type="box_open", ref_id=box_id, cycle_id=cycle_id,
                        operator_id=operator_id,
                        note="%s 随机件：%s" % (tier_name, priv["name"]))
+            icon = priv["icon"] or ""
     return {"type": "random", "name": rnd.get("name") or rnd.get("label"),
             "label": rnd.get("label"), "detail": rnd,
-            "pick_required": rnd.get("pick_required", False)}
+            "pick_required": rnd.get("pick_required", False),
+            "icon": icon or "rw_gift"}
 
 
 def _take_back_random(member_id, rnd, box_id, operator_id=None):
@@ -3037,13 +3079,15 @@ def open_box(member_id, box_id, *, picks=None, operator_id=None, auto=False):
                    ref_type="box_open", ref_id=box_id, cycle_id=cycle_id,
                    operator_id=operator_id,
                    note="%s 保底：娱乐券 ×%g" % (t["name"], t["tickets"]))
-        given.append({"type": "ticket", "name": "娱乐券", "qty": t["tickets"]})
+        given.append({"type": "ticket", "name": "娱乐券", "qty": t["tickets"],
+                      "icon": fun["icon"] or "rw_ticket_fun"})
 
     if t["stardust"]:
         add_ledger(member_id, kind, cycle_id=cycle_id, stardust=t["stardust"],
                    ref_type="box_open", ref_id=box_id, operator_id=operator_id,
                    note="%s 保底：星尘 +%g" % (t["name"], t["stardust"]))
-        given.append({"type": "stardust", "name": "星尘", "qty": t["stardust"]})
+        given.append({"type": "stardust", "name": "星尘", "qty": t["stardust"],
+                      "icon": "rw_stardust"})
 
     for card in cards:
         frag = grant_item(member_id, card["id"], 1, source="box", kind=kind,
@@ -3051,7 +3095,7 @@ def open_box(member_id, box_id, *, picks=None, operator_id=None, auto=False):
                           operator_id=operator_id,
                           note="%s 高级件：%s" % (t["name"], card["name"]))[2]
         given.append({"type": "card", "name": card["name"], "rarity": card["rarity"],
-                      "fragment": frag})
+                      "fragment": frag, "icon": card["icon"] or "rw_card"})
 
     need_pick, rnd_given = _grant_random_or_pick(
         member_id, rnd, t, box_id, picks=picks, auto=auto,
@@ -3062,7 +3106,8 @@ def open_box(member_id, box_id, *, picks=None, operator_id=None, auto=False):
         grant_item(member_id, dia["id"], 1, source="box", kind=kind, ref_type="box_open",
                    ref_id=box_id, cycle_id=cycle_id, operator_id=operator_id,
                    note="完美箱 钻石级：%s" % dia["name"])
-        given.append({"type": "diamond", "name": dia["name"]})
+        given.append({"type": "diamond", "name": dia["name"],
+                      "icon": dia["icon"] or "bx_diamond"})
 
     db.execute("UPDATE box_open SET tickets=?, stardust=?, card_item_id=?, diamond_item_id=?,"
                " random_json=?, opened_at=? WHERE id=?",
@@ -3155,7 +3200,7 @@ def _grant_pick_cards(member_id, rnd, codes, opts, t, box_id, *, cycle_id=None,
                           operator_id=operator_id,
                           note="%s 随机件：自选 %s" % (t["name"], c["name"]))[2]
         given.append({"type": "card", "name": c["name"], "rarity": c["rarity"],
-                      "picked": True, "fragment": frag})
+                      "picked": True, "fragment": frag, "icon": c["icon"] or "rw_card"})
     rnd["picked"] = [c["code"] for c in picked]
     return given
 

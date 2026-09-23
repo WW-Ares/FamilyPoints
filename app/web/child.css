@@ -435,12 +435,13 @@ body.kid .k-tap { cursor: pointer; }
 body.kid .k-lab { display: flex; align-items: center; justify-content: center; gap: 2px; }
 body.kid .k-go { display: flex; align-items: center; }
 
-/* ============================ 宝箱：有箱待开的那张提醒卡 ============================ */
-/* 有箱待开那颗胶囊（v39）。比原来的白卡窄一圈、圆到底、橙边描粗一档：
-   它是这一页唯一「现在就能做的事」，所以做成一颗按下去的东西，而不是一张卡。 */
+/* ============================ 宝箱：有箱待开的那条提醒 ============================ */
+/* 有箱待开那颗胶囊（v39）。橙边描粗一档、圆到底，比白卡显眼一档。
+   它只是「你有个箱子」这句话，不是按钮 —— 开箱的入口是下面 hero 卡上那只箱子。
+   原来右边挂了个「点我打开」，把点击区和开箱这件事拆到了两处，撤掉。 */
 body.kid .chest-pod {
-  display: flex; align-items: center; gap: 10px;
-  width: 100%; text-align: left; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; cursor: default;
   height: 54px; padding: 0 14px; border-radius: 27px;
   background: #fff; border: 2px solid #F5B96A;
   box-shadow: 0 6px 16px -6px rgba(240,150,60,.45);
@@ -448,32 +449,136 @@ body.kid .chest-pod {
   animation: kAlertPulse 1.8s ease-in-out infinite;
 }
 body.kid .chest-pod > svg { flex: 0 0 auto; }
-body.kid .chest-pod-g { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* 图标和两行字缩成一组摆在正中间。原来左边对齐是给右边那颗「点我打开」
+   腾地方，按钮撤了之后，左边贴边、右边空一截，一个提醒缩在角上。 */
+body.kid .chest-pod-g {
+  flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column;
+  gap: 2px; align-items: center; text-align: center;
+}
 body.kid .chest-pod-t { font-size: calc(14 * var(--u)); font-weight: 700; color: #3A2E25; }
 body.kid .chest-pod-s { font-size: calc(11 * var(--u)); color: #8A7359; }
-body.kid .chest-pod-go {
-  flex: 0 0 auto; padding: 7px 12px; border-radius: 14px;
-  background: #F5A75D; color: #fff; font-size: calc(12 * var(--u)); font-weight: 700;
-}
+/* 箱子已经点开了，这条提醒当场收起。开箱动画和结果屏都是从底下升上来的弹层，
+   顶上正好露出这一条：不收起的话，孩子看着「正在开」和「你有箱子可以开」
+   同框，像刚才那一下没点着。 */
+body.kid .chest-pod.is-gone { display: none; }
 @keyframes kAlertPulse {
   0%, 100% { box-shadow: 0 6px 16px -6px rgba(240,150,60,.45); }
   50%      { box-shadow: 0 8px 22px -6px rgba(240,150,60,.72); }
 }
 
-/* ============================ 宝箱：开箱四拍 ============================ */
-body.kid .box-stage {
-  display: flex; flex-direction: column; align-items: center; gap: 16px;
-  padding: 36px 0 28px; text-align: center;
+/* ============================ 开箱：屏幕正中的那一套 ============================ */
+/* 箱子长在屏幕正中间，背后一圈光跟着四拍一档档变亮，最后一拍整屏白闪一下。
+   原来这一套是从底下升上来的卡片，箱子贴着屏幕下沿，看着像一条通知，不像开箱。 */
+body.kid .kop {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 11px; padding: 20px 0 6px; text-align: center;
 }
-body.kid .box-stage-in { display: block; transition: transform .34s ease, filter .34s ease; }
-body.kid .box-stage-tip { font-size: calc(12.5 * var(--u)); font-weight: 700; color: var(--ink-2); }
-body.kid .box-stage.is-in .box-stage-in { transform: scale(1.06); }
-body.kid .box-stage.is-shake .box-stage-in { animation: kBoxShake .5s ease-in-out; }
-body.kid .box-stage.is-glow .box-stage-in {
-  filter: drop-shadow(0 0 14px rgba(255,190,80,.95)); transform: scale(1.12);
+/* 光晕的裁剪刀口：跟 .kop 一样大，overflow:hidden 只关在这里面。
+   放大后的圆自己溢出会被这一层剪掉，剪掉的都是渐变最外那圈全透明的部分，
+   看不出缺口；不剪的话它会撑大弹层的可滚动区域，屏幕上就多两条滚动条。
+   箱子不在这一层里 —— 它的 drop-shadow 光晕需要溢出来，被剪会带出一条硬边。 */
+body.kid .kop-glow {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
 }
-body.kid .box-stage.is-burst .box-stage-in {
-  filter: drop-shadow(0 0 20px rgba(255,170,40,1)); transform: scale(1.22);
+/* 尺寸贴着卡片内容宽高，放大到 1.5 也只在刀口里长，永远不会撑出滚动条。 */
+body.kid .kop-rays {
+  position: absolute; top: 50%; left: 50%; width: 210px; height: 210px;
+  margin: -105px 0 0 -105px;
+  border-radius: 50%; opacity: 0; pointer-events: none; transform: scale(.85);
+  background: radial-gradient(circle, rgba(255,220,150,.95) 0%,
+    rgba(255,180,90,.42) 34%, rgba(255,180,90,0) 68%);
+  transition: opacity .4s ease, transform .45s ease;
+}
+body.kid .kop.is-in .kop-rays    { opacity: .35; transform: scale(.94); }
+body.kid .kop.is-shake .kop-rays { opacity: .55; transform: scale(1.02); }
+body.kid .kop.is-glow .kop-rays  { opacity: .9;  transform: scale(1.14); }
+body.kid .kop.is-burst .kop-rays { opacity: 1;   transform: scale(1.5); }
+body.kid .kop-box {
+  position: relative; z-index: 1; line-height: 0;
+  transition: transform .3s ease, filter .3s ease;
+}
+body.kid .kop.is-in .kop-box    { transform: scale(1.04); }
+body.kid .kop.is-shake .kop-box { animation: kBoxShake .5s ease-in-out; }
+body.kid .kop.is-glow .kop-box {
+  filter: drop-shadow(0 0 18px rgba(255,190,80,1)); transform: scale(1.08);
+}
+body.kid .kop.is-burst .kop-box {
+  filter: drop-shadow(0 0 26px rgba(255,170,40,1)); transform: scale(1.2);
+}
+body.kid .kop-title { font-size: calc(15 * var(--u)); font-weight: 800; color: #3A2A1C; }
+body.kid .kop-tip {
+  font-size: calc(12.5 * var(--u)); font-weight: 700; color: var(--ink-2); min-height: 18px;
+}
+/* 「开！」那一拍的全屏白闪。挂在 body 上，不在弹层里 —— 弹层只有中间一张卡，
+   闪光要盖住整个屏幕才像炸开。用完自己摘掉。 */
+.kop-flash {
+  position: fixed; inset: 0; z-index: 90; pointer-events: none;
+  background: radial-gradient(circle at 50% 46%, rgba(255,255,255,.95) 0%,
+    rgba(255,238,196,.66) 26%, rgba(255,220,150,0) 54%);
+  animation: kFlash .62s ease-out forwards;
+}
+@keyframes kFlash { 0% { opacity: 0; } 14% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ============================ 开箱结果：一件东西一张卡 ============================ */
+body.kid .kop-head {
+  display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 14px;
+}
+body.kid .kop-hb { line-height: 0; }
+body.kid .kop-ht { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+body.kid .kop-hn { font-size: calc(15 * var(--u)); font-weight: 800; color: #3A2A1C; }
+body.kid .kop-hs { font-size: calc(11.5 * var(--u)); font-weight: 700; color: var(--orange); }
+body.kid .kop-empty {
+  font-size: calc(12 * var(--u)); color: var(--ink-3); text-align: center; padding: 6px 0 4px;
+}
+body.kid .kop-note {
+  font-size: calc(11 * var(--u)); line-height: 1.6; color: var(--ink-2);
+  background: #FFF7E8; border-radius: 12px; padding: 9px 11px; margin-top: 11px;
+}
+body.kid .kop-go { margin-top: 14px; }
+body.kid .kop-pick { margin-top: 14px; }
+body.kid .kop-pick-h {
+  font-size: calc(13 * var(--u)); font-weight: 800; color: #3A2A1C;
+  text-align: center; margin-bottom: 9px;
+}
+
+/* 一件东西一张卡：图大、名大，稀有度只改底色和描边（靠颜色分档，不靠闪）。
+   逐张落下来 —— animation-delay 在 kItemCard 里依次压后。 */
+body.kid .oi-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+body.kid .oi-grid.is-one { grid-template-columns: minmax(0, 1fr); }
+/* 单数件时最后那张横过来占满一行：三件排成「两件 + 左边一件」，
+   右下角空一格，看着像少发了一样东西。 */
+body.kid .oi-grid > .oi:last-child:nth-child(odd) { grid-column: 1 / -1; }
+body.kid .oi {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 12px 8px 10px; border-radius: 16px;
+  background: #FFF9F0; border: 1.5px solid #F0E0C8;
+  animation: kOiIn .42s cubic-bezier(.2, .9, .3, 1.35) backwards;
+}
+@keyframes kOiIn {
+  from { opacity: 0; transform: translateY(10px) scale(.86); }
+  to   { opacity: 1; transform: none; }
+}
+body.kid .oi-ic { line-height: 0; }
+body.kid .oi-nm {
+  font-size: calc(11.5 * var(--u)); font-weight: 800; color: #3A2A1C;
+  text-align: center; line-height: 1.25;
+}
+body.kid .oi-tag { font-size: calc(10 * var(--u-sm)); font-weight: 700; color: #8A7359; }
+body.kid .oi-note {
+  font-size: calc(9.5 * var(--u-sm)); color: #A08E7A; text-align: center; line-height: 1.3;
+}
+body.kid .oi--gold    { background: #FFF7E4; border-color: #F2D48A; }
+body.kid .oi--fun     { background: #FFF1F5; border-color: #F6C4D6; }
+body.kid .oi--rare    { background: #F2F7FF; border-color: #B9D3F2; }
+body.kid .oi--legend  { background: #FBF3FF; border-color: #D9BDF0; }
+body.kid .oi--diamond { background: #EFFBFB; border-color: #A8E3E3; }
+body.kid .oi--random  { background: #F4FBF1; border-color: #BFE4B4; }
+body.kid .pc-ic { line-height: 0; }
+/* 系统开了「减弱动态效果」：物品卡直接落到位，光别闪。 */
+@media (prefers-reduced-motion: reduce) {
+  body.kid .oi { animation: none; }
+  body.kid .kop-rays { transition: none; }
+  .kop-flash { animation-duration: .01s; }
 }
 @keyframes kBoxShake {
   0%, 100% { transform: rotate(0deg) scale(1.02); }
@@ -586,6 +691,23 @@ body.kid .box-figure > svg:nth-child(2) { left: 8%;  top: 14%; }
 body.kid .box-figure > svg:nth-child(3) { left: 75%; top: 19%; }
 body.kid .box-figure > svg:nth-child(4) { left: 5%;  top: 69%; }
 body.kid .box-figure > svg:nth-child(5) { left: 76%; top: 66%; }
+/* 待开的那只箱子就长在这张卡上，它自己就是开箱键 —— 看到哪只箱子就点哪只。
+   轻微的呼吸光晕告诉孩子「这个能点」，不再往回指一句「点上面那条」。
+   光晕不用缩放：缩放的元素包围盒一直在变，任何按「点住不动」判定的自动化
+   都会永远等不到它稳定，用 filter 呼吸，尺寸不动。 */
+body.kid button.box-figure {
+  width: 100%; padding: 0; border: 0; background: none; cursor: pointer;
+  font-family: var(--font-cn); color: inherit; appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+body.kid button.box-figure.is-openable { animation: kBoxGlow 2s ease-in-out infinite; }
+@keyframes kBoxGlow {
+  0%, 100% { filter: drop-shadow(0 2px 3px rgba(140, 70, 10, .18)); }
+  50%      { filter: drop-shadow(0 0 11px rgba(255, 255, 255, .78)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.kid button.box-figure.is-openable { animation: none; }
+}
 
 /* ============================ 七格进度条 ============================ */
 body.kid .chest-slots { display: flex; gap: 6px; }
@@ -597,6 +719,88 @@ body.kid .chest-slots i.is-full { background: #fff; }
 body.kid .chest-slots i.is-half::after {
   content: ""; position: absolute; inset: 0 50% 0 0; background: #fff;
 }
+/* ============================ 七天条（一格一天） ============================ */
+/* 宝箱卡中间这一条换了口径。原来是七个点按「能量 ÷ 7」往里填，看得见攒了多少，
+   看不见哪天打了分、哪天压根忘了打 —— 家长问「周三怎么没分」，条子上答不出来。
+
+   现在一格一天，从周期头那天排到周期尾（周六起）：
+     打过分的这天点亮（白底橙字），格子里的数字就是那天拿到的几分；
+     没打分的日子空着，不是扣分，也不算做错，只是「这天还没打分」；
+     今天那一格描一圈白边。
+   能量那一句（27/49）与下面七档那条线照旧：探索加分不占格子，
+   所以七格之和有可能比能量小一点，两个数讲的是同一件事的两个口径。
+   26px 是留写数字的高度：原来那 10px 的细条放不下字，才改成方一点的块。 */
+body.kid .chest-days { display: flex; gap: 6px; margin: 12px 0; }
+body.kid .chest-days .cd {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+body.kid .cd-b {
+  width: 100%; height: 26px; box-sizing: border-box;
+  border-radius: 8px; border: 1.5px solid transparent;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); font-size: calc(13 * var(--u)); font-weight: 700;
+  background: rgba(255, 255, 255, .18); color: rgba(255, 255, 255, .70);
+}
+body.kid .cd.is-on .cd-b { background: #FFFFFF; color: var(--orange-deep); }
+
+/* 今天那一格：金环 + 角上一颗金点 + 缓慢呼吸。
+
+   这是「特效标记」而不是一种填充 —— 今天有没有打分，光看环看不出来，要看格子
+   亮不亮，两件事不能互相替代。所以 is-today 是加在 is-on / is-off 之上的：
+   今天打过 7 分，是「亮着的格子戴金环」；今天还没打，是「空格子戴金环」。
+   金而不是白：hero 这张卡的底本来就是橙的，白环在橙底上没有边；
+   金色在白块（已打分）和半透明块（未打分）上都压得住。
+   呼吸做得很轻（透明度在区间里走，不动尺寸）—— 孩子来这一屏是看今天挣钱
+   的进展，不是来看动画的。系统开了「减弱动态效果」就退化成一圈静态金环。 */
+body.kid .cd.is-today .cd-b {
+  position: relative;
+  animation: cdToday 2.6s ease-in-out infinite;
+}
+body.kid .cd.is-today .cd-b::after {
+  content: ""; position: absolute; top: -4px; right: -4px;
+  width: 8px; height: 8px; border-radius: var(--r-pill);
+  background: var(--gold); border: 1.5px solid rgba(255, 255, 255, .92);
+}
+@keyframes cdToday {
+  0%, 100% { box-shadow: 0 0 0 2px var(--gold), 0 0 7px 1px rgba(255, 201, 60, .40); }
+  50%      { box-shadow: 0 0 0 2px var(--gold), 0 0 13px 3px rgba(255, 201, 60, .78); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.kid .cd.is-today .cd-b {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--gold), 0 0 9px 2px rgba(255, 201, 60, .55);
+  }
+}
+body.kid .cd-w {
+  font-size: calc(10.5 * var(--u-sm)); font-weight: 500;
+  color: rgba(255, 255, 255, .82);
+}
+body.kid .cd.is-today .cd-w { font-weight: 700; color: #FFFFFF; }
+body.kid .cd.is-future .cd-w { color: rgba(255, 255, 255, .60); }
+
+/* ============================ 怎么玩（说明页） ============================ */
+/* 说明页条目「一个小圆点 + 一句话」的形状在 style.css 的共用块里（.gd-li），
+   这里只定孩子端的字号与灰度。形状共用是因为两端都会用，字号不共用是因为
+   两端的排版比例本来就不一样（孩子端整体大一号）。 */
+body.kid .gd-li { font-size: calc(11.5 * var(--u-sm)); color: var(--ink-2); }
+/* 说明页那条「一周攒多少分」的示意：三行 —— 星期 / 色条 / 分数。
+   比首页那排格子矮（色条只有 18px），读的是颜色的连续性，不是单格的数字。
+   今天那格：星期与分数转橙，色条留浅底加一圈金边，下面写「今天」。 */
+body.kid .kwd-row { display: flex; gap: 5px; }
+body.kid .kwd-row + .kwd-row { margin-top: 6px; }
+body.kid .kwd-w, body.kid .kwd-n {
+  flex: 1; min-width: 0; text-align: center;
+  font-size: calc(9.5 * var(--u-sm)); color: var(--ink-3);
+}
+body.kid .kwd-w { font-weight: 600; }
+body.kid .kwd-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+body.kid .kwd-b { flex: 1; min-width: 0; height: 18px; border-radius: 6px; background: #F7F2EA; }
+body.kid .kwd-b.is-on { background: #FFC93D; }
+body.kid .kwd-b.is-today { background: #FBF6EE; box-shadow: inset 0 0 0 1.5px #FFC93D; }
+body.kid .kwd-w.is-today, body.kid .kwd-n.is-today { color: #E8722A; }
+body.kid .kwd-n.is-on { color: #B87A0C; }
+
 /* 摆在白卡上（成长报告）时换一套底色，白条在白底上是看不见的 */
 body.kid .chest-slots.on-plain i { background: #F4EDE2; }
 body.kid .chest-slots.on-plain i.is-full { background: var(--orange); }

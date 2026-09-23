@@ -399,6 +399,22 @@ img { max-width: 100%; }
   overflow: hidden; overscroll-behavior: contain;
 }
 .sheet.on { display: flex; }
+/* 摆屏幕正中那一层（孩子端开箱那一套）。遮罩压暗两档，中间的光才显得出来；
+   卡片四角全圆 —— 默认那套从底下升上来，上圆下平是贴着屏幕边用的。 */
+.sheet.is-center {
+  align-items: center; justify-content: center; padding: 18px;
+  background: rgba(26, 15, 5, .58);
+}
+.sheet.is-center .sheet-body {
+  width: 100%; max-width: 340px; border-radius: 24px;
+  padding: 18px 16px calc(18px + var(--safe-b));
+  /* 上下的 18px 是弹层自己的留白，卡片再高也别顶出屏幕；横向只裁不滚 ——
+     一张居中的卡不该有横向滚动条，横向能被拖动，本身就说明有东西摆歪了。 */
+  max-height: min(88vh, calc(100vh - 36px));
+  overflow-x: hidden;
+  animation: pop .22s ease-out;
+}
+@keyframes pop { from { transform: scale(.93); opacity: .55; } to { transform: none; opacity: 1; } }
 .sheet-body {
   width: 100%; max-width: var(--sheet-w); margin: 0 auto; background: var(--card);
   border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + var(--safe-b));
@@ -845,3 +861,142 @@ table.cal td { padding: 2px; }
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
   select, textarea { font-size: 16px !important; }
 }
+
+/* 说明页里的条目：一个小圆点 + 一句话。三条一排读下来会像清单，
+   所以点很小、行距放宽，看着像「几句话」，不像「打勾的表格」。
+   形状写在这儿（两端共用），字号由两端各自定 —— 孩子端整体大一号。 */
+.gd-li { position: relative; padding-left: 13px; line-height: 1.7; }
+.gd-li::before {
+  content: ""; position: absolute; left: 2px; top: .62em;
+  width: 4px; height: 4px; border-radius: 999px; background: var(--ink-line);
+}
+/* 说明页里那几行「一个图标 / 一个状态词 + 一句话」。左栏宽度按内容挑：
+   .kd-tab 三栏（维度图标 · 维度名 · 说明），.kd-bullet 两栏（状态词 · 说明）。
+   图标走 kGlyph（icons/<token>.svg，自带圆底），不用再套一圈背景色。 */
+.kd-tab, .kd-bullet { display: grid; gap: 9px; align-items: center; }
+.kd-tab { grid-template-columns: 24px 3.2em 1fr; }
+.kd-bullet { grid-template-columns: 3.9em 1fr; align-items: baseline; }
+.kd-tab + .kd-tab, .kd-bullet + .kd-bullet { margin-top: 10px; }
+.kd-tab .kgly { display: block; flex: none; }
+.kd-nm { font-size: calc(12 * var(--u)); font-weight: 700; color: #3A2A1C; }
+.kd-ds { font-size: calc(11.5 * var(--u-sm)); color: #8A7359; line-height: 1.6; }
+.kd-kw { font-size: calc(11.5 * var(--u)); font-weight: 700; }
+.kd-warm-t { font-size: calc(13 * var(--u)); font-weight: 700; color: #6B4310; margin-bottom: 10px; }
+/* 红线的整卡版（家长端）：底色跟孩子端那条 .kd-hard 同一族，
+   但家长这页要装一个题目加两条，不是一句话，所以另开一个。 */
+.kd-cut { --card: #FCEDE8; --card-line: transparent; }
+.kd-cut-t { font-size: calc(13 * var(--u)); font-weight: 700; color: #E2604C; margin-bottom: 9px; }
+
+/* ============================ 说明页：两端共用的一套版式 ============================
+   孩子端「怎么玩」与家长端「规则说明」是同一种页：一张头卡、几张白卡、段标题、
+   带编号的行。版式只写这一处 —— 两边的内容会一直对着改，样式分两份迟早长歪。
+   头卡底色由调用处挑：孩子端是橙的（.kd-hero），家长端是米金的（.kd-hero--gold）。
+
+   头卡这块底走的也是 --card 这条路，不是直接写 background。原因跟下面那几张
+   染色卡一样（见 .kd-soft）：孩子端有一条 body.kid .card，特异性比
+   .kd-hero 高，直接写背景会被它盖成白底 —— 而头卡的字是白的，一盖就是
+   整块空白，一个字都看不见。变量这条路是唯一一处写、两端都认的走法。 */
+.kd-hero {
+  --card: linear-gradient(135deg, #FFC46B, #E87329);
+  --card-line: transparent;
+  position: relative; overflow: hidden;
+  border-radius: 22px; padding: 16px;
+  color: #FFFFFF;
+}
+.kd-hero--gold {
+  --card: linear-gradient(135deg, #F5E6C2, #E6D1A1);
+  --card-line: transparent;
+  color: #6B4310;
+}
+.kd-chip {
+  display: inline-block; padding: 4px 11px; border-radius: 999px;
+  background: rgba(255, 255, 255, .26);
+  font-size: calc(11 * var(--u)); font-weight: 700;
+}
+.kd-hero--gold .kd-chip { background: rgba(255, 255, 255, .58); color: #6B4310; }
+.kd-h1 { margin-top: 11px; font-size: calc(22 * var(--u)); font-weight: 800; line-height: 1.35; }
+.kd-p { margin-top: 9px; font-size: calc(13 * var(--u)); line-height: 1.7; opacity: .94; }
+/* 步骤行：左边一颗编号圆，右边标题 + 一句说明 */
+.kd-step { align-items: center; padding: 11px 4px; }
+.kd-n {
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: calc(15 * var(--u)); font-weight: 800;
+}
+/* 同样是编号圆，小一号。用在「箱子怎么到手」这类只有两三条、
+   又夹在卡里的小分步上 —— 30px 的圆在那儿会把行撑得太高。 */
+.kd-n--sm { width: 22px; height: 22px; font-size: calc(12 * var(--u)); }
+/* 入口行左边那颗圆：42px，icon 用白色压在上面 */
+.kd-ic {
+  flex: 0 0 auto; width: 42px; height: 42px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+}
+/* 说明页底部的暖色提示条。刻意不复用 .tip —— 那是警示色（红系），
+   这里说的是「有不懂的问爸妈」，不是「你出问题了」。 */
+.kd-note {
+  display: flex; align-items: center; gap: 8px;
+  background: #FFF2E3; border-radius: 14px; padding: 12px 13px;
+  font-size: calc(12 * var(--u)); line-height: 1.65; color: #A2601F; font-weight: 500;
+}
+.kd-note svg { flex: 0 0 auto; }
+/* 七格示意：跟首页那排格子同形（26 高、圆角 8），孩子在说明页一眼认出说的是它。
+   前几格上色 = 已经拿到的，浅棕 = 还没拿到的。 */
+.kd-cells { display: flex; gap: 5px; }
+.kd-cell { flex: 1; height: 26px; border-radius: 8px; }
+/* 七个维度挤在一张卡里，靠上间距和一道浅线分块，不再一项一张卡
+   —— 一张卡翻到底像在读一份清单，七张卡则要滑七屏。 */
+.kd-dim { padding: 13px 0; }
+.kd-dim + .kd-dim { border-top: 1px solid var(--line); }
+
+/* 染色的卡。同一个「整块底 + 几句话」的版式，靠底色说这是哪一类内容：
+   黄=星星、紫=玩的时间、暖白=结算口径、粉红=红线。染色卡两端都要用，
+   所以放在这里；红线那张刻意不复用 .tip —— 它是锁死的规矩，
+   不是「你哪儿出问题了」，两端的红都要能一眼看见。
+
+   改的是 --card 而不是直接写 background：两端的 .card 各自都写着
+   background: var(--card)，其中孩子端那条是 body.kid .card（0,2,1），
+   比 .kd-soft（0,1,0）高，直接写背景色会被它盖掉 —— 实测就是
+   白卡照旧、一点颜色都上不去。--card-line 一起换，免得边上留一圈
+   跟底色打架的浅棕。 */
+.kd-soft { --card: #FFFAA8; --card-line: #F3E783; }
+.kd-lilac { --card: #EDE8FF; --card-line: #DCD3FA; }
+.kd-warm { --card: #FFFAF0; --card-line: #F1E6D3; }
+.kd-lilac-p .gd-li { color: #524670; }
+.kd-hard {
+  display: flex; align-items: center; gap: 8px;
+  background: #FFF0F0; border-radius: 14px; padding: 12px 13px;
+  font-size: calc(12 * var(--u)); line-height: 1.65; color: #B33A2E; font-weight: 600;
+}
+.kd-hard svg { flex: 0 0 auto; }
+/* 卡里那段正文：三段话，比要点列表松一点，孩子一口气读得下来 */
+.kd-body { font-size: calc(12 * var(--u)); line-height: 1.85; margin-top: 13px; }
+/* 带编号的一行（箱子怎么到手 / 校准三层这类分步说明）。
+   自己写 flex，不挂 .hb —— 那个是 space-between（两端对齐），
+   两三个字的一句话会被顶到最右边，跟左边的编号圆分家。 */
+.kd-nrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.kd-ntxt { font-size: calc(12.5 * var(--u)); font-weight: 600; color: #4A3627; line-height: 1.5; }
+/* 七档箱子：一行一档，左箱图、中档名、右「攒到多少分给什么」。
+   行布局自己写，不挂 .hb —— 那个是孩子端的（body.kid .hb），
+   家长端没有这条规则，挂上去就退化成 inline 流，名字、数字、说明各占一行。 */
+.kd-boxlist { margin-top: 10px; }
+.kd-boxrow { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.kd-boxrow + .kd-boxrow { border-top: 1px solid var(--line); }
+.kd-boxn {
+  flex: 0 0 auto; width: 4.2em;
+  font-size: calc(12 * var(--u)); font-weight: 700; color: #3A2A1C;
+}
+.kd-boxd { flex: 1; min-width: 0; font-size: calc(11 * var(--u-sm)); color: #8A7359; line-height: 1.5; }
+/* 券价目表：一行一张券，名 / 价 / 干什么 */
+.kd-tklist { margin-top: 8px; }
+.kd-tkrow { display: flex; align-items: center; gap: 9px; padding: 10px 0; }
+.kd-tkrow + .kd-tkrow { border-top: 1px solid var(--line); }
+.kd-tkn {
+  flex: 0 0 auto; width: 4em;
+  font-size: calc(12 * var(--u)); font-weight: 700; color: #3A2A1C;
+}
+.kd-tkp {
+  flex: 0 0 auto; min-width: 2.6em;
+  display: flex; align-items: center; gap: 2px;
+  font-family: var(--font-num); font-size: calc(12.5 * var(--u)); font-weight: 700; color: #B87A0C;
+}
+.kd-tkd { flex: 1; min-width: 0; font-size: calc(11 * var(--u-sm)); color: #8A7359; line-height: 1.5; }
