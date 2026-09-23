@@ -130,6 +130,28 @@ def activity(ctx):
                       since=since, until=until)
 
 
+@route("GET", "/api/my/news")
+def my_news(ctx):
+    """孩子自己的全部动静（v43）。首页「最近发生」的 5 条和
+    「查看全部」那个窗口都走这一条。
+
+    只能读自己。家长没有这个页面：那边要看账本走 /api/activity，
+    别在这条上开一个 member_id 参数，免得哪天顺手接过去，
+    变成「随时翻孩子账」的第二个入口。
+    """
+    me = ctx.as_member()
+    if me["role"] != "child":
+        raise ApiError("这条只给孩子看自己的消息", 403)
+    limit = ctx.clamp("limit", 1, 60, 5)
+    offset = ctx.clamp("offset", 0, 100000, 0)
+    since = _ymd(ctx, "since")
+    until = _ymd(ctx, "until")
+    if since and until and since > until:
+        raise ApiError("开始的日子要在结束之前")
+    return E.member_news(me["id"], since=since, until=until,
+                         limit=limit, offset=offset)
+
+
 @route("GET", "/api/dims")
 def dims(ctx):
     """七个维度的报告（v28）：孩子端「分数」页用这一份。

@@ -240,6 +240,8 @@ def _seed(conn, verbose: bool = False):
     _migrate_v38(conn)
     _migrate_v39(conn)
     _migrate_v40(conn)
+    _migrate_v41(conn)
+    _migrate_v42(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -1051,6 +1053,49 @@ def _migrate_v40(conn):
             "UPDATE box_tier SET icon=? WHERE tier=? AND icon IN ('rw_box','rw_box_open')",
             (tok, tier),
         )
+
+
+def _migrate_v41(conn):
+    """v41：活力这一项统一成「吃饭」口径。只改一句话，没有 DDL。
+
+    历史资料（原始规则、打分表、游戏化设计 v2、规则全书 v10~v29）里
+    「活力」从头到尾都是吃饭表现；`seed_data` 里那句「运动、户外、精力释放」
+    是后来写歪的，家长端设计稿照着它也写成了运动。WW先生 2026-09-23 拍板：
+    活力 = 吃饭的表现，所有端统一这个口径。
+
+    meaning 家长改不了（设置页只能改名和换图），所以存量库里那句老话
+    只能靠这一次迁移换掉。判据带上老文案全文：万一哪家自己动过库，
+    不在这句话上的就不动。
+    """
+    conn.execute(
+        "UPDATE dimension SET meaning=? WHERE code='vigor' "
+        "AND meaning IN ('运动、户外、精力释放', '运动、户外，精力释放')",
+        ("好好吃饭，把身体养得结实",),
+    )
+
+
+def _migrate_v42(conn):
+    """v42：券的「办好了没」与「玩完了收没收」。
+
+    两件以前账上不记的事：
+
+    1. 不带时长的券（陪伴 / 选择 / 豁免 / 独处 / 好友）批了只是家长答应了，
+       还要真的去办。以前扣完券这条就没了下文，孩子那边看到「可以用啦」
+       然后一直等一个不会自己发生的时刻，家长处理完待办也就忘了。
+       现在批了进 fulfill_status='waiting'，家长点「办好了」并写一句才算完。
+
+    2. 带时长的券玩完了从屏幕上直接蒸发，孩子不知道那一轮结束没有。
+       现在留一张存档卡，他点过「知道了」（ack_at）才收进「今天用过什么」。
+
+    存量数据一律不补：老库里那些早就过完的券，凭空冒出来会变成一串
+    「等爸爸妈妈办」的旧账，家长一看就是十几件。只有新批的才进这两条链。
+    """
+    _ensure_column(conn, "ticket_request", "fulfill_status", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "ticket_request", "fulfill_note", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "ticket_request", "fulfilled_at", "TEXT")
+    _ensure_column(conn, "ticket_request", "fulfilled_by", "INTEGER")
+    _ensure_column(conn, "ticket_request", "remind_at", "TEXT")
+    _ensure_column(conn, "ticket_request", "ack_at", "TEXT")
 
 
 if __name__ == "__main__":

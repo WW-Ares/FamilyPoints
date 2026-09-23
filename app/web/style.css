@@ -931,6 +931,15 @@ table.cal td { padding: 2px; }
   flex: 0 0 auto; width: 42px; height: 42px; border-radius: 999px;
   display: flex; align-items: center; justify-content: center;
 }
+/* 怎么玩目录里的一张入口卡：上面整卡可点，下面那排是页内的小节，小节自己也能点。
+   缩进 52px 是为了跟上面那颗 42px 的圆右边缘对齐（圆 42 + gap 10）。 */
+.kd-gcard { padding: 10px 4px; }
+.kd-gcard + .kd-gcard { border-top: 1px solid var(--line); }
+.kd-subs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 0 52px; }
+.kd-sub {
+  font-size: calc(11 * var(--u)); padding: 3px 10px; border-radius: 999px;
+  background: #F7F1E4; color: #8A7359; cursor: pointer;
+}
 /* 说明页底部的暖色提示条。刻意不复用 .tip —— 那是警示色（红系），
    这里说的是「有不懂的问爸妈」，不是「你出问题了」。 */
 .kd-note {

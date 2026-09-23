@@ -160,6 +160,12 @@ def _loop():
             scan_once()
         except Exception:
             traceback.print_exc()
+        # 券的时间点（开始 / 快结束 / 玩完了）跟着这个循环走，不能挂
+        # run_scheduled —— 那一个 5 分钟才轮一次，比「准备 60 秒」还长。
+        try:
+            scan_ticket_events()
+        except Exception:
+            traceback.print_exc()
         _wake.wait(TICK_SECONDS)
         _wake.clear()
 
@@ -230,11 +236,12 @@ def _deliver(items, now_dt):
         return False        # 免打扰里压着，窗口过了再发（下一轮会再来一次）
 
     url = _link_for(first["kind"])
+    icon = _push_icon()
     ok_any = False
     last_err = ""
     for t in targets:
         ok, err = send_bark(t["server"], t["target"], title, body, url=url,
-                            level=level, group="家庭积分")
+                            level=level, group="家庭积分", icon=icon)
         if ok:
             ok_any = True
             db.execute("UPDATE push_target SET fail_count=0, last_ok_at=?, last_err='' WHERE id=?",
@@ -286,6 +293,16 @@ def _link_for(kind):
     return base or None
 
 
+def _push_icon():
+    """通知图标的地址。设置里留空就返回 None，Bark 那边不带 icon 这个字段。
+
+    地址是运维配置，每轮读一次就够；取不到图是 Bark 服务器的事，
+    不该让一条本来能送到的通知跟着失败，所以这里不做任何校验。
+    """
+    v = (db.cfg("push.icon_url", "") or "").strip()
+    return v or None
+
+
 # ---------------------------------------------------------------------------
 # 收件人
 # ---------------------------------------------------------------------------
@@ -334,11 +351,16 @@ def _hhmm(text):
 # ---------------------------------------------------------------------------
 # 发送
 # ---------------------------------------------------------------------------
-def send_bark(server, device_key, title, body, url=None, level="active", group="家庭积分"):
+def send_bark(server, device_key, title, body, url=None, level="active", group="家庭积分",
+              icon=None):
     """POST {server}/push。返回 (是否成功, 错误说明)。
 
     device key 是钥匙，谁拿到谁能往这台手机发通知。它同时出现在 URL 和 body 里，
     所以别把它写进日志。失败信息里也只带状态码和服务器地址，不带 key。
+
+    icon 是通知左边那个小图标，Bark 认的是图片地址，它自己会去取一次；
+    取不到或者手机系统低于 iOS 15，就是没有图标的那条普通通知，
+    不影响正文送到。所以这里传不传都不算失败。
     """
     server, device_key, _ = split_fields(server, device_key)
     server = server.strip().rstrip("/")
@@ -347,6 +369,8 @@ def send_bark(server, device_key, title, body, url=None, level="active", group="
     payload = {"device_key": device_key, "title": title, "body": body, "group": group}
     if url:
         payload["url"] = url
+    if icon:
+        payload["icon"] = icon
     if level and level != "active":
         payload["level"] = level
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -398,7 +422,8 @@ def send_test(target_row):
     """设置页那个「发一条测试」按钮。同步发，好让错误当场显示出来。"""
     return send_bark(target_row["server"], target_row["target"],
                      "测试通知", "能看到这条，说明这台设备配好了。",
-                     url=_link_for("test"), level="active", group="家庭积分")
+                     url=_link_for("test"), level="active", group="家庭积分",
+                     icon=_push_icon())
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +546,103 @@ def _sched_repair(now_dt):
     names = "、".join(sorted({r["who"] or "有人" for r in rows}))
     _notify(None, "repair_due", "有修复任务到期了",
             "%s 手上 %d 件修复任务过点了，看一眼。" % (names, len(rows)))
+
+
+# ---------------------------------------------------------------------------
+# 券走到哪一步了（开始 / 快结束 / 玩完了）
+#
+# 这一组不能挂在 run_scheduled 上：那个 5 分钟一轮，而「准备 60 秒之后开始」
+# 这件事的窗口只有 60 秒，5 分钟扫一次永远扫不到。所以它和 scan_once 一样
+# 挂在 10 秒那个循环里，按 start_at / end_at 的时间点自己走。
+#
+# 三条都只推给孩子。券是他在用的东西，家长那边有「正在玩」那块实时卡，
+# 再给家长推一遍只是噪音。
+# ---------------------------------------------------------------------------
+TICKET_MARK_KEY = "push.ticket.marks"
+
+
+def _ticket_marks():
+    """已经推过的时间点，形如 {"31:start", "31:end"}。
+
+    跟卡片到期提醒同一套做法，存在 meta 里。集合大小就是「最近这批券」那么多；
+    结束超过 30 分钟的标记在每轮收尾时一起丢掉，不会越滚越大。
+    """
+    row = db.query_one("SELECT value FROM meta WHERE key=?", (TICKET_MARK_KEY,))
+    if not row:
+        return set()
+    try:
+        return set(str(x) for x in json.loads(row["value"]))
+    except (ValueError, TypeError):
+        return set()
+
+
+def _save_ticket_marks(marks):
+    db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+               (TICKET_MARK_KEY, json.dumps(sorted(marks))))
+
+
+def _min_until(ts, now_dt):
+    """离 ts 还有几分钟。负数表示已经过去了。"""
+    try:
+        return (datetime.strptime(str(ts), "%Y-%m-%d %H:%M:%S")
+                - now_dt).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return 1e9
+
+
+def scan_ticket_events(now_dt=None):
+    """券走到哪一步了就告诉孩子一声，返回推出去的条数。"""
+    if not db.cfg("push.enabled", False):
+        return 0
+    now_dt = now_dt or datetime.now()
+    now_s = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    warn = max(0, int(db.cfg("push.ticket_end_warn_minutes", 5)))
+    # 结束超过 30 分钟的行整批不看。少了这一道，升级上来第一次跑会给过去
+    # 玩过的每一张券补推一条「玩完了」。
+    grace = (now_dt - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    marks = _ticket_marks()
+    alive, sent = set(), 0
+
+    rows = db.query(
+        "SELECT tr.*, i.name AS item_name FROM ticket_request tr"
+        " JOIN item i ON i.id=tr.item_id"
+        " WHERE tr.status IN ('approved','self') AND tr.minutes>0 AND tr.end_at>?",
+        (grace,))
+    for r in rows:
+        rid = r["id"]
+        k_start, k_end, k_warn = "%d:start" % rid, "%d:end" % rid, "%d:warn" % rid
+        alive |= {k_start, k_end, k_warn}
+        name = "%s ×%g" % (r["item_name"], float(r["qty"] or 0))
+        end_hm = str(r["end_at"])[11:16]
+
+        if r["end_at"] <= now_s:
+            # 玩完了。接住的是「正在玩」那块卡从屏幕上消失的那一刻：不推的话，
+            # 一段时间的结束是没有回音的。
+            if k_end not in marks:
+                _notify(r["member_id"], "ticket", "玩完了",
+                        "%s，%g 分钟用满了。"
+                        % (r["item_name"], float(r["minutes"] or 0)))
+                marks.add(k_end)
+                sent += 1
+            continue
+
+        # 开始：准备时间走完，倒计时真的开跑了。孩子在别的 App 里的时候，
+        # 这一条是他知道「已经开始了」的唯一途径 —— 光靠界面翻卡片，得他盯着看。
+        if r["start_at"] and r["start_at"] <= now_s and k_start not in marks:
+            _notify(r["member_id"], "ticket", "开始啦",
+                    "%s，到 %s 自己结束。" % (name, end_hm))
+            marks.add(k_start)
+            sent += 1
+
+        # 快结束：只喊一次。提前量可配，设 0 就不推这条。
+        if warn and k_warn not in marks and _min_until(r["end_at"], now_dt) <= warn:
+            _notify(r["member_id"], "ticket", "还剩 %d 分钟" % warn,
+                    "%s，%s 结束。" % (name, end_hm))
+            marks.add(k_warn)
+            sent += 1
+
+    _save_ticket_marks(marks & alive)
+    return sent
 
 
 def _warned_holdings():

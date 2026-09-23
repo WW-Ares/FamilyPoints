@@ -514,6 +514,24 @@ def consume_item(member_id, item_id, qty=1.0, note="", kind="adjust", operator_i
 FUN_CODE = "ticket_fun"
 EXEMPT_CODE = "ticket_exempt"
 
+# 「要人办的那一类」：批了只是家长答应了，还得他真的腾出时间去做那件事。
+#
+# 判据走 code，不走 minutes。陪伴券的 effect_json 里那个 30 是「陪你多久」，
+# 不是「换多少分钟屏幕时间」—— 早先按 minutes 一刀切，陪伴券就被算成了
+# 30 分钟的娱乐时间：批下来会占一轮额度、会进「正在玩」的倒计时，孩子在
+# 那儿看着一个跟他没关系的时间条，家长那边也以为他在打游戏。
+CHORE_TICKET_CODES = ("ticket_company", "ticket_choice", "ticket_exempt",
+                      "ticket_solo", "ticket_friend")
+
+
+def is_chore_ticket(code):
+    """这张券是「要人办」的，还是「机器能自己算完」的。
+
+    要人办的那几种没有屏幕时长：核销时 minutes 存 0，不进「正在玩」，
+    批下来挂进 fulfill_status='waiting'，等家长点「办好了」才算完。
+    """
+    return code in CHORE_TICKET_CODES
+
 
 def _exempt_problem(member_id, note, day=None):
     """豁免券的边界（第 05 章）。
@@ -641,6 +659,18 @@ def _ticket_window_minutes():
     分成两个旋钮就会出现「能续却不算同一轮」这种自相矛盾的配置。
     """
     return int(db.cfg("ticket.renew_within_minutes", 10))
+
+
+def _ticket_delay_seconds():
+    """家长点头之后、开始计时之前的那段准备时间。
+
+    孩子常常还没准备好（作业本没收、厕所没上、平板没拿），同意即开跑会让他
+    手忙脚乱，静下来的那半分钟反而更慢。这段时间**不算在券面值里**，倒计时
+    也从它结束才开始走 —— 加的是缓冲，不是白送的时间。
+
+    设 0 就恢复成「同意即开始」。老库升上来时读不到这个键，默认按 60 走。
+    """
+    return max(0, int(db.cfg("ticket.start_delay_seconds", 60) or 0))
 
 
 def _day_ticket_stats(member_id, item_id, day, exclude_request=None):
@@ -799,7 +829,14 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
     bonus = minutes_credit(member_id, day)
     # 提前提交时新一张要排在上一张后面，所以「离收工还有多久」得从实际
     # 的开始时刻起算，不是从现在起。
-    start_probe = max(now_min, _ts_min(st["round_end"])) if round_open else now_min
+    #
+    # 没得排的时候还要再加一段准备时间：「同意之后 1 分钟才开始」，闸门就得
+    # 按 1 分钟之后那一刻算，不然会出现「批完发现结束时间越过了 21:30」。
+    # 接在上一张后面时不再叠这段 —— 那段准备是给「从零开始」的那张用的，
+    # 续的那张本来就排着队，它前面本来就有得等。
+    delay = _ticket_delay_seconds()
+    base = _ts_min(st["round_end"]) if st["round_end"] else now_min
+    start_probe = max(now_min + delay / 60.0, base)
     room = max(0, curfew - start_probe - debt + bonus)
     by_curfew = int(room // per) if per else cap_new
 
@@ -821,6 +858,9 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
         "day": day, "item_id": item["id"] if item else None, "minutes": per,
         "now": _hm_text(now_min), "evening_from": _hm_text(evening_from),
         "curfew": _hm_text(curfew),
+        # 同意之后要等多久才开始计时（秒）。前端那句「1 分钟后开始」用这个数，
+        # 别再写死 60 —— 改成 0 或者 120 的时候界面要跟着变。
+        "start_delay": delay,
         "relaxed": day_mode(day) == "holiday" or is_weekend(day),
         # 今天面值是不是翻倍了。界面据这句说清楚「为什么一张券能换 60 分钟」，
         # 不然孩子会以为是系统算错了。
@@ -939,13 +979,26 @@ def ticket_gate(member_id, item_id, qty=1, day=None, at=None, submit_at=None,
 
 
 def expire_ticket_requests(when=None):
-    """惰性过期：家长一直没理的申请自动作废，不让孩子无限期干等。"""
+    """惰性过期：家长一直没理的申请自动作废，不让孩子无限期干等。
+
+    作废要告诉孩子一声。以前这里是纯静默的，孩子提交完盯着券包页那条小字
+    等到超时，页面上只是从「还剩 2 分钟」变成「等太久作废了」——
+    他不在那一屏的时候，这件事就等于石沉大海。等不到回音和被拒绝是两种
+    感受，前者会让人下次懒得提。
+    """
     when = when or now()
-    rows = db.query("SELECT id FROM ticket_request WHERE status='pending'"
-                    " AND expire_at IS NOT NULL AND expire_at<=?", (when,))
+    rows = db.query(
+        "SELECT tr.id, tr.member_id, tr.qty, i.name AS item_name FROM ticket_request tr"
+        " JOIN item i ON i.id=tr.item_id"
+        " WHERE tr.status='pending' AND tr.expire_at IS NOT NULL AND tr.expire_at<=?",
+        (when,))
     for r in rows:
         db.execute("UPDATE ticket_request SET status='expired', resolved_at=? WHERE id=?",
                    (when, r["id"]))
+        ttl = int(db.cfg("ticket.request_ttl_minutes", 20))
+        push_notify(r["member_id"], "ticket", "这条等太久了",
+                    "%s ×%g 过了 %d 分钟没人处理，自己作废了。想玩重新提一条就行。"
+                    % (r["item_name"], float(r["qty"] or 0), ttl))
     return len(rows)
 
 
@@ -972,7 +1025,14 @@ def _settle_ticket_request(request_id, operator_id=None):
                       operator_id=operator_id or r["member_id"])
     if rc < 0:
         return {"ok": False, "msg": "券不够了，核销没成"}
-    start = now()
+    # 什么时候开始跑：先按「现在 + 准备时间」。家长点头那一刻孩子不一定
+    # 已经坐好了，那一下不该开始扣时间。
+    #
+    # 只有带时长的券才谈得上「准备」：其余五种券（陪伴 / 选择 / 豁免 / 独处 /
+    # 好友）minutes 是 0，开始就等于结束，它们要等的是家长去办那件事。
+    # 给它们也套上这段延迟，会让它们平白出现在「正在玩」里 60 秒。
+    delay = _ticket_delay_seconds() if r["minutes"] else 0
+    start = _plus_minutes(now(), delay / 60.0) if delay else now()
     # 排队：这一轮还没放完就接着上一张的结束时刻起算。
     #
     # 这里**不能**再走按天过滤的 _day_ticket_stats。跨零点那一段最典型：
@@ -991,8 +1051,13 @@ def _settle_ticket_request(request_id, operator_id=None):
         start = prev["last_end"]
     end = _plus_minutes(start, r["minutes"]) if r["minutes"] else start
     status = "approved" if operator_id else "self"
+    # 不带时长的券批下来只是「答应了」：它们要的是家长真的腾出时间去做那件事，
+    # 扣完券不等于事办了。挂进 fulfill_status='waiting'，家长点过「办好了」
+    # 才算完（v42）。带时长的券不进这一条 —— 它自己会走完，结束时有一张存档卡。
+    fst = "waiting" if not r["minutes"] else ""
     db.execute("UPDATE ticket_request SET status=?, operator_id=?, resolved_at=?,"
-               " start_at=?, end_at=? WHERE id=?", (status, operator_id, start, start, end, request_id))
+               " start_at=?, end_at=?, fulfill_status=? WHERE id=?",
+               (status, operator_id, start, start, end, fst, request_id))
     return {"ok": True, "status": status, "start_at": start, "end_at": end,
             "minutes": r["minutes"], "qty": r["qty"], "item": name}
 
@@ -1028,11 +1093,15 @@ def request_ticket(member_id, item_id, qty=1, note=""):
         return {"ok": False, "code": "dup", "msg": "已经有一条在等了，等爸爸妈妈点一下",
                 "state": g["state"]}
 
+    # 要人办的那几种（陪伴 / 选择 / 豁免 / 独处 / 好友）不记屏幕时长：存 0。
+    # 存 0 之后它们自然不进「正在玩」、不叠准备时间，批下来直接进「等安排」。
+    minutes = 0.0 if is_chore_ticket(item["code"]) else qty * float(g["state"]["minutes"] or 0)
+
     if not db.cfg("ticket.need_approval", True):
         rid = db.execute(
             "INSERT INTO ticket_request (member_id, item_id, qty, day, minutes, status, gate,"
             " note, ts) VALUES (?,?,?,?,?,'pending',?,?,?)",
-            (member_id, item_id, qty, day, qty * float(g["state"]["minutes"] or 0),
+            (member_id, item_id, qty, day, minutes,
              json.dumps(g["state"], ensure_ascii=False), note, now()))
         out = _settle_ticket_request(rid)
         out["mode"] = "done"
@@ -1043,7 +1112,7 @@ def request_ticket(member_id, item_id, qty=1, note=""):
     rid = db.execute(
         "INSERT INTO ticket_request (member_id, item_id, qty, day, minutes, status, gate,"
         " note, ts, expire_at) VALUES (?,?,?,?,?,'pending',?,?,?,?)",
-        (member_id, item_id, qty, day, qty * float(g["state"]["minutes"] or 0),
+        (member_id, item_id, qty, day, minutes,
          json.dumps(g["state"], ensure_ascii=False), note, now(), _plus_minutes(now(), ttl)))
     push_notify(None, "ticket", "有券要用",
                 "%s 想用 %s ×%g%s" % (member_name_of(member_id), item["name"], qty,
@@ -1088,10 +1157,149 @@ def resolve_ticket_request(request_id, approve, operator_id=None, reject_note=""
     out = _settle_ticket_request(request_id, operator_id=operator_id)
     if not out.get("ok"):
         return out
-    tail = ("，%s 前用完" % out["end_at"][11:16]) if out.get("minutes") else ""
-    push_notify(r["member_id"], "ticket", "券可以用啦",
-                "%s ×%g%s" % (out["item"], out["qty"], tail))
+    if out.get("minutes"):
+        # 带时长的券（娱乐券）。开始时刻不一定是「此刻」：同意之后还有一段
+        # 准备时间，只写「几点用完」的话孩子会以为已经在跑了。
+        delay = _ticket_delay_seconds()
+        head = "，%g 分钟后开始" % (delay / 60.0) if delay else "，现在开始"
+        push_notify(r["member_id"], "ticket", "券可以用啦",
+                    "%s ×%g%s，%s 前用完" % (out["item"], out["qty"], head,
+                                            out["end_at"][11:16]))
+    else:
+        # 不带时长的券（陪伴 / 选择 / 豁免 / 独处 / 好友）：批了不等于办好了。
+        # 它们要的是家长真的去做那件事。写「可以用啦」，孩子会以为马上就能
+        # 享受，然后一直等一个不会自己发生的时刻。
+        who = member_name_of(operator_id) or "爸爸妈妈"
+        push_notify(r["member_id"], "ticket", "%s 答应了" % who,
+                    "%s ×%g 收下了，等他找时间。" % (out["item"], out["qty"]))
     return {"ok": True, "approved": True, "used": out}
+
+
+def start_ticket_now(request_id, member_id=None):
+    """把「准备中」的那张提前开跑（孩子说「我准备好了」）。
+
+    准备那 60 秒是缓冲，不是必须等满的。孩子已经坐好了还让他盯着倒计时
+    干等，等于把人绑在屏幕上，那才是真的没感觉。点一下，从现在开始算。
+
+    只动「还没开始的那一张」：已经在玩的、已经结束的、别的人的一律不碰。
+    结束时刻跟着前移同样多 —— 这一下不多给一分钟，只是不再等。
+    """
+    r = db.query_one("SELECT * FROM ticket_request WHERE id=?", (request_id,))
+    if not r:
+        return {"ok": False, "msg": "没有这一条"}
+    if r["status"] not in ("approved", "self"):
+        return {"ok": False, "msg": "这一条还没批下来"}
+    if member_id is not None and r["member_id"] != member_id:
+        return {"ok": False, "msg": "这不是你的券"}
+    if not r["start_at"]:
+        return {"ok": False, "msg": "这一条还没有开始时刻"}
+    ts = now()
+    if r["start_at"] <= ts:
+        # 已经开始（或已经结束）了，没什么可提前的。这里不当错误报出来：
+        # 卡正好翻过去的那一秒点一下，不该弹一句红字给他。
+        return {"ok": True, "started": False, "start_at": r["start_at"],
+                "end_at": r["end_at"], "minutes": r["minutes"]}
+    # 前面还排着正在玩的那张就别插队，接在它后面 —— 跟核销时同一套口径。
+    prev = db.query_one(
+        "SELECT MAX(end_at) AS last_end FROM ticket_request"
+        " WHERE member_id=? AND item_id=? AND id<>? AND end_at IS NOT NULL"
+        " AND status IN ('approved','self')",
+        (r["member_id"], r["item_id"], r["id"]))
+    start = prev["last_end"] if (prev and prev["last_end"] and prev["last_end"] > ts) else ts
+    end = _plus_minutes(start, r["minutes"]) if r["minutes"] else start
+    db.execute("UPDATE ticket_request SET start_at=?, end_at=? WHERE id=?",
+               (start, end, r["id"]))
+    return {"ok": True, "started": True, "start_at": start, "end_at": end,
+            "minutes": r["minutes"]}
+
+
+def fulfill_ticket(request_id, operator_id=None, note="", done=True):
+    """家长点「办好了」/「这次没办」。
+
+    陪伴 / 独处 / 好友这类券批了只是答应了，要家长真的腾出时间去做。
+    跟卡的 finish_redeem 一个口径：没办不退回、不折算，只记一句 —— 券已经
+    扣了，退回去等于让家长自己记「这张没用」。
+
+    区别是这里**办好了必须写一句**。孩子等的是那件事真的发生，状态从
+    「等安排」翻成「已兑现」看不出他到底等到了什么；一句「周六下午陪你
+    搭乐高」才是回音，也是他下次还愿意攒券的理由。
+    """
+    if not is_judge(operator_id):
+        return {"ok": False, "msg": "只有爸爸妈妈能办"}
+    try:
+        rid = int(request_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "msg": "编号不对"}
+    r = db.query_one("SELECT * FROM ticket_request WHERE id=?", (rid,))
+    if not r:
+        return {"ok": False, "msg": "没有这一条"}
+    if (r["fulfill_status"] or "") != "waiting":
+        return {"ok": False, "msg": "这条不用办，或者已经处理过了"}
+    note = (note or "").strip()
+    if done and not note:
+        return {"ok": False, "msg": "写一句办的是什么，孩子看得到"}
+    db.execute("UPDATE ticket_request SET fulfill_status=?, fulfill_note=?, fulfilled_at=?,"
+               " fulfilled_by=? WHERE id=?",
+               ("done" if done else "void", note, now(), operator_id, rid))
+    it = db.query_one("SELECT name FROM item WHERE id=?", (r["item_id"],))
+    name = it["name"] if it else "券"
+    who = member_name_of(operator_id) or "爸爸妈妈"
+    if done:
+        push_notify(r["member_id"], "ticket", "「%s」办好了" % name,
+                    "%s：%s" % (who, note))
+    else:
+        push_notify(r["member_id"], "ticket", "这次没办",
+                    "「%s」这次没来得及，%s记下了。" % (name, who))
+    return {"ok": True, "status": "done" if done else "void"}
+
+
+def remind_ticket(request_id, member_id):
+    """孩子催一下：答应了还没办的那张。
+
+    催不是投诉，一天只给一次（`ticket.remind_per_day`）。没有这个上限，
+    「提醒」很快就会变成一部挂在家长手机上的闹钟，孩子从那头学会的是
+    「催得够多次就会有人理」。
+    """
+    if not is_player(member_id):
+        return {"ok": False, "msg": PARENT_MSG}
+    try:
+        rid = int(request_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "msg": "编号不对"}
+    r = db.query_one("SELECT tr.*, i.name AS item_name FROM ticket_request tr"
+                     " JOIN item i ON i.id=tr.item_id WHERE tr.id=?", (rid,))
+    if not r or r["member_id"] != member_id:
+        return {"ok": False, "msg": "没有这一条"}
+    if (r["fulfill_status"] or "") != "waiting":
+        return {"ok": False, "msg": "这条不用催"}
+    if int(db.cfg("ticket.remind_per_day", 1) or 0) <= 0:
+        return {"ok": False, "msg": "这条券不用催，他们记着呢"}
+    d = today()
+    if r["remind_at"] and str(r["remind_at"])[:10] >= d:
+        return {"ok": False, "msg": "今天已经催过了，明天再说"}
+    db.execute("UPDATE ticket_request SET remind_at=? WHERE id=?", (now(), rid))
+    push_notify(None, "ticket", "提醒你一下",
+                "%s 在等「%s」，答应的事找时间办了吧。"
+                % (member_name_of(member_id), r["item_name"]))
+    return {"ok": True, "remind_at": now()}
+
+
+def ack_ticket(request_id, member_id):
+    """孩子点掉「玩完了」那张存档卡。点过才收进「今天用过什么」。
+
+    不点也不催：它是给自己看的收尾，不是交给谁的任务。
+    """
+    if not is_player(member_id):
+        return {"ok": False, "msg": PARENT_MSG}
+    try:
+        rid = int(request_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "msg": "编号不对"}
+    r = db.query_one("SELECT * FROM ticket_request WHERE id=?", (rid,))
+    if not r or r["member_id"] != member_id:
+        return {"ok": False, "msg": "没有这一条"}
+    db.execute("UPDATE ticket_request SET ack_at=? WHERE id=?", (now(), rid))
+    return {"ok": True}
 
 
 def ticket_pending_list(day=None):
@@ -1113,6 +1321,105 @@ def ticket_pending_list(day=None):
     return out
 
 
+def ticket_fulfill_list(day=None):
+    """家长侧：答应了、还没办的券（陪伴 / 选择 / 豁免 / 独处 / 好友）。
+
+    跟「待兑现的卡」是一回事，只是券没走 card_redeem 那条表。只有
+    fulfill_status='waiting' 的进来 —— 老库里批完就了事的那些是空串，
+    翻出来会变成一串「等爸爸妈妈办」的旧账。
+
+    等得久的排前面：孩子已经等了三天的那件，比今天刚答应的更该被看见。
+    """
+    day = day or today()
+    rows = db.query(
+        "SELECT tr.*, i.name AS item_name, i.icon, i.desc AS item_desc,"
+        " m.name AS who, m.avatar"
+        " FROM ticket_request tr JOIN item i ON i.id=tr.item_id"
+        " JOIN member m ON m.id=tr.member_id"
+        " WHERE tr.fulfill_status='waiting'"
+        " ORDER BY tr.resolved_at, tr.id")
+    out = []
+    for r in rows:
+        wait_days = 0
+        if r["resolved_at"]:
+            wait_days = max(0, (parse_day(day) - parse_day(str(r["resolved_at"])[:10])).days)
+        out.append({"id": r["id"], "member_id": r["member_id"], "who": r["who"],
+                    "avatar": r["avatar"], "item": r["item_name"], "icon": r["icon"] or "",
+                    "desc": r["item_desc"] or "", "qty": r["qty"], "note": r["note"],
+                    "resolved_at": r["resolved_at"], "remind_at": r["remind_at"],
+                    "wait_days": wait_days})
+    return out
+
+
+def my_used_today(member_id, day=None):
+    """今天用过什么：一整天用掉的券和卡，收成一条流水。
+
+    东西本来散在三个地方（正在玩的、等安排的、生效中的卡），孩子在券包页
+    底下看到的是「我今天一共换了多少出来」。它是状态流的终点，也是下一次
+    愿意再攒券的理由。
+
+    只报用量，不做比较 ——「比昨天少」这种话不该出现在这里，用多少是他
+    自己的事。
+    """
+    day = day or today()
+    items = []
+    played = 0.0
+    for x in my_ticket_list(member_id, day):
+        if x["status"] not in ("approved", "self"):
+            continue                       # 等点头的、被拒的、作废的另有卡在讲
+        row = {"kind": "ticket", "name": x["item"], "icon": x["icon"],
+               "at": x["ts"], "start_at": x["start_at"], "end_at": x["end_at"]}
+        if x["kind"] == "chore":
+            row["state"] = ({"done": "已兑现", "void": "这次没办"}
+                            .get(x["fulfill_status"], "答应了，等安排"))
+            row["note"] = x["fulfill_note"]
+            row["detail"] = str(x["start_at"] or x["ts"] or "")[:16]
+        else:
+            row["note"] = x["note"]
+            if x["preparing"]:
+                row["state"] = "马上开始，还没计时"
+            elif x["running"]:
+                row["state"] = "正在玩"
+            else:
+                row["state"] = "玩完了 · %g 分钟" % (x["total_minutes"] or 0)
+            played += float(x["total_minutes"] or 0)
+        items.append(row)
+    # 卡：今天用掉的（含正在生效的、装填中的、等兑现的）
+    bonus = 0.0
+    for r in db.query(
+            "SELECT r.*, i.name, i.icon FROM card_redeem r JOIN item i ON i.id=r.item_id"
+            " WHERE r.member_id=? AND r.day=? AND r.status IN ('pending','active','armed','done')"
+            " ORDER BY r.created_at, r.id", (member_id, day)):
+        st = {"pending": "等爸爸妈妈办", "active": "今天有效",
+              "armed": "装好了，等触发", "done": "已算进去"}.get(r["status"], "")
+        try:
+            fx = json.loads(r["payload"] or "{}")
+        except (TypeError, ValueError):
+            fx = {}
+        row = {"kind": "card", "name": r["name"], "icon": r["icon"] or "",
+               "at": r["created_at"], "state": st, "note": r["note"] or ""}
+        if r["effect_key"] == "extra_minutes" and r["status"] == "done":
+            m = float(fx.get("minutes", 0) or 0)
+            bonus += m
+            row["detail"] = "今天多 %g 分钟" % m
+        items.append(row)
+    items.sort(key=lambda x: str(x.get("at") or ""))
+    # 往前两天各用过几件。设计稿底下那行「昨天 2 件 · 前天 0 件」要它，
+    # 一次查清比让前端为这两天再跑两趟接口省事。往前翻看的是同一份流水。
+    prev = []
+    base = parse_day(day)
+    for n in (1, 2):
+        d = fmt(base - timedelta(days=n))
+        cnt = db.query_one(
+            "SELECT (SELECT COUNT(*) FROM ticket_request"
+            "   WHERE member_id=? AND day=? AND status IN ('approved','self') AND minutes>0)"
+            " + (SELECT COUNT(*) FROM card_redeem WHERE member_id=? AND day=?) AS v",
+            (member_id, d, member_id, d))["v"]
+        prev.append({"day": d, "count": cnt or 0})
+    return {"day": day, "items": items, "played_minutes": round(played, 2),
+            "bonus_minutes": round(bonus, 2), "prev": prev}
+
+
 def my_ticket_list(member_id, day=None):
     """孩子侧：今天的申请和结果，含被拒的理由。
 
@@ -1123,14 +1430,20 @@ def my_ticket_list(member_id, day=None):
     expire_ticket_requests()
     day = day or today()
     now_ts = now()
+    # 下界用当天零点而不是「此刻」：玩完了的那张要留一张存档卡给孩子点
+    # 「知道了」，过了 end_at 就从列表里掉出去的话他根本看不到（v42）。
+    # 跨零点那一张也因此还在 —— 它 day 是昨天，光靠 day=? 捞不着。
+    day0 = day + " 00:00:00"
     raw = db.query(
-        "SELECT tr.*, i.name AS item_name, i.icon, om.name AS by_name,"
-        " om.role AS by_role FROM ticket_request tr"
+        "SELECT tr.*, i.name AS item_name, i.icon, i.desc AS item_desc,"
+        " om.name AS by_name, om.role AS by_role, fm.name AS by_fulfiller"
+        " FROM ticket_request tr"
         " JOIN item i ON i.id=tr.item_id"
         " LEFT JOIN member om ON om.id=tr.operator_id"
+        " LEFT JOIN member fm ON fm.id=tr.fulfilled_by"
         " WHERE tr.member_id=? AND (tr.day=?"
         "   OR (tr.status IN ('approved','self') AND tr.end_at IS NOT NULL AND tr.end_at>?))"
-        " ORDER BY tr.ts", (member_id, day, now_ts))
+        " ORDER BY tr.ts", (member_id, day, day0))
     # 此刻正在放的那一段（可能由好几张连着续出来的）。列表沿用和「正在玩」
     # 胶囊同一个口径：整段只让打头那张说「正在玩」，后面排队的标 queued，
     # 否则两张卡各自倒数一个不同的数，孩子不知道该看哪个。
@@ -1138,6 +1451,8 @@ def my_ticket_list(member_id, day=None):
                            if r["status"] in ("approved", "self") and r["end_at"]], now_ts)
     out = []
     for r in raw:
+        # 只在最后那个 else 里可能为真，先摆在这里，免得三个分支各写一遍
+        prep = False
         if seg and r["id"] in seg["ids"] and r["id"] == seg["head"]["id"]:
             # 打头的那张替整段说话：时刻、张数、分钟都按整段报，跟胶囊一个口径
             running, queued = True, False
@@ -1158,8 +1473,27 @@ def my_ticket_list(member_id, day=None):
             total = _minutes_between(r["start_at"], r["end_at"])
             left = _minutes_between(now_ts, r["end_at"])
             qty = float(r["qty"] or 0)
+            # 准备中：家长批了、还没到开始时刻。判据是「此刻一段都没在放
+            # （seg 为空），而这一张的开始时刻还没到」—— 正在玩的人后面排着的
+            # 那张也满足后半句，但那时 seg 不为空，所以不会被误判成准备。
+            prep = bool(not seg and r["status"] in ("approved", "self")
+                        and r["start_at"] and r["start_at"] > now_ts)
+        # 「答应了，等安排」这一条链（v42）：批了不等于办了。
+        # 只有 new 的（fulfill_status 有值）才进这里，老库里那些批完就了事的
+        # 一律是空字符串，不会被翻出来变成一串旧账。
+        fs = r["fulfill_status"] or ""
+        remind_cap = int(db.cfg("ticket.remind_per_day", 1) or 0)
+        can_remind = bool(fs == "waiting" and remind_cap > 0
+                          and (not r["remind_at"] or str(r["remind_at"])[:10] < day))
+        wait_days = 0
+        if fs == "waiting" and r["resolved_at"]:
+            wait_days = max(0, (parse_day(day) - parse_day(str(r["resolved_at"])[:10])).days)
+        # 玩完了、还没点「知道了」：带时长的券过了 end_at 就留一张存档卡。
+        needs_ack = bool(r["minutes"] and r["status"] in ("approved", "self")
+                         and r["end_at"] and r["end_at"] <= now_ts and not r["ack_at"])
         out.append({"id": r["id"], "item": r["item_name"], "icon": r["icon"],
                     "qty": qty, "minutes": r["minutes"], "status": r["status"],
+                    "desc": r["item_desc"] or "",
                     "note": r["note"], "reject_note": r["reject_note"],
                     "ts": r["ts"], "expire_at": r["expire_at"],
                     "start_at": r["start_at"], "end_at": end_at, "day": r["day"],
@@ -1167,12 +1501,26 @@ def my_ticket_list(member_id, day=None):
                     # 那张为真，排在其后的只标 queued，分钟已经算进打头那张了。
                     "running": bool(running and left is not None and left > 0),
                     "queued": queued,
+                    # 跟 running 一样是「此刻」的答案：批了、还没开始跑
+                    "preparing": prep,
                     "left_minutes": left,
                     # 谁批的。闸门全过自动开始的那条没有审批人，写「自动」，
                     # 不写孩子的名字 —— 那条不是他批的，也不是家长批的。
                     "by": r["by_name"] or ("自动" if r["status"] == "self" else ""),
                     "by_role": r["by_role"] or "",
-                    "total_minutes": total})
+                    "total_minutes": total,
+                    # --- v42：要人办的那一类与玩完了的存档 ---
+                    "kind": "timed" if r["minutes"] else "chore",
+                    "fulfill_status": fs,
+                    "fulfill_note": r["fulfill_note"] or "",
+                    "fulfilled_at": r["fulfilled_at"],
+                    "fulfilled_by": r["by_fulfiller"] or "",
+                    "remind_at": r["remind_at"],
+                    "can_remind": can_remind,
+                    "remind_cap": remind_cap,
+                    "wait_days": wait_days,
+                    "needs_ack": needs_ack,
+                    "ack_at": r["ack_at"]})
     return out
 
 
@@ -1211,6 +1559,14 @@ def ticket_playing(member_id=None):
         seg = _ticket_segment(group, now_ts)
         if seg:
             out.append(_playing_row(seg, now_ts))
+            continue
+        # 准备中：家长点头之后、倒计时还没开始的那一段。这时候这一组里
+        # 一条 live 都没有（那张还没到开始时刻），_ticket_segment 返回 None。
+        # 不补这一条的话，孩子在准备、家长屏幕上什么都没有 —— 而这两屏
+        # 恰恰是最该对着看的时候：他不知道什么时候开始，家长以为他已经在玩了。
+        soon = [r for r in group if r["start_at"] and r["start_at"] > now_ts]
+        if soon:
+            out.append(_preparing_row(soon, now_ts))
     out.sort(key=lambda x: (x["end_at"], x["member_id"]))
     return out
 
@@ -1276,7 +1632,27 @@ def _playing_row(seg, now_ts):
             "start_at": seg["start"], "end_at": seg["end"],
             "by": first["by_name"] or ("自动" if first["status"] == "self" else ""),
             "total_minutes": _minutes_between(seg["start"], seg["end"]),
-            "left_minutes": _minutes_between(now_ts, seg["end"])}
+            "left_minutes": _minutes_between(now_ts, seg["end"]),
+            "preparing": False}
+
+
+def _preparing_row(rows, now_ts):
+    """「同意了，还没开始」那一条。跟 _playing_row 出的行同形。
+
+    多一个 preparing 跟一个 start_at —— 前端拿 start_at 自己数到开始的秒，
+    这里不替它算好秒数：数秒是界面的事，而且它那边本来就有这个时间戳。
+    """
+    head = min(rows, key=lambda r: (r["start_at"], r["id"]))
+    end = max(r["end_at"] for r in rows)
+    return {"id": head["id"], "member_id": head["member_id"], "who": head["who"],
+            "item": head["item_name"], "code": head["item_code"], "icon": head["icon"],
+            "qty": sum(float(r["qty"] or 0) for r in rows),
+            "note": head["note"],
+            "start_at": head["start_at"], "end_at": end,
+            "by": head["by_name"] or ("自动" if head["status"] == "self" else ""),
+            "total_minutes": _minutes_between(head["start_at"], end),
+            "left_minutes": _minutes_between(now_ts, end),
+            "preparing": True}
 
 
 # 保底高级件的抽取顺序：从普通到传说。稀有度高的后抽，
@@ -2232,10 +2608,16 @@ def _item_label(x):
 
 
 def _act_item_text(its):
-    """「娱乐券（30 分钟）×2」这种。数量是 1 就不写 ×1，省得满屏乘号。"""
+    """「娱乐券（30 分钟）×2」这种。
+
+    拿到手的那一路，数量是 1 就不写 ×1，省得满屏乘号；用掉的那一路是负数
+    （合并求和留下来的），反过来必须写清几张 —— 「用了券：娱乐券」看不出
+    这一下花掉几张。负号不印出来：账上记的是增减，话里说的是张数。
+    """
     parts = []
     for name, qty in its.items():
-        parts.append(name if abs(qty - 1) < 1e-9 else "%s×%g" % (name, qty))
+        q = abs(qty)
+        parts.append(name if (abs(q - 1) < 1e-9 and qty > 0) else "%s×%g" % (name, q))
     return "、".join(parts)
 
 
@@ -2413,6 +2795,124 @@ def activity(member_id=None, *, days=None, group=None, limit=30, offset=0,
     return {"items": items, "total": total, "member_id": member_id,
             "limit": int(limit), "offset": int(offset), "group": group, "days": days,
             "groups": [{"key": k, "text": t} for k, t in ACTIVITY_GROUPS]}
+
+
+# ---------------------------------------------------------------------------
+# 我的消息（v43）：一个孩子的全部动静
+# ---------------------------------------------------------------------------
+# 首页那块「最近发生」原来只混 self / given 两类账本，再靠「拼完截断」留前几条，
+# 中间一段没有日期过滤 —— 所以做不出「近 30 天」：三十天前的旧事会把今天的挤掉。
+# 这一份是每个来源各自落 WHERE，合并后按时间倒序，账本四类全要。
+#
+# 「全要」是这次定的口径：加分、扣分、申请、买东西、开箱、领任务，
+# 凡是跟这一个孩子有关的都算。缺掉打分那一类，孩子看到的就半本账 ——
+# 「我这一周发生了什么」这个问题答不全，等于没答。
+# 扣分那类（校准扣减）照常出现，文案是中性的那几句，不标红、不单独归类。
+def _news_span(since, until):
+    """起止日期换成两条时间戳。两头都算在内，until 那天的 23:59:59 也算。"""
+    lo = (str(since).strip() + " 00:00:00") if since else None
+    hi = (str(until).strip() + " 23:59:59") if until else None
+    return lo, hi
+
+
+def _news_slice(table, col, where, text_sql, kind, lo, hi, take, args0):
+    """一个表、一个时间列、一句话模板，取回来一批并数出总数。
+
+    任务表和心愿表各有一个动作写一个时间戳的约定（领了、交了、做完了），
+    一条记录最多出三条消息，所以按列各查一次，不写成 OR 拼在一起 ——
+    拼起来就数不清总数了。
+    """
+    w = list(where) + [col + " IS NOT NULL"]
+    a = list(args0)
+    if lo:
+        w.append(col + ">=?")
+        a.append(lo)
+    if hi:
+        w.append(col + "<=?")
+        a.append(hi)
+    cond = " AND ".join(w)
+    total = db.query_one("SELECT COUNT(*) c FROM %s WHERE %s" % (table, cond), a)["c"]
+    rows = db.query("SELECT %s txt, %s ts FROM %s WHERE %s ORDER BY %s DESC LIMIT ?"
+                    % (text_sql, col, table, cond, col), a + [take])
+    return int(total), [{"ts": r["ts"], "kind": kind, "text": r["txt"], "sub": ""}
+                        for r in rows]
+
+
+def member_news(member_id, *, since=None, until=None, limit=30, offset=0):
+    """一个孩子在 [since, until] 这段日子里的全部消息，时间倒序。
+
+    since / until 都留空就是「从头到尾」，首页那 5 条用它（limit=5）。
+    """
+    mid = int(member_id)
+    lo, hi = _news_span(since, until)
+    n = max(1, min(60, int(limit)))
+    off = max(0, int(offset))
+    # 每一路都多取一些再合并截断：只取 n 条的话，某一路当天特别多时
+    # 会把别的路的旧消息挤掉，合出来的顺序就不对。
+    take = min(200, n + off + 60)
+    ev = []
+    total = 0
+
+    # ① 账本：四类全要。impact 是「星尘 +2」这种，比「谁经手的」有用；
+    #    没有数字可说的那几条（打分、星星时刻）才落到「爸爸写的」。
+    a = activity(mid, since=since, until=until, limit=take, offset=0)
+    total += int(a["total"])
+    for x in a["items"]:
+        sub = x.get("impact") or ""
+        if not sub and x.get("by") and x["by"] != "系统":
+            sub = (x["by"] + "给的") if x.get("group") in ("given", "judge") else x["by"]
+        ev.append({"ts": x["ts"], "kind": x["group"], "text": x["text"], "sub": sub})
+
+    # ② 任务：领了 / 交了 / 做完了。做完了只报奖励类，日常任务交上去就完事，
+    #    再报一句「做完了」是把同一件事说两遍。
+    for col, txt, kind in (("claimed_at", "领了「%s」", "task"),
+                           ("submitted_at", "交了「%s」", "task"),
+                           ("confirmed_at", "做完了「%s」", "task")):
+        w = ["assignee_id=?"]
+        if col == "confirmed_at":
+            w.append("kind='reward'")
+        t, rows = _news_slice("task", col, w, "title", kind, lo, hi, take, [mid])
+        total += t
+        for r in rows:
+            r["text"] = txt % (r["text"] or "")
+            ev.append(r)
+
+    # ③ 心愿：许下 / 谈成 / 收起
+    for col, txt in (("created_at", "许了个愿：%s"),
+                     ("achieved_at", "谈成了一个心愿：%s"),
+                     ("cancelled_at", "收起了「%s」")):
+        t, rows = _news_slice("wish", col, ["member_id=?"], "title", "wish",
+                              lo, hi, take, [mid])
+        total += t
+        for r in rows:
+            r["text"] = txt % (r["text"] or "")
+            ev.append(r)
+
+    # ④ 校准
+    t, rows = _news_slice("calibration", "ts", ["member_id=?"], "reason", "calibration",
+                          lo, hi, take, [mid])
+    total += t
+    for r in rows:
+        r["text"] = "记了一次校准：%s" % (r["text"] or "")
+        ev.append(r)
+
+    # ⑤ 开箱
+    names = {t2["tier"]: t2["name"] for t2 in db.query("SELECT tier, name FROM box_tier")}
+    t, rows = _news_slice("box_open", "ts", ["member_id=?"], "tier", "box",
+                          lo, hi, take, [mid])
+    total += t
+    for r in rows:
+        r["text"] = "开了%s" % names.get(r["text"], "一个宝箱")
+        ev.append(r)
+
+    # 账本那一路先入列表，时间戳撞成同一秒时它排在前面 ——
+    # 补数据、批量灌的库里这种撞秒很常见，排在后面就永远看不见了。
+    ev.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    items = ev[off:off + n]
+    for x in items:
+        x["day"] = str(x["ts"] or "")[:10]
+    return {"items": items, "total": total, "member_id": mid, "since": since,
+            "until": until, "limit": n, "offset": off}
 
 
 # ---------------------------------------------------------------------------
@@ -5823,6 +6323,15 @@ def _flag_placeholders(keys):
 
 ARMED_TEXT = {'double_reward': '装填好了，下一次拿到星尘的时候翻倍', 'double_allowance': '装填好了，下一次换零花钱的时候多拿一份', 'reroll_random': '装填好了，下一箱开出来的随机件会抽两次，取更好的那个', 'choose_consequence': '装填好了，下一次校准的修复方式由你自己定'}
 
+# 装填的卡被触发时的那句回执。装填是唯一一种「点了之后什么都不发生」的卡，
+# 没有这条，孩子看着库存少一格、界面毫无变化，会以为卡被吞了。
+ARMED_DONE_TEXT = {
+    'double_reward': '这一次拿到的星尘按双倍算。',
+    'double_allowance': '这一次换零花钱按双份算。',
+    'reroll_random': '这一箱重新抽了一次，留的是更好的那个。',
+    'choose_consequence': '这一次的修复方式归你自己定。',
+}
+
 
 def use_card(member_id, code, *, operator_id=None, note="", qty=1.0):
     """用一张卡。真正出口只有一个，前端拿到的反馈也是这里给的。
@@ -5988,6 +6497,9 @@ def consume_armed(member_id, effect_key):
         return None
     db.execute("UPDATE card_redeem SET status='done', done_at=?, updated_at=? WHERE id=?",
                (now(), now(), r["id"]))
+    it = db.query_one("SELECT name FROM item WHERE id=?", (r["item_id"],))
+    push_notify(member_id, "card", "「%s」用上了" % (it["name"] if it else "卡"),
+                ARMED_DONE_TEXT.get(effect_key, "这张卡生效了，这一次算在里面。"))
     return json.loads(r["payload"] or "{}")
 
 
@@ -6030,5 +6542,45 @@ def finish_redeem(redeem_id, operator_id=None, note="", done=True):
         push_notify(r["member_id"], "card", "卡片兑现完成",
                     "「%s」爸爸妈妈已经兑现了" % (it["name"] if it else "卡片"))
     return {"ok": True, "status": "done" if done else "void"}
+
+
+def card_faces(member_id, day=None):
+    """「用过的卡」现在各是什么脸：装填中 / 今天生效 / 已算进去 / 等爸爸妈妈办。
+
+    这四类以前共用一句 toast 和一行小字，孩子分不出「已经在生效了」和
+    「还在等大人」—— 只能靠记。这里把它们摊成四种脸，界面照着摆。
+
+    只收「已经用掉的」那几张：还没用的卡在库存里，那是另一栏的事。
+    """
+    day = day or today()
+    out = []
+    for a in armed_cards(member_id):
+        waited = None
+        try:
+            waited = max(0, (parse_day(day) - parse_day(str(a["since"])[:10])).days)
+        except (TypeError, ValueError):
+            waited = None
+        out.append({"face": "armed", "name": a["name"], "icon": a["icon"],
+                    "desc": a["desc"], "waited_days": waited})
+    for f in card_flags(member_id, day):
+        out.append({"face": "active", "name": f["name"], "icon": f["icon"],
+                    "text": f["text"]})
+    for r in db.query(
+            "SELECT r.id, r.effect_key, r.done_at, r.payload, r.note, i.name, i.icon"
+            " FROM card_redeem r JOIN item i ON i.id=r.item_id"
+            " WHERE r.member_id=? AND r.day=? AND r.status='done'"
+            " ORDER BY r.id", (member_id, day)):
+        try:
+            minutes = float(json.loads(r["payload"] or "{}").get("minutes", 0) or 0)
+        except (TypeError, ValueError):
+            minutes = 0.0
+        out.append({"face": "done", "name": r["name"], "icon": r["icon"],
+                    "effect": r["effect_key"], "minutes": minutes,
+                    "done_at": r["done_at"], "note": r["note"] or ""})
+    for r in pending_redeems(member_id):
+        out.append({"face": "pending", "name": r["item_name"], "icon": r["icon"],
+                    "desc": r["desc"], "created_at": r["created_at"],
+                    "redeem_id": r["id"]})
+    return out
 
 

@@ -132,13 +132,15 @@ body.grown .page-head .left { display: flex; flex-direction: column; gap: 2px; m
 body.grown .page-head .right { display: flex; align-items: center; gap: 10px; flex: none; }
 body.grown .head-line { display: flex; align-items: center; gap: 8px; }
 
+/* 返回按钮与孩子端 .appbar-back 同形：30px 圆、无边框、白底半透明。
+   家长端原来是 34px 圆角方带描边，两种「返回」并排摆着像两个系统。 */
 body.grown .back-btn {
-  width: 34px; height: 34px; flex: none;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,.9); border: 1px solid var(--card-line);
-  border-radius: var(--r-sm); cursor: pointer; color: var(--ink-2);
+  width: 30px; height: 30px; flex: none; padding: 0;
+  display: grid; place-items: center;
+  background: rgba(255,255,255,.78); border: 0;
+  border-radius: 50%; cursor: pointer; color: var(--ink);
 }
-body.grown .back-btn .ico { width: calc(18 * var(--u)); height: calc(18 * var(--u)); }
+body.grown .back-btn .ico { width: calc(16 * var(--u)); height: calc(16 * var(--u)); }
 body.grown .back-btn:hover { background: #fff; }
 
 /* 「领航员」徽章 —— 家长靠角色语汇区分身份 */
@@ -191,10 +193,10 @@ body.grown .parch-line {
 
 /* 卡内分组标题行 */
 body.grown .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-body.grown .sec-title { font-size: calc(14 * var(--u)); font-weight: 700; color: var(--ink-title);
+body.grown .sec-title { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-title);
   display: flex; align-items: center; gap: 7px; }
-body.grown .sec-link { font-size: calc(11 * var(--u)); font-weight: 700; color: var(--orange-deep); cursor: pointer; white-space: nowrap; }
-body.grown .sec-count { font-size: calc(11 * var(--u)); color: var(--ink-3); }
+body.grown .sec-link { font-size: calc(10.5 * var(--u)); font-weight: 700; color: var(--orange-deep); cursor: pointer; white-space: nowrap; }
+body.grown .sec-count { font-size: calc(10.5 * var(--u)); color: var(--ink-3); }
 body.grown .stack { display: flex; flex-direction: column; gap: 10px; }
 body.grown .stack--sm { gap: 8px; }
 body.grown .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -306,6 +308,30 @@ body.grown .slots { display: flex; gap: 4px; }
 body.grown .slots > i { flex: 1; height: 8px; border-radius: var(--r-pill); background: var(--track); }
 body.grown .slots > i.is-full { background: var(--gold); }
 body.grown .slots > i.is-half { background: linear-gradient(90deg, var(--gold) 0 50%, var(--track) 50% 100%); }
+
+/* 七格下面那排档位名。「达标发哪一档」原来是一张独立小卡，离格子太远，
+   看的人得先认「铜箱」是第几格。现在名字就压在格子底下，对齐同一份 flex。 */
+body.grown .slots-lb { display: flex; gap: 4px; margin-top: 5px; }
+body.grown .slots-lb > i {
+  flex: 1; min-width: 0; text-align: center; font-style: normal;
+  font-size: calc(9.5 * var(--u)); line-height: 1.3; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+body.grown .slots-lb > i.on { color: var(--orange-deep); font-weight: 700; }
+
+/* 家庭和账号：一个成员一块。名字那一行点进去是孩子详情（最常走的那条路），
+   账号与那排小按钮压在下面，不去抢那一下点击。 */
+body.grown .memcard { display: flex; flex-direction: column; gap: 7px; }
+body.grown .memcard + .memcard { border-top: 1px solid var(--divider); padding-top: 12px; }
+body.grown .memcard-top { display: flex; align-items: center; gap: 10px; }
+body.grown .memcard-top[data-kid] { cursor: pointer; }
+body.grown .memcard-acc {
+  display: flex; align-items: center; gap: 6px;
+  font-size: calc(11 * var(--u)); color: var(--ink-2);
+}
+body.grown .memcard-acc .mem-key { color: var(--ink-3); flex: none; }
+body.grown .memcard-acc .mem-acc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.grown .memcard-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ------------------------------------------------------------------ 筛选筹码 */
 body.grown .chip-row { display: flex; align-items: center; gap: 8px; }
@@ -447,7 +473,7 @@ body.grown .log-item.is-neg .ico { color: var(--warn); }
 body.grown .kpi-row { display: flex; gap: 10px; }
 body.grown .kpi { flex: 1; min-width: 0; }
 body.grown .kpi .k { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); display: block; margin-bottom: 2px; }
-body.grown .kpi .v { font-family: var(--font-num); font-size: calc(15 * var(--u)); font-weight: 800; color: var(--ink); }
+body.grown .kpi .v { font-family: var(--font-num); font-size: calc(14 * var(--u)); font-weight: 800; color: var(--ink); }
 body.grown .hero-num { display: flex; align-items: baseline; gap: 4px; }
 body.grown .hero-num .u { font-size: calc(12 * var(--u)); color: var(--ink-2); font-weight: 500; }
 
@@ -550,7 +576,8 @@ body.grown .goods .goods-price .p { font-family: var(--font-num); font-size: cal
 body.grown .goods .goods-price .c { display: block; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
 
 /* ------------------------------------------------------------------ 空态 / 提示 */
-body.grown .empty { color: var(--ink-3); text-align: center; padding: 22px 12px; font-size: calc(12 * var(--u)); }
+/* 空态与孩子端 .empty 同值（12.5px / 26px 14px）：同一句话在两端不该一小一大。 */
+body.grown .empty { color: var(--ink-3); text-align: center; padding: 26px 14px; font-size: calc(12.5 * var(--u)); }
 body.grown .muted { color: var(--ink-3); font-size: calc(11.5 * var(--u)); }
 body.grown .dim-t { color: var(--ink-2); font-size: calc(12 * var(--u)); }
 body.grown .hr { height: 1px; background: var(--divider); margin: 10px 0; }
@@ -559,6 +586,10 @@ body.grown .notice {
   background: var(--warn-soft); color: #A2601F;
 }
 body.grown .notice.info { background: rgba(255,138,61,.12); color: var(--orange-deep); }
+/* 「回执」那条：它不是警告，是一条承诺 —— 告诉家长他刚才那一下在孩子
+   那边长什么样。所以走成功色，别用那条橙色的提醒条。 */
+body.grown .notice.ok { background: #EAF6EE; color: #2F7A50; }
+body.grown .notice b { font-weight: 700; }
 body.grown .no-t { color: var(--warn); }
 body.grown .ok-t { color: #2F8A5F; }
 
@@ -906,3 +937,70 @@ body.grown .dr-col input[type="date"] {
 body.grown .dr-col input[type="date"]:focus {
   outline: 2px solid rgba(255,138,61,.35); outline-offset: 1px; border-color: var(--orange);
 }
+
+/* ------------------------------------------------------------------ 规则说明 · 页卡 */
+/* 目录从「一行一个锚点」改成「一张卡一页」：卡上写的小节名就是那页里真有的小节。
+   整张卡点进去看全页，点小节直接落到那一段。 */
+body.grown .rulecard { cursor: pointer; }
+body.grown .rulecard-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .rulecard-sub { font-size: calc(11 * var(--u)); color: var(--ink-3); margin-top: 3px; line-height: 1.5; }
+body.grown .rulecard-secs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+body.grown .rule-sec {
+  font-family: inherit; font-size: calc(11 * var(--u)); color: var(--ink-2);
+  background: var(--field); border: 1px solid var(--card-line);
+  border-radius: var(--r-pill); padding: 4px 10px; cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ 只读版「怎么玩」 */
+/* 家长端那份「孩子看到的怎么玩」用的是 child.js 的同一份正文（kGuideBody*）。
+   正文里有几个类原来只在 body.kid 下定义 —— .hb 的行布局、.row-grow 的撑开、
+   .v 的竖排间距。家长端没有那几条，不补的话卡片会挤成一团。 */
+body.grown .row-grow { flex: 1; min-width: 0; }
+body.grown .kd-step { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .kd-dim .hb { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .v { display: flex; flex-direction: column; }
+body.grown .v.g7 { gap: 7px; }
+body.grown .t-2 { color: var(--ink-2); }
+
+/* 字号对齐：上面那批只补了**布局**，字号还缺着一批 —— .row-title / .row-sub /
+   .sect-title / .gd-li / 日历格这些在 child.css 里是 body.kid 前缀，家长端没有
+   对应规则，于是整块回落成 body 的 15px，比孩子端大出三四号（实测 15 对 13、
+   15 对 10.5）。家长端自己那条 body.grown .row .row-title 只在 .row 里生效，
+   说明页用的是 .hb + .row-grow，套不上。
+   值全部照 child.css 抄，两端同一语义必须同一号。 */
+body.grown .row-title { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .row-sub { font-size: calc(10.5 * var(--u-sm)); font-weight: 500; color: var(--ink-2); margin-top: 3px; }
+body.grown .sect-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.grown .sect-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink);
+}
+body.grown .sect-note { font-size: calc(10.5 * var(--u-sm)); color: var(--ink-3); }
+body.grown .gd-li { font-size: calc(11.5 * var(--u-sm)); color: var(--ink-2); }
+/* 「一周攒多少分」那三行示意：星期 / 色条 / 分数。色条只有 18 高，
+   读的是颜色的连续性，不是格子里的数字，所以星期和分数都压到 9.5。 */
+body.grown .kwd-row { display: flex; gap: 5px; }
+body.grown .kwd-row + .kwd-row { margin-top: 6px; }
+body.grown .kwd-w, body.grown .kwd-n {
+  flex: 1; min-width: 0; text-align: center;
+  font-size: calc(9.5 * var(--u-sm)); color: var(--ink-3);
+}
+body.grown .kwd-w { font-weight: 600; }
+body.grown .kwd-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+body.grown .kwd-b { flex: 1; min-width: 0; height: 18px; border-radius: 6px; background: #F7F2EA; }
+body.grown .kwd-b.is-on { background: #FFC93D; }
+body.grown .kwd-b.is-today { background: #FBF6EE; box-shadow: inset 0 0 0 1.5px #FFC93D; }
+/* 日历格（首页同款七格，说明页里也用）：格子里的日期号 13，星期 10.5。 */
+body.grown .cd-b {
+  width: 100%; height: 26px; box-sizing: border-box;
+  border-radius: 8px; border: 1.5px solid transparent;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); font-size: calc(13 * var(--u)); font-weight: 700;
+  background: rgba(255, 255, 255, .18); color: rgba(255, 255, 255, .70);
+}
+body.grown .cd.is-on .cd-b { background: #FFFFFF; color: var(--orange-deep); }
+body.grown .cd-w { font-size: calc(10.5 * var(--u-sm)); font-weight: 500; color: rgba(255, 255, 255, .82); }
+body.grown .cd.is-today .cd-w { font-weight: 700; color: #FFFFFF; }
+body.grown .cd.is-future .cd-w { color: rgba(255, 255, 255, .60); }
+/* 脚注：孩子端 10，家长端原来 9（小一档）。两端同一句话，别两种号。 */
+body.grown .footnote { font-size: calc(10 * var(--u-sm)); gap: 6px; }

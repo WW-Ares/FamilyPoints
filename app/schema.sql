@@ -1,5 +1,5 @@
 -- 家庭积分工程 · 数据库结构
--- 规则真值以最新的《项目当前开发文档》为准（当前 schema v40），结构变更都带 _migrate_vNN 迁移。
+-- 规则真值以最新的《项目当前开发文档》为准（当前 schema v42），结构变更都带 _migrate_vNN 迁移。
 --
 -- 两条贯穿全库的约定：
 --   1. 所有余额都由流水求和得出，不存冗余余额字段（项目原则 6）。
@@ -490,7 +490,15 @@ CREATE TABLE IF NOT EXISTS ticket_request (
   expire_at   TEXT,
   resolved_at TEXT,
   start_at    TEXT,                           -- 同意即开始计时
-  end_at      TEXT
+  end_at      TEXT,
+  -- v42：不带时长的券（陪伴 / 选择 / 豁免 / 独处 / 好友）批了不等于办好了，
+  -- 它们要的是家长真的去做那件事。waiting → done / void，'' = 用不着（带时长的券）。
+  fulfill_status TEXT NOT NULL DEFAULT '',
+  fulfill_note   TEXT NOT NULL DEFAULT '',    -- 家长办完写的那一句，孩子看得到
+  fulfilled_at   TEXT,
+  fulfilled_by   INTEGER,
+  remind_at      TEXT,                        -- 孩子最近一次催，每天限一次
+  ack_at         TEXT                         -- 玩完了那张存档卡，孩子点过「知道了」
 );
 
 CREATE INDEX IF NOT EXISTS idx_ticket_req_member ON ticket_request (member_id, day);

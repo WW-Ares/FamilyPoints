@@ -293,6 +293,64 @@ body.kid .kfeed-tx {
 }
 body.kid .kfeed-ts { flex: 0 0 auto; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
 
+/* ============================ 查看全部（我的消息弹层） ============================ */
+/* 顶上的标题和四颗时间段要一直钉在弹层顶部，列表从底下滚过去。
+   sheet-body 自带 16px 内边距，sticky 用 -16px 抵掉，才能真正贴到可视顶。 */
+body.kid .knews-head {
+  position: sticky; top: -16px; z-index: 2;
+  background: var(--card); padding-bottom: calc(8 * var(--u));
+  border-bottom: 1px solid var(--line);
+}
+body.kid .knews-top { display: flex; align-items: flex-start; gap: calc(8 * var(--u)); }
+body.kid .knews-top h3 { margin: 0; }
+body.kid .knews-count { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); margin-top: calc(2 * var(--u)); }
+body.kid .knews-x {
+  margin-left: auto; flex: 0 0 auto; width: calc(26 * var(--u)); height: calc(26 * var(--u));
+  border: 0; border-radius: 999px; background: var(--line); color: var(--ink-2);
+  font-size: calc(13 * var(--u)); line-height: 1; cursor: pointer;
+}
+body.kid .knews-chips { display: flex; gap: calc(7 * var(--u)); margin-top: calc(10 * var(--u)); }
+body.kid .knews-chip {
+  border: 0; font-family: inherit; font-size: calc(11 * var(--u)); font-weight: 700;
+  padding: calc(6 * var(--u)) calc(12 * var(--u)); border-radius: 999px;
+  background: var(--line); color: var(--ink-2); white-space: nowrap; cursor: pointer;
+}
+body.kid .knews-chip.is-on {
+  background: linear-gradient(180deg, #FF9B54, #F0761F); color: #fff;
+  box-shadow: 0 calc(3 * var(--u)) calc(9 * var(--u)) calc(-2 * var(--u)) rgba(255, 138, 61, .5);
+}
+/* 按天分组：一条组头线 + 一行字。行卡用页面底色跟白弹层分层。 */
+body.kid .knews-list { display: flex; flex-direction: column; gap: calc(7 * var(--u)); padding-top: calc(10 * var(--u)); }
+body.kid .knews-day {
+  display: flex; align-items: center; gap: calc(7 * var(--u));
+  font-size: calc(10 * var(--u-sm)); font-weight: 700; color: var(--ink-3);
+  padding: calc(3 * var(--u)) calc(2 * var(--u)) 0;
+}
+body.kid .knews-day i { flex: 1; height: 1px; background: var(--line); display: block; }
+body.kid .knews-row {
+  display: flex; align-items: flex-start; gap: calc(9 * var(--u));
+  background: var(--bg); border-radius: calc(14 * var(--u));
+  padding: calc(9 * var(--u)) calc(11 * var(--u));
+}
+body.kid .knews-ic {
+  flex: 0 0 auto; width: calc(26 * var(--u)); height: calc(26 * var(--u));
+  border-radius: calc(9 * var(--u)); display: flex; align-items: center; justify-content: center;
+}
+body.kid .knews-tx { flex: 1; min-width: 0; font-size: calc(11.5 * var(--u)); line-height: 1.55; color: var(--ink); }
+body.kid .knews-tx em {
+  display: block; font-style: normal; font-size: calc(10 * var(--u-sm));
+  color: var(--ink-3); margin-top: calc(2 * var(--u));
+}
+body.kid .knews-tm {
+  flex: 0 0 auto; padding-top: calc(2 * var(--u));
+  font-family: "DIN Alternate", Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: calc(10 * var(--u-sm)); color: var(--ink-3);
+}
+body.kid .knews-more {
+  text-align: center; font-size: calc(10 * var(--u-sm)); color: var(--ink-3);
+  padding: calc(9 * var(--u)) 0 calc(2 * var(--u));
+}
+
 /* 心愿屋那个入口。做成卡而不是虚线框 —— 虚线框读起来像「还有东西没填」，
    而这一页本来就空着等他做这一件事。 */
 body.kid .wish-new { cursor: pointer; }
@@ -892,6 +950,166 @@ body.kid .tk-no { background: var(--warn-bg); border-radius: var(--r-xs); }
 
 /* 券「正在玩」那块：倒计时是这一屏最大的数字 */
 body.kid .tk-big { font-family: var(--font-num); font-size: calc(26 * var(--u)); font-weight: 800; color: var(--purple-deep); }
+
+/* 「马上开始」：家长同意之后、倒计时开始之前的那一分钟。
+   走橙色 —— 它跟「正在玩」在同一块位置前后脚出现，长得一样的话，孩子会
+   以为已经在扣时间了，本来就不够的那一分钟会白等掉。 */
+body.kid .tk-begin { border-left: 3px solid var(--orange); background: linear-gradient(180deg,#FFF8EE,#FFEFDD); }
+body.kid .tk-begin .tk-big { color: var(--orange-deep); }
+
+/* ============================ 券与卡 · 使用后的状态流（v42） ============================
+   这一整段是「用掉」这件事从「点一下就没」到「一段有头有尾的状态流」。
+   四段状态轨、心跳点、四种脸、递送弹层，孩子端和家长端共用同一套词：
+   提交 → 同意 → 准备 → 开始（娱乐券）/ 提交 → 同意 → 安排 → 兑现（要人办的那类）。 */
+
+/* ---- 四段状态轨（券包页 / 首页 / 家长端三处共用同一个组件） ---- */
+body.kid .tk-track { position: relative; display: flex; align-items: flex-start; margin-top: 13px; }
+/* 连线固定铺中间那一段：4 个节点各占 25%，圆心落在 12.5% / 37.5% / 62.5% / 87.5%，
+   所以线的左端 12.5%、长度 75%。填充比例按「走到第几个 now」算，见 tkTrackHTML。 */
+body.kid .tk-track .tk-line {
+  position: absolute; top: 6px; left: 12.5%; width: 75%; height: 2px;
+  background: #F0E3CE; border-radius: 2px; z-index: 1;
+}
+body.kid .tk-track .tk-line > i {
+  display: block; height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--orange-light), var(--orange));
+  transition: width .3s;
+}
+body.kid .tk-track .tk-step {
+  flex: 1; min-width: 0; position: relative; z-index: 2;
+  display: flex; flex-direction: column; align-items: center;
+}
+body.kid .tk-track .tk-step .dot {
+  position: relative; width: 13px; height: 13px; border-radius: 50%;
+  box-sizing: border-box; background: #F0E3CE; border: 2px solid #E6D5B9;
+}
+body.kid .tk-track .tk-step .lb {
+  margin-top: 6px; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); white-space: nowrap;
+}
+body.kid .tk-track .tk-step .tm {
+  margin-top: 2px; font-family: var(--font-num);
+  font-size: calc(9 * var(--u-sm)); color: var(--ink-3);
+}
+body.kid .tk-track .tk-step.on  .dot { background: var(--orange); border-color: var(--orange); }
+body.kid .tk-track .tk-step.on  .lb  { color: var(--orange-deep); font-weight: 700; }
+body.kid .tk-track .tk-step.now .dot { background: #fff; border: 3px solid var(--orange); }
+body.kid .tk-track .tk-step.now .dot::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%;
+  border: 2px solid rgba(255,138,61,.45); animation: tkHalo 1.6s ease-out infinite;
+}
+body.kid .tk-track .tk-step.now .lb { color: var(--orange-deep); font-weight: 800; }
+
+/* ---- 心跳点：等待这件事还活着 ---- */
+body.kid .tk-beat {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--purple); animation: tkBeat 1.4s ease-in-out infinite;
+}
+body.kid .tk-beat--o { background: var(--orange); }
+body.kid .tk-beat--p { background: var(--purple-deep); }
+@keyframes tkBeat {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.45); opacity: .55; }
+}
+@keyframes tkHalo {
+  0%   { transform: scale(.85); opacity: .9; }
+  70%  { transform: scale(1.5); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+/* ---- 等审批那张卡：紫底，跟「正在玩」的紫区分开——一个是在等，一个在跑 ---- */
+body.kid .tk-pend { border-left: 3px solid var(--purple); background: linear-gradient(180deg,#F6F3FF,#EEE9FF); }
+
+/* ---- 答应了、等安排（要人办的那类券，没有倒计时） ---- */
+body.kid .tk-await { background: linear-gradient(180deg,#FFF9EC,#FFF3DE); border-color: #F2DDB0; }
+
+/* ---- 玩完了的存档卡：结束该有一次收尾，不是从屏幕上蒸发 ---- */
+body.kid .tk-done { background: #FFFDF7; border-color: var(--line); box-shadow: none; }
+
+/* ---- 卡片的四种脸：装填紫 / 今天生效金 / 已算进去绿 / 等办金框 ---- */
+body.kid .tk-face { text-align: left; }
+body.kid .tk-face--armed  { background: linear-gradient(180deg,#F6F2FF,#EEE9FF); border-color: #DCD2FA; }
+body.kid .tk-face--active { background: linear-gradient(180deg,#FFFBF0,#FFF6DF); border-color: #F1E0AE; }
+body.kid .tk-face--done   { background: #F6FCF8; border-color: #CFE8D8; }
+body.kid .tk-face--wait   { background: #FFF8E8; border-color: #F3E2B8; }
+body.kid .tk-face .tk-face-note { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); }
+body.kid .tk-face--armed  .tk-face-note { border-top-color: #E4DAFA; }
+body.kid .tk-face--active .tk-face-note { border-top-color: #F0E0BC; }
+body.kid .tk-face--done   .tk-face-note { border-top-color: #DCEFE3; }
+/* 「今天生效」「等他们办」那两枚标签走浅金底，不跟「装填中」的实心金撞色 */
+body.kid .tk-face--active .pill,
+body.kid .tk-face--wait   .pill { background: #FFF6DF; color: var(--gold-deep); }
+
+/* ---- 「今天用过什么」那条流水 ---- */
+body.kid .tk-used-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+body.kid .tk-used-row + .tk-used-row { border-top: 1px solid var(--line); }
+
+/* 下面这几处卡的「标题 + 副行」是并排写的 span。`.row-grow` 本身只给了
+   flex:1，没给方向 —— 它原来是配 `.row`（flex 行）用的，丢进这几个卡里，
+   两个 span 就成了 inline 挤在同一行（「已兑现周六下午陪你搭乐高」）。
+   就地声明成竖排，省得为了排版把这些标记改成 div。 */
+body.kid .tk-face .row-grow,
+body.kid .tk-await .row-grow,
+body.kid .tk-done .row-grow,
+body.kid .tk-done-chore .row-grow,
+body.kid .tk-used-row .row-grow { display: flex; flex-direction: column; }
+
+/* 平卡：没有投影，只剩一条浅描边。设计里「刚刚用完的」「已经办到的」
+   都是这一档 —— 它们是「已经过去的事」，不该跟正在发生的事抢注意力。 */
+body.kid .card.plain { box-shadow: none; border-color: var(--line); }
+
+/* ---- 递送：提交之后那三拍（券飞出去 → 落到家长那端 → 送出去了落地） ---- */
+body.kid .k-deliver { position: fixed; inset: 0; z-index: 90; transition: opacity .22s; }
+body.kid .k-deliver.is-out { opacity: 0; }
+body.kid .k-deliver .kd-veil {
+  position: absolute; inset: 0; background: rgba(74,54,39,.42);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+body.kid .k-deliver .kd-fly {
+  position: absolute; left: 50%; top: 24%; transform: translate(-50%,-50%);
+}
+body.kid .k-deliver .kd-fly > * { display: block; animation: kdUp 2.2s ease-out infinite; }
+body.kid .k-deliver .kd-card {
+  position: absolute; left: 0; right: 0; top: 32%;
+  width: calc(100% - 32px); max-width: calc(370 * var(--u)); margin: 0 auto;
+  background: #fff; border-radius: var(--r-xl);
+  padding: 22px 18px 16px; text-align: center;
+  box-shadow: 0 18px 44px -8px rgba(60,30,10,.42);
+  animation: kdPop .3s cubic-bezier(.2,1.2,.4,1);
+}
+body.kid .k-deliver .kd-ico { display: flex; justify-content: center; }
+body.kid .k-deliver .kd-k {
+  margin: 6px 0; font-size: calc(19 * var(--u)); font-weight: 800; letter-spacing: .5px;
+  color: var(--ink);
+}
+body.kid .k-deliver .kd-txt {
+  font-size: calc(11.5 * var(--u)); color: var(--ink-2); line-height: 1.8;
+}
+body.kid .k-deliver .kd-path { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 13px; }
+body.kid .k-deliver .kd-path > i { width: 5px; height: 5px; border-radius: 50%; background: #E5D6BE; }
+body.kid .k-deliver .kd-path > i.on { background: var(--orange); }
+body.kid .k-deliver .kd-tm {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 6px 2px 0; font-size: calc(9.5 * var(--u-sm)); color: var(--ink-3);
+}
+body.kid .k-deliver .kd-card .btn.wide { margin-top: 16px; }
+body.kid .k-deliver .kd-cap { margin-top: 9px; font-size: calc(10 * var(--u-sm)); color: var(--ink-3); line-height: 1.7; }
+@keyframes kdUp {
+  0%   { transform: translate(-46px, 26px) rotate(-14deg); opacity: 0; }
+  18%  { opacity: 1; }
+  70%  { transform: translate(34px,-14px) rotate(-6deg); opacity: 1; }
+  100% { transform: translate(52px,-26px) rotate(-2deg); opacity: 0; }
+}
+@keyframes kdPop {
+  from { transform: translateY(14px) scale(.96); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+/* 系统开了「减少动态效果」就把飞与心跳都停掉，只留静态状态。 */
+@media (prefers-reduced-motion: reduce) {
+  body.kid .tk-beat,
+  body.kid .tk-track .tk-step.now .dot::after,
+  body.kid .k-deliver .kd-fly > *,
+  body.kid .k-deliver .kd-card { animation: none; }
+}
 
 /* 家长端的头像挑选用不着，但孩子端「我的」里选头像要用同一套 */
 body.kid .av-gp { font-size: calc(12 * var(--u)); color: var(--ink-3); margin: 12px 0 7px; }

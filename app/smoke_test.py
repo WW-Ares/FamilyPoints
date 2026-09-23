@@ -453,6 +453,11 @@ def main():
     _wipe()
     _set("ticket.curfew_school", "21:30")
     _set("ticket.curfew_weekend", "22:00")
+    # 这一组测的是「到点了没有」这条线本身。v42 起点头之后要准备一分钟，
+    # 起跑晚一分钟收工就也晚一分钟，闸门必须按真的收工时刻判（否则会出现
+    # 「闸门放行、实际超时」），所以准备开着的时候 21:00 要 1 张是会被拒的。
+    # 准备那一段在 ⑧-2 里单独回归，这里先折叠掉。
+    _set("ticket.start_delay_seconds", 0)
     check("⑤ 硬停止：21:40 已过点，拒", _gate(1, "21:40")["code"] == "curfew", _gate(1, "21:40")["msg"])
     check("⑤ 硬停止：21:10 只够 1 张，要 2 张拒",
           _gate(2, "21:10")["code"] == "curfew", _gate(2, "21:10")["msg"])
@@ -496,6 +501,10 @@ def main():
     # ⑧ 完整审批流：孩子申请 -> 家长点头才扣券
     _wipe()
     _set("ticket.cooldown_minutes", 0)
+    # v42 起点头之后先「准备」一段（默认 60 秒）才开跑。这一段要验的是审批与扣券，
+    # 把准备折叠掉，好让「开始时刻 = 点头那一刻」这条继续成立；带准备的那条在
+    # 紧随其后的 ⑧-2 里单独回归。
+    _set("ticket.start_delay_seconds", 0)
     bal0 = E.item_balance(kid, fun_id)
     r = E.request_ticket(kid, fun_id, 2, note="想看一集动画")
     check("⑧ 申请生成待办，不直接扣券", r.get("mode") == "pending" and E.item_balance(kid, fun_id) == bal0,
@@ -517,6 +526,29 @@ def main():
         check("⑧ 开始时刻就是点头那一刻，结束时刻往后推张数×30 分",
               out["used"]["start_at"] == T_DAY and out["used"]["end_at"] == _at(d0, "19:00"),
               (out["used"]["start_at"], out["used"]["end_at"]))
+    # ⑧-2 准备那一段（v42）：点头不等于开跑，中间隔着 ticket.start_delay_seconds，
+    #     这段时间不算在券的时长里，孩子也能自己提前开跑。
+    _wipe()
+    _set("ticket.start_delay_seconds", 60)
+    r8 = E.request_ticket(kid, fun_id, 1)
+    check("⑧-2 申请挂得上", r8.get("mode") == "pending", r8)
+    rid = r8.get("request_id")
+    if rid:
+        E.resolve_ticket_request(rid, True, operator_id=DAD)
+        lst = E.my_ticket_list(kid, d0)          # 返回的就是 items 列表
+        prep = [x for x in lst if x.get("preparing")]
+        check("⑧-2 点头之后先准备：起跑时刻比点头晚 60 秒",
+              prep and prep[0]["start_at"] == _at(d0, "18:01"), lst)
+        check("⑧-2 准备这段不算在时长里，收工时刻也跟着往后推",
+              prep and prep[0]["end_at"] == _at(d0, "18:31"), lst)
+        check("⑧-2 这会儿还没开跑，列表里没有「正在玩」",
+              not [x for x in lst if x.get("running")], lst)
+        check("⑧-2 孩子能自己提前开跑",
+              E.start_ticket_now(rid, kid).get("ok") is True)
+        run = [x for x in E.my_ticket_list(kid, d0) if x.get("running")]
+        check("⑧-2 提前开跑后，起跑时刻改成当下", run and run[0]["start_at"] == T_DAY, run)
+    _set("ticket.start_delay_seconds", 0)
+
     _wipe()
     E.request_ticket(kid, fun_id, 1)
     pend = E.ticket_pending_list()

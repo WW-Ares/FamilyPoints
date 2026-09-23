@@ -156,9 +156,11 @@ body.grown {
    ========================================================================= */
 body.grown .caption      { font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
 body.grown .caption--warm{ font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
-body.grown .heading-page { font-size: calc(22 * var(--u)); font-weight: 700; color: var(--ink-title); line-height: 1.2; }
+/* 屏标题 19px 与孩子端 .appbar-title 同值；小节标题 13px 对齐 .sect-title。
+   两端同一层级的字历史上各写各的，这轮统一按孩子端为准。 */
+body.grown .heading-page { font-size: calc(19 * var(--u)); font-weight: 700; color: var(--ink-title); line-height: 1.2; }
 body.grown .heading-sub  { font-size: calc(17 * var(--u)); font-weight: 700; color: var(--ink-title); line-height: 1.3; }
-body.grown .heading-sec  { font-size: calc(14 * var(--u)); font-weight: 700; color: var(--ink-title); }
+body.grown .heading-sec  { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-title); }
 body.grown .card-title   { font-size: calc(13 * var(--u)); font-weight: 700; color: var(--ink-title); }
 body.grown .ink          { color: var(--ink); }
 body.grown .ink-2        { color: var(--ink-2); }
@@ -177,7 +179,8 @@ body.grown .num {
 }
 body.grown .num--xl   { font-size: calc(30 * var(--u)); }
 body.grown .num--lg   { font-size: calc(25 * var(--u)); }
-body.grown .num--md   { font-size: calc(24 * var(--u)); }
+/* num--md 20px 与孩子端 .big-num 同值：同一档「中号数字」两端一样大。 */
+body.grown .num--md   { font-size: calc(20 * var(--u)); }
 body.grown .num--sm   { font-size: calc(20 * var(--u)); }
 body.grown .num--gold { color: var(--gold-deep); }
 body.grown .num--warn { color: var(--warn); }

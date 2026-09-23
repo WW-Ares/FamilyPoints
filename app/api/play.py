@@ -386,6 +386,9 @@ def get_holdings(ctx):
     mid = mid if isinstance(mid, int) else mid["id"]
     E.process_expiry(mid)
     return {"tickets": E.to_ticket_list(mid), "cards": E.to_card_list(mid),
+            # 用过的卡现在各是什么脸（装填 / 今天生效 / 已算进去 / 等办）。
+            # 跟库存一起回，券包页那一栏就不用再多发一次请求。
+            "faces": E.card_faces(mid),
             "expiring": [{"holding_id": h["id"], "name": h["name"], "rarity": h["rarity"],
                           "expires_at": h["expires_at"],
                           "renew_cost": round((h["price"] or 0) * (h["renew_cost_pct"] or 20) / 100.0, 2),
@@ -508,9 +511,14 @@ def post_ticket_request(ctx):
 
 @route("GET", "/api/tickets/pending")
 def get_ticket_pending(ctx):
-    """家长侧待处理。每条都带「现在批了还能不能用」，省得批完才发现过点了。"""
+    """家长侧待处理。每条都带「现在批了还能不能用」，省得批完才发现过点了。
+
+    start_delay 一并回去：家长点「同意」那一下的确认弹层要写清「点完先给他
+    多久准备」，那个数不能在前端写死 60。
+    """
     ctx.as_parent()
-    return {"items": E.ticket_pending_list()}
+    return {"items": E.ticket_pending_list(),
+            "start_delay": E._ticket_delay_seconds()}
 
 
 @route("POST", "/api/tickets/resolve")
@@ -529,6 +537,27 @@ def post_ticket_resolve(ctx):
     return r
 
 
+@route("POST", "/api/tickets/start")
+def post_ticket_start(ctx):
+    """「我准备好了」：把准备中的那张提前开跑。
+
+    家长批的时候走不到这里 —— 那一刻本来就是同意「现在开始」，要不要马上
+    开跑交给孩子自己说：他坐好了就点，没坐好就等满那 60 秒。
+    """
+    me = ctx.as_member()
+    rid = ctx.need("request_id")
+    try:
+        rid = int(rid)
+    except (TypeError, ValueError):
+        raise ApiError("申请编号不对")
+    r = E.start_ticket_now(rid, None if me["role"] == "parent" else me["id"])
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "开不了"))
+    mid = ctx.i("member_id") if me["role"] == "parent" else me["id"]
+    r["playing"] = E.ticket_playing(mid or None)
+    return r
+
+
 @route("GET", "/api/tickets/mine")
 def get_ticket_mine(ctx):
     """孩子侧：今天申请了什么、批没批、被拒的理由，以及此刻在不在玩。"""
@@ -537,8 +566,59 @@ def get_ticket_mine(ctx):
     day = ctx.p("day", E.today())
     return {"day": day, "items": E.my_ticket_list(mid, day),
             "playing": E.ticket_playing(mid),
+            # 今天用过什么：券包页底部那条流水，跟券的列表读的是同一批记录
+            "used": E.my_used_today(mid, day),
             "now": E.now(),
             "state": E.ticket_use_state(mid, None, day)}
+
+
+@route("POST", "/api/tickets/ack")
+def post_ticket_ack(ctx):
+    """孩子点掉「玩完了」那张存档卡，把它收进「今天用过什么」。
+
+    点不点都能接着用券，这只是他自己那一下的收尾 —— 结束不该是无声的。
+    """
+    mid = _my_child(ctx)
+    r = E.ack_ticket(ctx.need("request_id"), mid)
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "点不了"))
+    return {"ok": True, "items": E.my_ticket_list(mid),
+            "used": E.my_used_today(mid)}
+
+
+@route("POST", "/api/tickets/remind")
+def post_ticket_remind(ctx):
+    """孩子催一下「答应了还没办」的那张。一天一次，上限在设置里。"""
+    mid = _my_child(ctx)
+    r = E.remind_ticket(ctx.need("request_id"), mid)
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "催不了"))
+    return {"ok": True, "items": E.my_ticket_list(mid)}
+
+
+@route("GET", "/api/tickets/fulfill")
+def get_ticket_fulfill(ctx):
+    """家长侧：答应了、还没办的券。
+
+    陪伴 / 独处 / 好友那几种批了只是答应了，要家长真的腾出时间去做。
+    它们跟「待兑现的卡」是一回事，所以家长端把两边并成一张兑现清单。
+    """
+    ctx.as_parent()
+    return {"items": E.ticket_fulfill_list(),
+            "remind_cap": int(db.cfg("ticket.remind_per_day", 1) or 0)}
+
+
+@route("POST", "/api/tickets/fulfill")
+def post_ticket_fulfill(ctx):
+    """家长点「办好了」/「这次没办」。办好了必须写一句，孩子看得到。"""
+    me = ctx.as_parent()
+    done = ctx.p("done", "1")
+    ok = done if isinstance(done, bool) else str(done).lower() not in ("0", "false", "no", "")
+    r = E.fulfill_ticket(ctx.need("request_id"), operator_id=me["id"],
+                         note=ctx.p("note", ""), done=ok)
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "没记成"))
+    return r
 
 
 @route("GET", "/api/tickets/playing")

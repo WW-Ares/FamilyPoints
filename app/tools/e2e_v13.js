@@ -2141,18 +2141,48 @@ async function walkTabs(page, tag) {
      与「周期与假期」两组，而假期日历、推送设备、备份、家人账号、改密码又各
      在另一处，同一件事两个入口，改一处另一处必漂。现在：
        · 通知与推送 / 假期日历 → 收进设置页对应那一组（组里给一个按钮）
-       · 备份与导出 / 家人账号 / 改我的密码 → 「我的」页各自一行 */
+       · 备份与导出 / 改我的密码 → 「我的」页各自一行
+     v43：「家庭页 + 家人账号」合成一行「家庭和账号」，账号那四个动作挂在
+     成员卡那一行上（改密码 / 改资料 / 头像 / 停用），不再单占「我的」一行。
+     同一件事两个入口，改一处另一处必漂 —— 所以这里改验进页后的那张卡。 */
   say('');
   say('6. 家长端「我的」页入口:');
   await tabTo(page, '我的');
   await page.waitForTimeout(700);
   const meRows = flat(await page.locator('#view').innerText());
   if (meRows.indexOf('更多') >= 0) bad('[v41] 「我的」页还留着「更多」');
-  for (const want of ['我的记录', '家人账号', '改我的密码', '备份与导出', '设置']) {
+  for (const want of ['我的记录', '家庭和账号', '改我的密码', '备份与导出', '设置']) {
     if (meRows.indexOf(want) < 0) bad('[v41] 「我的」页缺入口「' + want + '」');
   }
-  // 「我的记录」是跳页不是弹层（走动态日志页，前面已经验过），这里只验三个开弹层的。
-  for (const [act, name] of [['members', '家人账号'], ['chpw', '改我的密码'],
+  if (meRows.indexOf('家人账号') >= 0) {
+    bad('[v43] 「我的」页还留着单独的「家人账号」行（已并进「家庭和账号」）');
+  }
+  // 「家庭和账号」是跳页：账号那四个动作在成员卡上，不在「我的」这一层。
+  await clickSel(page, '#view [data-go="family"]', '我的 → 家庭和账号');
+  await page.waitForTimeout(700);
+  const famTxt = flat(await page.locator('#view').innerText());
+  if (famTxt.indexOf('家庭成员与账号') < 0) {
+    bad('[v43] 「家庭和账号」里没有「家庭成员与账号」那一块');
+  }
+  const mEdit = await page.locator('#view [data-medit]').count();
+  say('   成员卡账号动作: ' + mEdit + ' 个');
+  if (!mEdit) bad('[v43] 成员卡上没有账号动作（改密码 / 改资料）');
+  else {
+    await clickSel(page, '#view [data-medit]', '家庭和账号 → 改成员资料');
+    await page.waitForTimeout(700);
+    if (!(await page.locator('#sheet.on').count())) bad('[未弹出] 家庭和账号 → 改成员资料');
+    else {
+      const mb = flat(await page.locator('#sheet.on .sheet-body').innerText());
+      say('   [弹层] 改成员资料 -> ' + mb.length + ' 字: ' + mb.slice(0, 40));
+      await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+      await page.waitForTimeout(300);
+    }
+  }
+  await clickSel(page, '#view [data-back]', '家庭和账号 返回');
+  await page.waitForTimeout(500);
+
+  // 「我的记录」是跳页不是弹层（走动态日志页，前面已经验过），这里只验两个开弹层的。
+  for (const [act, name] of [['chpw', '改我的密码'],
     ['ops', '备份与导出']]) {
     await clickSel(page, '#view [data-act="' + act + '"]', '我的 → ' + name);
     await page.waitForTimeout(700);

@@ -417,6 +417,10 @@ def main():
     E.freeze_clock(T_DAY)
     set_setting("ticket.curfew_school", "23:59")
     set_setting("ticket.curfew_weekend", "23:59")
+    # v42 起家长点头之后要「准备」一分钟才真的开跑（设置 ticket.start_delay_seconds）。
+    # 这一组测的是闸门和「谁在玩」，准备那一段在延迟打开的状态下另测（见 smoke_test），
+    # 这里钉成 0，等于把准备这段折叠掉，好让「点头 = 开始」这个老断言继续成立。
+    set_setting("ticket.start_delay_seconds", 0)
 
     fun = E.item_by_code("ticket_fun")
     E.grant_item(GIRL, fun["id"], 6, note="巡检发放")     # 后面还要核销，先备足

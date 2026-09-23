@@ -184,6 +184,10 @@ const K_FEED_SRC = {
   task:        { icon: 'i-task',     fg: 'var(--blue-deep)',   bg: 'var(--blue-bg)' },
   wish:        { icon: 'i-wishstar', fg: 'var(--pink-deep)',   bg: 'var(--pink-bg)' },
   calibration: { icon: 'i-info',     fg: 'var(--purple-deep)', bg: 'var(--purple-bg)' },
+  /* 打分、星星时刻、校准扣减这一路（家长给的评价），还有系统自己结的
+     （到期折半返还）。「查看全部」是全部动静，这两类也得有脸，不能落成灰色问号。 */
+  judge:       { icon: 'i-star',     fg: 'var(--purple-deep)', bg: 'var(--purple-bg)' },
+  system:      { icon: 'i-clock',    fg: 'var(--ink-3)',       bg: '#F4EFE7' },
 };
 /* 胶囊里放不下 `2026-09-21 19:40:03`，而这三条要回答的是「多久之前」。
    认不出格式就原样返回：宁可难看，不要瞎猜一个时间。 */
@@ -243,6 +247,9 @@ function kHash(v, push) {
    换屏时不重画底栏的话，二级页进去以后高亮还停在上一个 Tab 上。 */
 function kGo(v) {
   if (!kValid(v) || v === S.view) { if (v === S.view) kRedraw(v, true); return; }
+  // 这一跳是不是「返回上级」：目标是当前屏记下的来路，就是往回走
+  const back = ((S.from || {})[S.view] === v);
+  if (typeof viewPosSave === 'function') viewPosSave(S.view);
   // 记一句「从哪来」。二级页（报告 / 心愿屋 / 图鉴 / 家庭）的返回要看它：
   // 原来返回按钮写死 data-go="home" / "mine"，于是从「我的」进成长报告，
   // 点返回掉回首页；心愿屋从首页也能进，返回的却是「我的」。
@@ -250,8 +257,10 @@ function kGo(v) {
   S.from[v] = S.view;
   S.view = v;
   kHash(v);
-  // render() 会把滚动位置还回去，换屏要先清成 0，不然新的一屏停在上一屏的位置
-  if (typeof scrollTop0 === 'function') scrollTop0();
+  // render() 会把滚动位置还回去，换屏要先清成 0，不然新的一屏停在上一屏的位置。
+  // 返回上级例外 —— 落回「刚才从哪儿点进去的」，不是落回顶上（见 app.js 那条注释）。
+  if (typeof viewPosRestore === 'function') viewPosRestore(v, back);
+  else if (typeof scrollTop0 === 'function') scrollTop0();
   renderTabs();
   render();
 }
@@ -384,7 +393,6 @@ async function kScreenHome() {
   const tks = await kg('/api/tickets/mine?member_id=' + mid);
   const hl = await kg('/api/tasks/hall');
   const ws = await kg('/api/wishes');
-  const fd = await kg('/api/feed?limit=8&recent=4');
   const wk = await kg('/api/score/cycle?member_id=' + mid + '&day=' + todayStr());
 
   const lv = cyc.level;
@@ -420,8 +428,28 @@ async function kScreenHome() {
   //    改成按七个维度摊开来看。
   h += kWeekCard(wk, todayStr());
 
-  // ③ 正在玩
-  const playing = (tks && tks.playing || [])[0];
+  // ③ 正在玩 / 马上开始。准备那 60 秒也要摆在首页：孩子提交完多半就停在
+  //    这一屏等着，只显示「正在玩」的话，他得干等到那一刻才知道发生了什么。
+  const pList = (tks && tks.playing) || [];
+  const prep = pList.filter(x => x.preparing)[0];
+  const playing = pList.filter(x => !x.preparing)[0];
+  if (prep) {
+    h += '<div class="hero" data-tkbeginat="' + esc(prep.start_at) + '" data-tkfmt="mmss">' +
+      '<div class="hb"><span class="h g6">' +
+      '<i style="width:8px;height:8px;border-radius:50%;background:#fff;' +
+      'box-shadow:0 0 0 4px rgba(255,255,255,.22);display:block"></i>' +
+      '<span class="on-hero-90" style="font-size:11.5px;font-weight:700">马上开始</span></span>' +
+      '<span class="on-hero-70" style="font-size:10px">' +
+      (prep.by ? esc(prep.by) + '同意的' : '爸爸妈妈同意的') + '</span></div>' +
+      '<div class="hb" style="margin-top:4px"><span class="num tk-big" data-tkleft>' +
+      esc(tkClock(tkLeftMs(prep.start_at))) + '</span>' +
+      '<span class="h g6">' + ic('i-clock', 14, 'rgba(255,255,255,.82)') +
+      '<span class="on-hero-90" style="font-size:10.5px">' +
+      esc(String(prep.start_at).slice(11, 16)) + ' 开始</span></span></div>' +
+      '<div class="on-hero-70" style="font-size:10.5px;margin-top:11px">' +
+      '到点自己开始，这一分钟不算时间。想马上开始就进「我的券」</div>' +
+      '</div>';
+  }
   if (playing) {
     h += '<div class="hero hero--purple" data-tkend="' + esc(playing.end_at) +
       '" data-tkfmt="mmss" data-tktotal="' + num(playing.total_minutes || 0) + '">' +
@@ -439,6 +467,9 @@ async function kScreenHome() {
       '<div class="bar bar--onhero" style="margin-top:12px"><i data-tkbar style="width:0%"></i></div>' +
       '</div>';
   }
+  // 玩完的那一刻，上面那张紫 hero 会自己消失。以前它一走屏幕上什么都不剩，
+  // 结束跟没发生过一样。这张存档卡就接在那一下：看一眼，点掉，落进「今天用过什么」。
+  (tks && tks.items || []).filter(x => x.needs_ack).forEach(x => { h += kAckHTML(x); });
 
   // ④ 要做的事
   // 家长直接派下来的活是 pending（待做），大厅里领的才是 claimed（在做）。
@@ -501,23 +532,150 @@ async function kScreenHome() {
       ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
   }
 
-  // ⑦ 最近发生。接口本来就只回自己那一份（member_id 从会话里来），不用在这儿筛。
-  //    原来是整块只报最新那一条的灰字：看得到「刚发生了什么」，看不到「这几天
-  //    都在发生什么」。改成三条胶囊，每条前面挂一个来源小符号。
-  const rec = (fd && fd.recent || []).slice(0, 3);
+  // ⑦ 最近发生。v43 起走 /api/my/news：加减分、申请、买东西、开箱全算，
+  //    不再只是「自己按的 + 拿到手的」两类 —— 挑着给他看，账就不全，
+  //    「这一周发生了什么」这个问题等于没答完。最多 5 条，右边是「查看全部」的入口。
+  const nw = await kg('/api/my/news?limit=5');
+  const rec = (nw && nw.items || []);
+  h += '<div class="sect-head"><span class="sect-title">' +
+    ic('i-clock', 16, 'var(--purple)') + '最近发生</span>' +
+    '<span class="sect-note" data-knews style="cursor:pointer">查看全部 ›</span></div>';
   if (rec.length) {
-    h += '<div class="sect-head"><span class="sect-title">' +
-      ic('i-clock', 16, 'var(--purple)') + '最近发生</span>' +
-      '<span class="sect-note">和我有关的</span></div>' +
-      '<div class="card card--tight kfeed">' + rec.map(x => {
-        const s = K_FEED_SRC[x.kind] || K_FEED_SRC.given;
-        return '<div class="kfeed-row" style="background:' + s.bg + '">' +
-          '<span class="kfeed-ic">' + ic(s.icon, 16, s.fg) + '</span>' +
-          '<span class="kfeed-tx">' + esc(x.text) + '</span>' +
-          '<span class="kfeed-ts">' + esc(kAgo(x.ts)) + '</span></div>';
-      }).join('') + '</div>';
+    h += '<div class="card card--tight kfeed">' + rec.map(x => {
+      const s = K_FEED_SRC[x.kind] || K_FEED_SRC.given;
+      return '<div class="kfeed-row" style="background:' + s.bg + '">' +
+        '<span class="kfeed-ic">' + ic(s.icon, 16, s.fg) + '</span>' +
+        '<span class="kfeed-tx">' + esc(x.text) + '</span>' +
+        '<span class="kfeed-ts">' + esc(kAgo(x.ts)) + '</span></div>';
+    }).join('') + '</div>';
+  } else {
+    h += '<div class="card card--tight kfeed"><div class="empty">这几天还没发生什么</div></div>';
   }
   return kShell({}, h);
+}
+
+/* ============================================================ 最近发生 · 查看全部 */
+/* 四段。since/until 都按自然日算：近 7 天是含今天往前数 7 个日历天，
+   不是 168 个小时 —— 家长端账本那个「近 7 天」就是这个口径，两边对得上，
+   孩子说「我这星期」，爸妈翻账本翻出来的是同一段日子。 */
+const NEWS_RANGES = {
+  today: { label: '今天',    since: 0,  until: 0 },
+  yest:  { label: '昨天',    since: 1,  until: 1 },
+  d7:    { label: '近 7 天', since: 6,  until: 0 },
+  d30:   { label: '近 30 天', since: 29, until: 0 },
+};
+let NEWS_RANGE = 'today';       // 弹层关了再开，还停在上回看的那一段
+
+function kNewsDay(back) {
+  const x = new Date(tkTodayStr() + 'T00:00');
+  x.setDate(x.getDate() - back);
+  return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') +
+    '-' + String(x.getDate()).padStart(2, '0');
+}
+
+/* 组头的日子说法。今天/昨天/前天用词，再往前才落到日期，
+   日期带星期 —— 他记得的是「上周六谈成了心愿」，不是几月几号。 */
+function kNewsDayLabel(day) {
+  const t = tkTodayStr();
+  if (day === t) return '今天';
+  const diff = Math.round((new Date(t + 'T00:00') - new Date(day + 'T00:00')) / 86400000);
+  if (diff === 1) return '昨天';
+  if (diff === 2) return '前天';
+  const wk = '周' + '日一二三四五六'.charAt(new Date(day + 'T00:00').getDay());
+  return day.slice(5, 7) + ' 月 ' + day.slice(8, 10) + ' 日 ' + wk;
+}
+
+function kNewsSheet() {
+  const PAGE = 60;              // 一页 60 条，30 天内一般一次就取完
+  let range = NEWS_RANGES[NEWS_RANGE] ? NEWS_RANGE : 'today';
+  let items = [], offset = 0, total = 0, busy = false, allLoaded = false;
+
+  const rowHTML = x => {
+    const s = K_FEED_SRC[x.kind] || K_FEED_SRC.given;
+    return '<div class="knews-row">' +
+      '<span class="knews-ic" style="background:' + s.bg + '">' +
+      ic(s.icon, 15, s.fg) + '</span>' +
+      '<span class="knews-tx">' + esc(x.text) +
+      (x.sub ? '<em>' + esc(x.sub) + '</em>' : '') + '</span>' +
+      '<span class="knews-tm">' + esc(String(x.ts || '').slice(11, 16)) +
+      '</span></div>';
+  };
+  const listHTML = list => {
+    let out = '', day = '';
+    list.forEach(x => {
+      if (x.day !== day) {
+        day = x.day;
+        out += '<div class="knews-day">' + esc(kNewsDayLabel(day)) + '<i></i></div>';
+      }
+      out += rowHTML(x);
+    });
+    return out;
+  };
+
+  const shell = () =>
+    '<div class="knews-head"><div class="knews-top"><div>' +
+    '<h3>我的消息</h3><div class="knews-count" id="knewsCount"></div></div>' +
+    '<button type="button" class="knews-x" id="knewsX">✕</button></div>' +
+    '<div class="knews-chips">' + Object.keys(NEWS_RANGES).map(k =>
+      '<button type="button" class="knews-chip' + (k === range ? ' is-on' : '') +
+      '" data-krange="' + k + '">' + esc(NEWS_RANGES[k].label) + '</button>').join('') +
+    '</div></div>' +
+    '<div id="knewsList" class="knews-list"></div>' +
+    '<div class="knews-more" id="knewsMore"></div>';
+
+  const paint = () => {
+    const sp = NEWS_RANGES[range];
+    $('#knewsCount').textContent = sp.label + ' · 共 ' + num(total) + ' 条';
+    const list = $('#knewsList');
+    if (!items.length) {
+      list.innerHTML = '<div class="empty">' + esc(sp.label) +
+        '没有你的消息<br>换个日子看看</div>';
+    } else {
+      list.innerHTML = listHTML(items);
+    }
+    $('#knewsMore').textContent = allLoaded
+      ? (items.length ? '到底了' : '')
+      : '往下还有 ' + num(total - offset) + ' 条，滑动继续';
+  };
+
+  const load = async reset => {
+    if (busy) return;
+    busy = true;
+    const sp = NEWS_RANGES[range];
+    try {
+      const r = await kg('/api/my/news?limit=' + PAGE +
+        '&offset=' + (reset ? 0 : offset) +
+        '&since=' + kNewsDay(sp.since) + '&until=' + kNewsDay(sp.until));
+      if (reset) { items = []; offset = 0; }
+      items = items.concat(r && r.items || []);
+      offset += (r && r.items || []).length;
+      total = (r && r.total) || 0;
+      allLoaded = offset >= total;
+      paint();
+    } catch (e) { err(e); }
+    busy = false;
+  };
+
+  sheet(shell(), box => {
+    box.addEventListener('click', e => {
+      const x = e.target.closest('#knewsX');
+      if (x) { closeSheet(); return; }
+      const c = e.target.closest('[data-krange]');
+      if (!c || c.dataset.krange === range) return;
+      range = c.dataset.krange;
+      NEWS_RANGE = range;
+      $$('.knews-chip', box).forEach(b =>
+        b.classList.toggle('is-on', b.dataset.krange === range));
+      $('#knewsList').innerHTML = '';
+      load(true);
+    });
+    // 滚到底自动续一页。box 就是 .sheet-body，弹层的滚动发生在它身上。
+    box.addEventListener('scroll', () => {
+      if (allLoaded || busy) return;
+      if (box.scrollTop + box.clientHeight >= box.scrollHeight - 80) load(false);
+    });
+    load(true);
+  });
 }
 
 /* ============================================================ 任务（我的任务） */
@@ -1210,11 +1368,17 @@ function kOpenHead(r, head) {
 }
 
 /* ============================================================ 券包 · 我的券 */
+/* 「今天用过什么」翻到哪一天了。空 = 今天。 */
+let TK_DAY = '';
+
 async function kScreenCoupon() {
   const mid = S.me.id;
+  // 往前翻看的是同一份流水：券和卡都按那一天查，画法一模一样。
+  // 这一屏其余部分（正在玩、手上的券……）不受影响 —— 那些是「此刻」的事。
+  const dayQ = TK_DAY ? '&day=' + TK_DAY : '';
   const hold = await api('GET', '/api/holdings?member_id=' + mid);
   const st = await kg('/api/tickets/state?member_id=' + mid);
-  const tks = await kg('/api/tickets/mine?member_id=' + mid);
+  const tks = await kg('/api/tickets/mine?member_id=' + mid + dayQ);
   const shop = await kg('/api/shop?member_id=' + mid);
   const cash = await kg('/api/cash?member_id=' + mid);
 
@@ -1228,19 +1392,58 @@ async function kScreenCoupon() {
     '<button class="seg-item is-on">我的券</button>' +
     '<button class="seg-item" data-go="shop">券商店</button></div>';
 
-  // 券的状态：等审核 / 上次没同意 / 正在玩。这些是「眼下正在发生」的事，
-  // 摆在这一页最上面 —— 埋在清单下面，等于没有。
-  const playing = (tks && tks.playing || [])[0];
+  // 券的状态：马上开始 / 正在玩 / 等审核 / 上次没同意。这些是「眼下正在发生」
+  // 的事，摆在这一页最上面 —— 埋在清单下面，等于没有。
+  //
+  // 「准备中」排在「正在玩」前面不是随手摆的：它只存在 60 秒，孩子这一屏
+  // 多半就是冲着它来的（要不要马上坐好、能不能再等一会儿）。
+  const pList = (tks && tks.playing) || [];
+  const prep = pList.filter(x => x.preparing)[0];
+  const playing = pList.filter(x => !x.preparing)[0];
   const items = (tks && tks.items) || [];
   const pend = items.filter(x => x.status === 'pending')[0];
+  // 答应了、还没办的（陪伴 / 独处 / 好友那几种）：批了只是家长答应了，
+  // 还得他真的腾出时间去做。这一条链以前是断的 —— 扣完券就没下文了。
+  const awaiting = items.filter(x => x.fulfill_status === 'waiting');
+  // 已经办到的：家长点过「办好了」，带着他写的那句话
+  const doneChores = items.filter(x => x.kind === 'chore' && x.status === 'approved'
+    && (x.fulfill_status === 'done' || x.fulfill_status === 'void'));
+  // 玩完了、还没点「知道了」的存档卡。玩完直接从屏幕上蒸发是最没感觉的一步。
+  const finished = items.filter(x => x.needs_ack);
   const rjs = items.filter(x => x.status === 'rejected');
   const lastReject = rjs[rjs.length - 1];
   const ejs = items.filter(x => x.status === 'expired');
   const lastExpire = ejs[ejs.length - 1];
+  if (prep) {
+    const pRow = items.filter(i => i.id === prep.id)[0] || {};
+    const dl = +(st && st.start_delay || 0);
+    h += '<div class="card tk-begin" data-tkbeginat="' + esc(prep.start_at) +
+      '" data-tkfmt="mmss">' +
+      '<div class="hb"><span class="h g6"><span class="tk-beat tk-beat--o"></span>' +
+      '<span style="font-size:11.5px;font-weight:700;color:var(--orange-deep)">' +
+      (dl > 0 ? num(dl / 60) + ' 分钟后开始' : '马上开始') + '</span></span>' +
+      '<span class="t-3" style="font-size:10px">' +
+      (prep.by ? esc(prep.by) + '同意的' : '') + '</span></div>' +
+      '<div class="hb" style="margin-top:8px;align-items:flex-end">' +
+      '<span class="num tk-big" data-tkleft>' +
+      esc(tkClock(tkLeftMs(prep.start_at))) + '</span>' +
+      '<button class="btn btn--sm" data-tkbegin="' + prep.id + '">现在就开始</button></div>' +
+      '<div class="t-2 mt8" style="font-size:10.5px">' +
+      esc(prep.item || '') + (prep.qty ? ' ×' + num(prep.qty) : '') +
+      '　' + esc(String(prep.start_at).slice(11, 16)) + ' 开始、' +
+      esc(String(prep.end_at).slice(11, 16)) + ' 结束</div>' +
+      tkTrackHTML([['提交', String(pRow.ts || '').slice(11, 16), 'on'],
+        ['同意', tkBack(prep.start_at, dl), 'on'],
+        ['准备', '进行中', 'now'],
+        ['开始', String(prep.start_at).slice(11, 16), '']]) +
+      '<div class="t-3 mt6" style="font-size:10px">这一分钟是留给你准备的，' +
+      '不算在那 ' + num(prep.total_minutes) + ' 分钟里。到点自己开始，不用你点。</div>' +
+      '</div>';
+  }
   if (playing) {
     h += '<div class="card tk-run" data-tkend="' + esc(playing.end_at) + '" data-tktotal="' +
       num(playing.total_minutes || 0) + '">' +
-      '<div class="hb"><span class="h g6">' + ic('i-clock', 15, 'var(--purple-deep)') +
+      '<div class="hb"><span class="h g6"><span class="tk-beat tk-beat--p"></span>' +
       '<span style="font-size:11.5px;font-weight:700;color:var(--purple-deep)">正在玩</span></span>' +
       '<span class="num tk-big" data-tkleft>' +
       esc(tkLeftText(tkLeftMs(playing.end_at))) + '</span></div>' +
@@ -1250,13 +1453,25 @@ async function kScreenCoupon() {
       '　到 ' + esc(String(playing.end_at).slice(11, 16)) + ' 结束</div></div>';
   }
   if (pend) {
+    // 等的那段时间原来只有一行静态小字。这版给它三样东西：一个呼吸的心跳点
+    //（这件事还活着）、一条四段状态轨（走到哪一步了）、一个作废倒计时
+    //（它什么时候自己结束）。
+    const at = String(pend.ts || '').slice(11, 16);
     h += '<div class="card tk-pend" data-tkexp="' + esc(pend.expire_at) + '">' +
-      '<div class="hb"><span class="row-title">等爸爸妈妈点一下</span>' +
+      '<div class="hb"><span class="h g6"><span class="tk-beat"></span>' +
+      '<span style="font-size:11.5px;font-weight:700;color:var(--purple-deep)">正在办理</span></span>' +
       '<span class="pill pill--gray">' + esc(miniLeft(pend.expire_at)) + '</span></div>' +
-      '<div class="t-2 mt6" style="font-size:10.5px">' + esc(pend.item || '') +
-      (pend.qty ? ' ×' + num(pend.qty) : '') +
-      (pend.minutes ? '　' + num(pend.minutes) + ' 分钟' : '') + '</div>' +
-      '<div class="t-3 mt6" style="font-size:10px">他们的手机上会响一下。过了这个时间这条会自己作废，可以重新提。</div></div>';
+      '<div class="hb mt8" style="gap:10px;justify-content:flex-start">' +
+      '<span class="icon-box" style="background:var(--purple-bg)">' +
+      glyph(pend.icon, 'ticket', 20) + '</span>' +
+      '<span class="row-grow"><span class="row-title">' + esc(pend.item || '') +
+      (pend.qty ? ' ×' + num(pend.qty) : '') + '</span>' +
+      '<span class="row-sub">' + (pend.minutes ? num(pend.minutes) + ' 分钟' : '等你用') +
+      (pend.note ? ' · ' + esc(pend.note) : '') + '</span></span></div>' +
+      tkTrackHTML([['提交', at, 'on'], ['等同意', '进行中', 'now'],
+        ['准备', '—', ''], ['开始', '—', '']]) +
+      '<div class="t-3 mt8" style="font-size:10px;line-height:1.7">' +
+      '他们手机上已经响了，随手就能点。<br>过了这个时间这条自己作废，重新提一条就行。</div></div>';
   }
   if (lastReject) {
     h += '<div class="card tk-judge">' +
@@ -1270,6 +1485,54 @@ async function kScreenCoupon() {
       esc(String(lastExpire.ts || '').slice(11, 16)) + ' 提的那条 ' + esc(lastExpire.item || '') +
       ' 等太久作废了。想玩重新提一条。</div></div>';
   }
+
+  // 「答应了，等安排」：非娱乐券批下来之后是这一张。它没有倒计时 ——
+  // 等着的是家长真的腾出时间，不是一个会自己走完的钟。所以给的是
+  // 「这件事他们答应了」+ 「你还可以催一下」，不是时间条。
+  awaiting.forEach(x => {
+    const at = String(x.start_at || x.ts || '').slice(11, 16);
+    h += '<div class="card tk-await">' +
+      '<div class="hb"><span class="h g6">' + glyph(x.icon, 'ticket', 20) +
+      '<span style="font-size:12.5px;font-weight:800;color:var(--gold-deep)">答应了，等安排</span></span>' +
+      '<span class="pill pill--gold">第 ' + num((x.wait_days || 0) + 1) + ' 天</span></div>' +
+      '<div class="row-sub mt6">' + esc(x.item || '') +
+      (x.qty ? ' ×' + num(x.qty) : '') + '　' + esc(x.by || '') + ' ' + esc(at) + ' 点的同意</div>' +
+      tkTrackHTML([['提交', String(x.ts || '').slice(11, 16), 'on'],
+        ['同意', at, 'on'], ['安排', '未定时间', 'now'], ['兑现', '—', '']]) +
+      '<div class="t-3 mt8" style="font-size:10px;line-height:1.7">' +
+      esc(x.desc || '') + '<br>答应的事不会过期，你等着就好。想不起这事的时候可以提醒一下。' +
+      '</div>' +
+      '<button class="btn btn--sm line mt8" data-tkremind="' + x.id + '"' +
+      (x.can_remind ? '' : ' disabled') + '>' +
+      (x.can_remind ? '提醒他们一下（今天还剩 1 次）' : '今天已经催过了') + '</button></div>';
+  });
+
+  // 已经办到的：家长点过「办好了」并写了一句。这一格才是那件事的回音 ——
+  // 只翻个状态的话，孩子看不出他到底等到了什么。
+  if (doneChores.length) {
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-check-circle', 16, 'var(--ok)') + '已经办到的</span>' +
+      '<span class="sect-note">' + num(doneChores.length) + ' 件</span></div>';
+    doneChores.slice().reverse().forEach(x => {
+      const when = String(x.fulfilled_at || '').slice(0, 16);
+      h += '<div class="card plain tk-done-chore">' +
+        '<div class="hb" style="gap:10px;justify-content:flex-start">' +
+        '<span class="icon-box" style="background:var(--ok-bg)">' +
+        ic('i-check-circle', 20, 'var(--ok)') + '</span>' +
+        '<span class="row-grow"><span class="row-title">' + esc(x.item || '') + ' · ' +
+        (x.fulfill_status === 'done' ? '已兑现' : '这次没办') + '</span>' +
+        '<span class="row-sub">' +
+        (x.fulfill_status === 'done'
+          ? (x.fulfill_note ? esc(x.fulfill_note) + '。<br>' : '') +
+            esc(x.fulfilled_by || '爸爸妈妈') + ' ' + esc(when) + ' 记的'
+          : '这次没来得及，他们记下了') +
+        '</span></span></div></div>';
+    });
+  }
+
+  // 「刚刚用完的」：带时长的券放完不弹窗、不打断，只是把「正在玩」那张原地
+  // 翻成存档态，点过「知道了」才收进「今天用过什么」。结束该有一次收尾。
+  finished.forEach(x => { h += kAckHTML(x); });
 
   if (debt > 0) {
     h += '<div class="tip">' + ic('i-clock', 15, '#D18A3C') +
@@ -1330,7 +1593,8 @@ async function kScreenCoupon() {
         '<span class="coupon-desc">' + esc(typ) + '</span>' +
         (qty
           ? '<button class="btn btn--sm' + (ok ? '' : ' is-disabled') + '" data-tk="' + esc(t.code) +
-            '" data-tkname="' + esc(t.name) + '" data-tkq="' + num(qty) + '"' +
+            '" data-tkname="' + esc(t.name) + '" data-tkq="' + num(qty) +
+            '" data-tkicon="' + esc(t.icon || '') + '"' +
             (ok ? '' : ' disabled') + '>' + (ok ? '去用' : '现在不行') + '</button>'
           : '<span class="coupon-desc t-3">用完了</span>') +
         '</div>';
@@ -1343,6 +1607,17 @@ async function kScreenCoupon() {
   // 我手上的卡（v38：整段从「图鉴」搬过来）。图鉴只剩「收集到什么」这一层，
   // 能用的东西都摆在这一边、跟券挨着 —— 「我手上现在有什么能用的」应该
   // 一眼看全，而不是先去图鉴翻一层再找。
+  // 用过的卡：四种脸摆在一起（装填中 / 今天生效 / 已算进去 / 等爸爸妈妈办）。
+  // 「装填中」「今天还在生效」原来挤在券商店页的 tip 里 —— 孩子只有去买券
+  // 的时候才看得到，而现在他站在券包页，看的是「我手上现在什么在管用」。
+  const faces = (hold.faces || []);
+  if (faces.length) {
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-cards', 16, 'var(--purple-deep)') + '用过的卡 · 还在管用的</span>' +
+      '<span class="sect-note">' + num(faces.length) + ' 张</span></div>';
+    faces.forEach(f => { h += tkFaceHTML(f); });
+  }
+
   const cards = (hold.cards || []);
   const cardQty = cards.reduce((a, c) => a + (+c.qty || 0), 0);
   h += '<div class="sect-head"><span class="sect-title">' +
@@ -1362,7 +1637,8 @@ async function kScreenCoupon() {
           (c.days_left !== null && c.days_left <= 14 ? '（还剩 ' + num(c.days_left) + ' 天）' : '')
           : '永久') + '</div></div>' +
         '<button class="btn btn--sm" data-use="' + esc(c.effect) + '" data-hid="' +
-        c.holding_id + '">用</button></div>';
+        c.holding_id + '" data-uname="' + esc(c.name) + '" data-uicon="' +
+        esc(c.icon || '') + '">用</button></div>';
     });
   }
 
@@ -1381,6 +1657,11 @@ async function kScreenCoupon() {
         num(e.renew_cost) + '</button></div>';
     });
   }
+  // 今天用过什么：一整天用掉的券和卡，收成一条流水摆在最下面。
+  // 上面那些是「眼下正在发生」，这一块是「今天一共换来了多少」——
+  // 状态流的终点，也是下一次愿意再攒券的理由。
+  h += tkUsedHTML(tks && tks.used, TK_DAY);
+
   h += '<div class="footnote">' + ic('i-lock', 12, 'var(--ink-line)') +
     '用券要先过这一页上面的额度，再过爸爸妈妈那一关</div>';
   return kShell({}, h);
@@ -1394,7 +1675,6 @@ async function kScreenShop() {
   // /api/levels 回来的是 { tiers, level } 两层，等级在 .level 里
   const lvRes = await kg('/api/levels?member_id=' + mid);
   const lv = lvRes && lvRes.level;
-  const tst = await kg('/api/tickets/state?member_id=' + mid);
 
   let h = '<div class="seg">' +
     '<button class="seg-item" data-go="coupon">我的券</button>' +
@@ -1408,14 +1688,9 @@ async function kScreenShop() {
       'Lv.' + lv.level + (lv.title ? ' · ' + esc(lv.title) : '') + '</span>' : '') +
     '</div>';
 
-  if (tst && tst.armed && tst.armed.length) {
-    h += '<div class="tip">' + ic('i-info', 15, '#D18A3C') + '装填中：' +
-      tst.armed.map(a => esc(a.name) + '（' + esc(a.desc) + '）').join('；') + '</div>';
-  }
-  if (tst && tst.flags && tst.flags.length) {
-    h += '<div class="tip">' + ic('i-info', 15, '#D18A3C') + '今天还在生效：' +
-      tst.flags.map(f => esc(f.name) + ' — ' + esc(f.text)).join('；') + '</div>';
-  }
+  // 「装填中」「今天还在生效」原来摆在这儿（孩子只有买券的时候才看得到）。
+  // 这两条讲的是「我手上那些卡现在什么状态」，已经搬到券包页「我手上的卡」
+  // 上面 —— 跟卡放在一起，站在那儿就能看见。
 
   // 换零花钱：提一条申请，爸爸妈妈发钱，拿到手自己确认一下
   if (cash) {
@@ -2072,21 +2347,28 @@ async function kScreenMine() {
 /* 图标只能用两处有的：ic() 走雪碧图（candy-icons.js 里那 43 个 token），
    kGlyph() 走 icons/<token>.svg 图片。dim_* 与 rw_ticket_* 不在雪碧图里，
    传进去 ic() 会返回空字符串（它按名单过滤），所以要图就得走 kGlyph。 */
-/* 第 1 步到第 3 步。孩子读得懂的三句，比一张流程图有用。 */
+/* 第 1 步到第 3 步。孩子读得懂的三句，比一张流程图有用。
+   三步各自能点：孩子最想点的就是这三句话，把它们做成装饰等于白写 ——
+   点第 1 步进「每天 7 分」，第 2 步进「宝箱和星星」，第 3 步进「券和卡」。
+   [编号, 圆底, 字色, 标题, 副标题, 去哪一屏] */
 const K_GUIDE_STEPS = [
-  ['1', '#FFE06B', '#B87A0C', '每天做七件事', '一天最多拿 7 分'],
-  ['2', '#5CA8E8', '#FFFFFF', '一周攒起来', '攒到一定的分，就有一个宝箱'],
-  ['3', '#8C6BD6', '#FFFFFF', '换你想要的东西', '星星可以存着，也能买券和卡'],
+  ['1', '#FFE06B', '#B87A0C', '每天做七件事', '一天最多拿 7 分', 'guide7'],
+  ['2', '#5CA8E8', '#FFFFFF', '一周攒起来', '攒到一定的分，就有一个宝箱', 'guidebox'],
+  ['3', '#8C6BD6', '#FFFFFF', '换你想要的东西', '星星可以存着，也能买券和卡', 'guidecard'],
 ];
-/* 五张入口卡落在三页上：前一张进「每天 7 分」，中间三张都进「宝箱和星星」，
-   各自滚到那一段，最后一张进「券和卡」。
-   [去哪一屏, 页内锚点, 图标, 圆底, 标题, 副标题] */
+/* 三张入口卡，一张卡一屏：原来五张卡里有三张都进「宝箱和星星」，孩子点完
+   感觉还在原地。卡下面那排小字是页内的小节，小节自己也能点，直接停到
+   那一段 —— 目录上写的和页里有的，是同一套词。
+   [去哪一屏, 页内锚点, 图标, 圆底, 标题, 副标题, [[小节名, 锚点], …]]
+   小节的锚点就是那三屏里各块的 id，改块别忘改这里。 */
 const K_GUIDE_LIST = [
-  ['guide7', '', 'i-check', '#FF8A3D', '每天 7 分是什么', '七个格子，做到几个亮几个'],
-  ['guidebox', 'kb-energy', 'i-calendar', '#FFB021', '周能量', '一周的总数，周六重新开始'],
-  ['guidebox', 'kb-star', 'i-stardust', '#FFC93D', '星星（星尘）', '不会过期，存着慢慢花'],
-  ['guidebox', 'kb-chest', 'i-chest-nav', '#B8824A', '七个宝箱', '攒得越多，箱子越厉害'],
-  ['guidecard', '', 'i-coupon', '#FF5E9E', '券和卡', '玩的时间、小特权、还能惊喜'],
+  ['guide7', '', 'i-check', '#FF8A3D', '每天 7 分是什么', '七个格子，做到几个亮几个',
+    [['七件小事', 'kg-cells'], ['是哪七件', 'kg-dims'], ['谁来打分', 'kg-who']]],
+  ['guidebox', '', 'i-calendar', '#FFB021', '周能量和星星', '一周攒多少分，星星能怎么用',
+    [['一周攒多少分', 'kb-energy'], ['星星怎么用', 'kb-star'],
+      ['七个箱子', 'kb-chest'], ['箱子怎么到手', 'kb-get']]],
+  ['guidecard', '', 'i-coupon', '#FF5E9E', '券和卡', '玩的时间、小特权、还能惊喜',
+    [['六种券', 'kc-ticket'], ['玩的时间怎么用', 'kc-play'], ['道具卡', 'kc-card']]],
 ];
 /* 从目录点「周能量 / 星星 / 七个宝箱」时先记下要停在哪一段。
    三张卡落在同一页上，进来直接停在那一块，省得自己往下找第二次。 */
@@ -2104,32 +2386,45 @@ async function kScreenGuide() {
     ic('i-back', 16, 'var(--ink)') + '</button>' +
     '<span class="appbar-grow"><div class="appbar-title">怎么玩</div>' +
     '<div class="appbar-sub">想知道分怎么来的，点开看</div></span></div>';
+  h += await kGuideBodyHome();
+  return kShell({}, h);
+}
 
-  h += '<div class="card kd-hero">' +
+/* 目录正文。家长端那份只读的「怎么玩」（renderParentKidGuide）用的也是这一份 ——
+   两端各写一遍儿童版说明书，改一头忘一头只是早晚的事。
+   卡上写 data-guide / data-anchor，两端的跳转由各自绑定时映射成自己的路由。 */
+async function kGuideBodyHome() {
+  let h = '<div class="card kd-hero">' +
     '<span class="kd-chip">三分钟看懂</span>' +
     '<div class="kd-h1">这个游戏怎么玩</div>' +
     '<div class="kd-p">每天把事情做好，就有分。<br>' +
     '攒够一周的分，换宝箱和星星。<br>' +
     '宝箱里有玩的时间和道具卡。</div></div>';
 
-  h += '<div class="sect-head"><span class="sect-title">就这三步</span></div>';
+  h += '<div class="sect-head"><span class="sect-title">就这三步（点一下就去看）</span></div>';
   h += '<div class="card card--tight">' + K_GUIDE_STEPS.map(s =>
-    '<div class="hb kd-step">' +
+    '<div class="hb kd-step" data-guide="' + s[5] + '" data-anchor="" style="cursor:pointer">' +
     '<span class="kd-n" style="background:' + s[1] + ';color:' + s[2] + '">' + s[0] + '</span>' +
     '<div class="row-grow"><div class="row-title">' + esc(s[3]) + '</div>' +
-    '<div class="row-sub">' + esc(s[4]) + '</div></div></div>').join('') + '</div>';
+    '<div class="row-sub">' + esc(s[4]) + '</div></div>' +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>').join('') + '</div>';
 
   h += '<div class="sect-head"><span class="sect-title">想知道哪一块，点进去</span></div>';
   h += '<div class="card card--tight">' + K_GUIDE_LIST.map(g =>
+    '<div class="kd-gcard">' +
     '<div class="row" data-guide="' + g[0] + '" data-anchor="' + g[1] + '" style="cursor:pointer">' +
     '<span class="kd-ic" style="background:' + g[3] + '">' + ic(g[2], 19, '#FFFFFF') + '</span>' +
     '<div class="row-grow"><div class="row-title">' + esc(g[4]) + '</div>' +
     '<div class="row-sub">' + esc(g[5]) + '</div></div>' +
-    ic('i-chevron', 16, 'var(--ink-line)') + '</div>').join('') + '</div>';
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>' +
+    /* 小节那一排：点小节跟点整卡走同一条路，只是多带一个锚点。 */
+    '<div class="kd-subs">' + g[6].map(s =>
+      '<span class="kd-sub" data-guide="' + g[0] + '" data-anchor="' + s[1] + '">'
+      + esc(s[0]) + '</span>').join('') + '</div></div>').join('') + '</div>';
 
   h += '<div class="kd-note">' + ic('i-info', 15, '#C98A3C') +
     '还有不懂的？直接问爸爸妈妈。规矩是全家一起定的，也能一起改。</div>';
-  return kShell({}, h);
+  return h;
 }
 
 /* 七项每一项：一句「这是管什么的」+ 三条能自己对照的具体事。
@@ -2141,7 +2436,9 @@ async function kScreenGuide() {
    活力写的是「吃饭」不是「运动」。历史资料（原始规则、打分表、游戏化设计 v2、
    规则全书 v10~v29）里这一项从头到尾都是「吃饭表现」，`seed_data` 里那句
    「运动、户外、精力释放」是后来写歪的，家长端设计稿上也是「运动、户外」。
-   设计稿这一屏已经改成吃饭口径，代码跟着改；`seed_data` 那句要单独拍板后再动。 */
+   WW先生 2026-09-23 拍板：**活力 = 吃饭的表现，所有端统一这个口径**。
+   `seed_data.py` 那句 meaning 已跟着改成「好好吃饭，把身体养得结实」，
+   图标搜索词也从「运动 精力 跑」改成吃饭那几个。 */
 const K_DIM_GUIDE = [
   ['dim_heart', '心能', '#EC7B72', '生气、难过的时候，能自己稳下来',
     ['想发火了，去冷静角坐一会儿，或者深呼吸五次',
@@ -2179,10 +2476,20 @@ async function kScreenGuide7() {
     ic('i-back', 16, 'var(--ink)') + '</button>' +
     '<span class="appbar-grow"><div class="appbar-title">每天 7 分</div>' +
     '<div class="appbar-sub">七件小事，做到就有分</div></span></div>';
+  h += kGuideBody7();
+  return kShell({}, h);
+}
+
+/* 「每天 7 分」正文，两端共用。七项清单只列名字 + 一句 + 三条例子，
+   没有「做到三件算一分」这种换算 —— 分是爸爸妈妈按这一天的样子给的。 */
+function kGuideBody7() {
+  let h = '';
 
   /* 七格示意：前五格是「今天已经拿到的」，后两格浅棕是「还没拿到的」。
      一格一色，跟首页那排格子长得一样，孩子一眼认出来这是在说什么。 */
-  h += '<div class="card">' +
+  /* 「谁来打分」紧跟七格示意：孩子看完格子第一个问的就是「这分谁给的」。
+     原来它压在七项清单（七项 × 三条 = 21 行）后面，等于先读两屏才等到答案。 */
+  h += '<div class="card" id="kg-cells">' +
     '<div class="row-title" style="margin-bottom:10px">一天有七件小事</div>' +
     '<div class="kd-cells">' + K_DIM_GUIDE.map((d, i) =>
       '<span class="kd-cell" style="background:' + (i < 5 ? d[2] : '#F1E9DC') + '"></span>').join('') +
@@ -2192,8 +2499,14 @@ async function kScreenGuide7() {
     '没做到的是浅棕色，不算错，也不扣分。<br>' +
     '七件全做到，那天就是 7 分。</div></div>';
 
+  h += '<div class="card" id="kg-who" style="background:#FFF2E3">' +
+    '<div class="row-title" style="color:#A2601F;margin-bottom:8px">谁来打分？</div>' +
+    '<div class="t-2" style="font-size:11.5px;line-height:1.8">' +
+    '晚上爸爸妈妈打分。他们忘打了，那天算 7 分，不是你丢的。<br>' +
+    '已经发给你的星星和券不会收回，以前的账也不会翻出来重算。</div></div>';
+
   h += '<div class="sect-head"><span class="sect-title">是哪七件</span></div>';
-  h += '<div class="card" style="padding:6px 14px">' + K_DIM_GUIDE.map(d =>
+  h += '<div class="card" id="kg-dims" style="padding:6px 14px">' + K_DIM_GUIDE.map(d =>
     '<div class="kd-dim">' +
     '<div class="hb">' + kGlyph(d[0], 26) +
     '<div class="row-grow"><div class="row-title">' + esc(d[1]) + '</div>' +
@@ -2204,13 +2517,7 @@ async function kScreenGuide7() {
 
   h += '<div class="kd-note">' + ic('i-info', 15, '#C98A3C') +
     '不用每一条都做到，看的是这一天整体的样子。拿不准就直接问爸爸妈妈。</div>';
-
-  h += '<div class="card" style="background:#FFF2E3">' +
-    '<div class="row-title" style="color:#A2601F;margin-bottom:8px">谁来打分？</div>' +
-    '<div class="t-2" style="font-size:11.5px;line-height:1.8">' +
-    '晚上爸爸妈妈打分。他们忘打了，那天算 7 分，不是你丢的。<br>' +
-    '已经发给你的星星和券不会收回，以前的账也不会翻出来重算。</div></div>';
-  return kShell({}, h);
+  return h;
 }
 
 
@@ -2257,10 +2564,21 @@ function kBoxSay(t, i, n) {
 
 /* 门槛与保底都从接口拿，不写死：家长在设置里改过门槛，这一页跟着变，
    否则孩子照着旧数字攒分，攒到了却换不到东西。
-   三张卡（周能量 / 星星 / 七个箱子）都落在这一屏，所以三块各带一个 id，
+   目录里「周能量和星星」那张卡下的四个小节都落在这一屏，所以四块各带一个 id，
    从目录点进来时滚到对应那一段（见 CHILD.render 里的 kGuideTo）。 */
 async function kScreenGuideBox() {
-  const mid = S.me.id;
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('guidebox') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">宝箱和星星</div>' +
+    '<div class="appbar-sub">攒分换箱子，星星能存着</div></span></div>';
+  h += await kGuideBodyBox(S.me.id);
+  return kShell({}, h);
+}
+
+/* 「宝箱和星星」正文，两端共用。mid 是**看谁的**：孩子端传自己，
+   家长端传选中的那个孩子（家长调 /api/boxes 必须显式带 member_id）。 */
+async function kGuideBodyBox(mid) {
   const d = await api('GET', '/api/boxes?member_id=' + mid);
   const tiers = d.tiers || [];
   const cyc = d.cycle || {};
@@ -2269,12 +2587,7 @@ async function kScreenGuideBox() {
   // 「用星星买」那半句点名的是商店里挂着的三档，别自己写死「金 / 钻石 / 王者」
   const buyable = tiers.filter(t => t.purchasable).map(t => kBoxName(t)).join(' / ');
 
-  let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="' + kBack('guidebox') + '">' +
-    ic('i-back', 16, 'var(--ink)') + '</button>' +
-    '<span class="appbar-grow"><div class="appbar-title">宝箱和星星</div>' +
-    '<div class="appbar-sub">攒分换箱子，星星能存着</div></span></div>';
-
+  let h = '';
   h += '<div class="card" id="kb-energy">' +
     '<div class="row-title" style="margin-bottom:12px">一周攒多少分</div>' +
     kGuideDays(days, todayStr()) +
@@ -2282,6 +2595,17 @@ async function kScreenGuideBox() {
     '一周从星期六开始，七天一轮。<br>' +
     '格子上的颜色是那天拿到的分，所以七天下来就是一周的总数。<br>' +
     '七天都拿满是 ' + num(top) + ' 分，能换最好的箱子。</div></div>';
+
+  /* 这一页四块的顺序跟目录上那排小节一致：一周攒多少分 → 星星怎么用 →
+     七个箱子 → 箱子怎么到手。原来星星夹在箱子后面，从目录点「星星怎么用」
+     要往上滚，点「七个箱子」反而往回 —— 目录写的和页里摆的是两套顺序。 */
+  h += '<div class="card kd-soft" id="kb-star">' +
+    '<div class="row-title" style="color:#B87A0C;margin-bottom:10px">星星（星尘）怎么用</div>' +
+    '<div class="v g7">' +
+    '<div class="gd-li">一周结束那天，这周的固定分换成星星给你</div>' +
+    '<div class="gd-li">星星不会过期，也不会被人收回去</div>' +
+    '<div class="gd-li">可以买券、买箱子、投进许愿池、换零花钱</div>' +
+    '</div></div>';
 
   h += '<div class="card" id="kb-chest">' +
     '<div class="row-title">七个箱子，越往上越好</div>' +
@@ -2294,15 +2618,7 @@ async function kScreenGuideBox() {
       '<span class="kd-boxd">' + esc(kBoxSay(t, i, tiers.length)) + '</span></div>').join('') +
     '</div></div>';
 
-  h += '<div class="card kd-soft" id="kb-star">' +
-    '<div class="row-title" style="color:#B87A0C;margin-bottom:10px">星星（星尘）怎么用</div>' +
-    '<div class="v g7">' +
-    '<div class="gd-li">一周结束那天，这周的固定分换成星星给你</div>' +
-    '<div class="gd-li">星星不会过期，也不会被人收回去</div>' +
-    '<div class="gd-li">可以买券、买箱子、投进许愿池、换零花钱</div>' +
-    '</div></div>';
-
-  h += '<div class="card">' +
+  h += '<div class="card" id="kb-get">' +
     '<div class="row-title" style="margin-bottom:12px">箱子怎么到手</div>' +
     '<div class="kd-nrow">' +
     '<span class="kd-n kd-n--sm" style="background:#40C769;color:#FFFFFF">1</span>' +
@@ -2314,7 +2630,7 @@ async function kScreenGuideBox() {
 
   h += '<div class="footnote">' + ic('i-info', 12, 'var(--ink-line)') +
     '箱子到手之后超过一周没开，系统会替你开掉，东西不会丢。</div>';
-  return kShell({}, h);
+  return h;
 }
 
 /* ============================================================ 券和卡（说明） */
@@ -2326,8 +2642,11 @@ const K_TICKET_ICON = {
 /* 一张券「能干什么」，一句话。数字全部从接口来（时长在 effect.minutes、
    每周张数在 weekly_limit），家长改过价改过时长这句话就跟着变 —— 写死
    「30 分钟」的文案，家长一改设置就开始骗人。 */
+/* 娱乐券只写「换玩的时间」：一张多少分钟、一轮最多几张，下面「玩的时间怎么用」
+   那一整块就是说这个的，券行里再说一遍等于同一件事摆两个地方（还容易只改一处）。
+   陪伴券不是屏幕时间，那一块管不着它，所以分钟数留在券行上。 */
 const K_TICKET_SAY = {
-  ticket_fun: t => '可以玩 ' + num((t.effect || {}).minutes || 30) + ' 分钟',
+  ticket_fun: t => '换玩的时间' + (t.weekly_limit ? '' : '，不限量'),
   ticket_company: t => '指定一个人陪你 ' + num((t.effect || {}).minutes || 30) + ' 分钟',
   ticket_choice: t => '今天听你说了算' + (t.weekly_limit === 1 ? '，一周一张' : ''),
   ticket_exempt: t => '免一次额外家务' + (t.weekly_limit === 1 ? '，一周一张' : ''),
@@ -2348,7 +2667,17 @@ function kShelfSay(items) {
 }
 
 async function kScreenGuideCard() {
-  const mid = S.me.id;
+  let h = '<div class="appbar">' +
+    '<button class="appbar-back" type="button" data-go="' + kBack('guidecard') + '">' +
+    ic('i-back', 16, 'var(--ink)') + '</button>' +
+    '<span class="appbar-grow"><div class="appbar-title">券和卡</div>' +
+    '<div class="appbar-sub">换来的东西怎么用</div></span></div>';
+  h += await kGuideBodyCard(S.me.id);
+  return kShell({}, h);
+}
+
+/* 「券和卡」正文，两端共用。mid 同 kGuideBodyBox：孩子端是自己，家长端是选中的孩子。 */
+async function kGuideBodyCard(mid) {
   const shop = await kg('/api/shop?member_id=' + mid);
   const st = await kg('/api/tickets/state?member_id=' + mid);
   const cat = await kg('/api/catalog?member_id=' + mid);
@@ -2357,13 +2686,8 @@ async function kScreenGuideCard() {
     .sort((a, b) => (+a.price || 0) - (+b.price || 0));
   const ex = (cat && cat.exchange) || {};
 
-  let h = '<div class="appbar">' +
-    '<button class="appbar-back" type="button" data-go="' + kBack('guidecard') + '">' +
-    ic('i-back', 16, 'var(--ink)') + '</button>' +
-    '<span class="appbar-grow"><div class="appbar-title">券和卡</div>' +
-    '<div class="appbar-sub">换来的东西怎么用</div></span></div>';
-
-  h += '<div class="card">' +
+  let h = '';
+  h += '<div class="card" id="kc-ticket">' +
     '<div class="row-title" style="margin-bottom:6px">六种券，用星星买</div>' +
     '<div class="kd-tklist">' + tickets.map(t => {
       const say = (K_TICKET_SAY[t.code] || (() => t.desc || ''))(t);
@@ -2377,7 +2701,7 @@ async function kScreenGuideCard() {
   // 玩的时间那三条：张数、间隔、收工。全是设置项，能从接口拿的就不写死
   //（收工时间两条在 ticket_use_state 里，见那边的 curfew_school / curfew_weekend）。
   const s = st || {};
-  h += '<div class="card kd-lilac">' +
+  h += '<div class="card kd-lilac" id="kc-play">' +
     '<div class="row-title" style="color:#5B3FD6;margin-bottom:10px">玩的时间怎么用</div>' +
     '<div class="v g7 kd-lilac-p">' +
     '<div class="gd-li">一张 ' + num(s.minutes || 30) + ' 分钟，白天一轮最多 '
@@ -2388,19 +2712,21 @@ async function kScreenGuideCard() {
     + esc(s.curfew_weekend || '22:00') + ' 前停</div>' +
     '</div></div>';
 
-  h += '<div class="card">' +
+  /* 「退回一些星星」不写「一半」：实际返还是普通 8 / 稀有 15 / 传说 40 星尘，
+     跟卡的原值对不上正好一半，写死「一半」是在骗孩子。 */
+  h += '<div class="card" id="kc-card">' +
     '<div class="row-title" style="margin-bottom:10px">道具卡：开箱才有，商店不卖</div>' +
     '<div class="v g7">' +
     '<div class="gd-li">四个等级：普通、稀有、传说、钻石，越往上越难得</div>' +
     '<div class="gd-li">' + esc(kShelfSay(cat && cat.items)) + '</div>' +
-    '<div class="gd-li">快到期会提醒你，没用完的会退回一半星星</div>' +
+    '<div class="gd-li">快到期会提醒你，没用完的会退回一些星星</div>' +
     '<div class="gd-li">重复的卡会变成碎片，攒够 ' + num(ex.pick || 20)
     + ' 片能自己挑一张钻石卡（' + num(ex.random || 10) + ' 片是随机给一张）</div>' +
     '</div></div>';
 
   h += '<div class="kd-hard">' + ic('i-lock', 15, '#B33A2E') +
     '不管拿到什么卡什么券，每天那 7 分照算，谁也不能免掉。</div>';
-  return kShell({}, h);
+  return h;
 }
 
 /* ============================================================ 图鉴 */
@@ -2616,9 +2942,9 @@ CHILD.bind = function () {
   if (ex) ex.addEventListener('click', () => cashSheet());
   const dp = $('#kDep', el);
   if (dp) dp.addEventListener('click', () => kDepositSheet());
-  // 「怎么玩」目录里的五张入口卡。中间三张落在同一屏（宝箱和星星）上，
-  // 各自带一个锚点，进去以后滚到那一段 —— 不能只给一屏，否则点「星星」
-  // 和点「七个宝箱」看到的是同一个页顶。
+  // 「怎么玩」目录里的入口：三张卡、卡下面那些小节、还有「就这三步」那三行，
+  // 全都走这一处。带锚点的（小节）进去以后滚到那一段 —— 不能只给一屏，
+  // 否则点「星星怎么用」和点「七个箱子」看到的是同一个页顶。
   $$('[data-guide]', el).forEach(b => b.addEventListener('click', () =>
     kGoGuide(b.dataset.guide, b.dataset.anchor)));
 
@@ -2669,7 +2995,8 @@ CHILD.bind = function () {
   $$('#view button[data-c]').forEach(b => b.addEventListener('click',
     () => buyCard(b.dataset.c, +b.dataset.p)));
   $$('#view button[data-use]').forEach(b => b.addEventListener('click',
-    () => useItemSheet(b.dataset.use, b.dataset.hid)));
+    () => useItemSheet(b.dataset.use, b.dataset.hid, b.dataset.uicon || '',
+      b.dataset.uname || '')));
   $$('#view button[data-renew]').forEach(b => b.addEventListener('click', async () => {
     const cost = num(+b.dataset.cost || 0);
     askSheet({
@@ -2697,6 +3024,42 @@ CHILD.bind = function () {
       } catch (e) { err(e); }
     });
   }));
+  // 「现在就开始」：那 60 秒是缓冲，不是必须等满的。孩子已经坐好了还让他
+  // 盯着倒计时干等，等于把人绑在屏幕上。点一下立刻开跑，不额外送时间。
+  $$('#view button[data-tkbegin]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      await api('POST', '/api/tickets/start', { request_id: +b.dataset.tkbegin });
+      await render();
+    } catch (e) { b.disabled = false; err(e); }
+  }));
+  // 「知道了」：把玩完了那张存档卡收走。不点也不催 —— 这一下是给自己看的
+  // 收尾，不是交给谁的任务。
+  $$('#view button[data-tkack]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      await api('POST', '/api/tickets/ack', { request_id: +b.dataset.tkack });
+      await render();
+    } catch (e) { b.disabled = false; err(e); }
+  }));
+  // 「提醒他们一下」：答应了还没办的那张，一天只能催一次。催过之后按钮
+  // 就地变成灰的，不用等重新进这一屏才知道自己已经催过了。
+  $$('#view button[data-tkremind]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      await api('POST', '/api/tickets/remind', { request_id: +b.dataset.tkremind });
+      toast('跟他们说了');
+      await render();
+    } catch (e) { b.disabled = false; err(e); }
+  }));
+  // 「今天用过什么」往前翻。空值 = 回到今天。
+  $$('#view button[data-tkday]').forEach(b => b.addEventListener('click', async () => {
+    TK_DAY = b.dataset.tkday || '';
+    await render();
+  }));
+  // 「查看全部」：最近发生那一块的入口。不是 button 而是那行灰字，
+  // 但它是一颗真入口，点击开弹层。
+  $$('#view [data-knews]').forEach(b => b.addEventListener('click', () => kNewsSheet()));
   $$('#view button[data-tk]').forEach(b => {
     if (b.disabled) return;
     b.addEventListener('click', async () => {
@@ -2711,7 +3074,8 @@ CHILD.bind = function () {
         catch (e) { st = { minutes: 0 }; }
       }
       // 库存也得真传：写死 0 的话「要几张」那排只会剩 1 张。
-      ticketSheet(code, b.dataset.tkname || '', +(b.dataset.tkq || 0), st);
+      ticketSheet(code, b.dataset.tkname || '', +(b.dataset.tkq || 0), st,
+        b.dataset.tkicon || '');
     });
   });
   $$('#view button[data-cashok]').forEach(b => b.addEventListener('click', async () => {

@@ -284,7 +284,7 @@ ICONS = [
      '<path d="M39 54h14M39 66h14M67 54h14M67 66h14" stroke="{bg}" stroke-width="3" '
      'stroke-linecap="round"/>'),
 
-    ("dim_vigor", "活力", "维度", "orange", "运动 精力 跑",
+    ("dim_vigor", "活力", "维度", "orange", "吃饭 碗 饭菜 营养",
      '<path d="M68 26 38 68h19l-6 28 27-43H58z" fill="{w}"/>'),
 
     ("dim_bond", "羁绊", "维度", "blush", "家人 关心 一起",
