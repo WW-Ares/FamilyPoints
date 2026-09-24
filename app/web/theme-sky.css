@@ -1,0 +1,195 @@
+/* =========================================================================
+   浅蓝皮肤「晴空」· theme-sky.css（v43）
+   -------------------------------------------------------------------------
+   在「糖果冒险」暖橙之外并存的一套浅蓝皮肤。只换颜色：功能、布局、文案、
+   数字与原色系完全相同，一个像素的布局都不动。
+
+   形态：html 上挂一个 theme-sky 类（注意：挂在 html，不挂 body ——
+   index.html 头部那段防闪 inline script 执行的时候 body 还没解析出来，
+   只能挂 documentElement；JS 切换时也统一挂 html，两边一套选择器）。
+
+   选择器全部写成 `.theme-sky body.kid` 这种形式：特异性 (0,2,1) 高于
+   child-tokens.css 的 body.kid (0,1,1)，也高于 style.css 的 :root。
+   类名摘掉之后所有变量回到原值，一个像素都不留痕。
+
+   --orange 这个名字装着蓝色：变量名沿用原名、值换掉，几百处引用零改动。
+   名字难看，但比改几百处引用安全得多。
+
+   色值与取舍全部来自 docs/浅蓝主题-切换方案.md，那份文档是这套皮肤的
+   唯一口径；要调色先改文档，再回来改这里。
+   ========================================================================= */
+
+/* -------------------------------------------------------------------------
+   一、孩子端 body.kid
+   ------------------------------------------------------------------------- */
+.theme-sky body.kid {
+  --bg-top:  #AEDCFF;
+  --bg-mid:  #DCEEFF;
+  --bg-btm:  #F7FBFF;
+
+  --ink:       #1E3A57;
+  --ink-2:     #56789B;
+  --ink-3:     #8FABC4;
+  --ink-line:  #B8CFE4;
+  --ink-title: #16324C;
+
+  /* 主色换蓝，名字不动（见文件头注释） */
+  --orange:        #3B9EFF;
+  --orange-deep:   #1F7AE0;
+  --orange-light:  #8FC7FF;
+  --blue:          #6FB8FF;
+  --blue-deep:     #2F7FE8;   /* 原值，不动 */
+
+  --card-line: #D9EAF8;
+  --line:      #EDF4FB;
+  --warn-bg:   #FFF6E2;
+  --warn:      #8A6200;
+  --blue-bg:   #E4F1FF;
+
+  --sh-card:    0 7px 16px -4px rgba(31,92,150,.13);
+  --sh-card-sm: 0 6px 14px -4px rgba(31,92,150,.11);
+  --sh-hero:    0 10px 22px -5px rgba(59,158,255,.36);
+  --sh-btn:     0 4px 10px -2px rgba(59,158,255,.42);
+  --sh-tab:     0 4px 10px -2px rgba(59,158,255,.42);
+}
+/* 金币、星尘、心愿粉、等级紫、七档箱材质、ok 绿全部不动：
+   它们是孩子认路的语义色，浅蓝底上反而更跳。见方案文档第二节。 */
+
+/* -------------------------------------------------------------------------
+   二、家长端 body.grown
+   ------------------------------------------------------------------------- */
+.theme-sky body.grown {
+  --bg-top:  #AEDCFF;
+  --bg-mid:  #DCEEFF;
+  --bg-btm:  #F7FBFF;
+  --bg:      #F7FBFF;
+
+  --ink:       #1E3A57;
+  --ink-2:     #56789B;
+  --ink-3:     #8FABC4;
+  --ink-line:  #B8CFE4;
+  --ink-title: #16324C;
+
+  --brand:      #1F7AE0;
+  --brand-dark: #1667BF;
+  --brand-soft: #E4F1FF;
+  --brand-line: #B8CFE4;
+  --orange:        #3B9EFF;
+  --orange-deep:   #1F7AE0;
+  --orange-light:  #8FC7FF;
+  --grad-tab-a: var(--orange-light);
+  --grad-tab-b: var(--orange-deep);
+
+  --track: #D6E6F5;
+
+  /* 羊皮纸两张重点卡换淡蓝宣纸。暖金描边压在冷蓝上会脏，跟着换。 */
+  --parch-a:    #E9F3FF;
+  --parch-b:    #D3E6FA;
+  --parch-line: #7CB3E8;
+
+  --card-line: #D9EAF8;
+  --line:      #EDF4FB;
+  --divider:   #EDF4FB;
+  --field:     #F5F9FF;
+  --seg-bg:    #EAF3FB;
+
+  --dash:    #B9CBDD;
+  --future:  #EEF5FC;
+  --partial: #CFE6FF;
+
+  --shadow:     #1F5C96;
+  --sh-card:    0 4px 0 rgba(31, 92, 150, .26);
+  --sh-card-sm: 0 3px 0 rgba(31, 92, 150, .20);
+  --sh-card-lg: 0 5px 0 rgba(31, 92, 150, .32);
+  --sh-parch:   0 5px 0 rgba(31, 92, 150, .35);
+  --sh-btn:     0 4px 0 rgba(31, 92, 150, .40);
+  --sh-tab:     0 4px 10px -2px rgba(59,158,255,.42);
+  --sh-soft:    0 3px 10px rgba(31, 92, 150, .07);
+}
+
+/* -------------------------------------------------------------------------
+   三、登录页 body.lg
+   ------------------------------------------------------------------------- */
+.theme-sky body.lg {
+  --bg-top:  #AEDCFF;
+  --bg-mid:  #DCEEFF;
+  --bg-btm:  #F7FBFF;
+
+  --ink:   #1E3A57;
+  --ink-2: #56789B;
+  --ink-3: #8FABC4;
+
+  --orange:      #3B9EFF;
+  --orange-deep: #1F7AE0;
+  --card-line:   #D9EAF8;
+  --field-bg:    #F5F9FF;
+  --cell-off:    #D6E6F5;
+  --key-alt:     #EAF3FB;
+  --shade:       #1F5C96;
+}
+/* 登录页背景渐变在 login.css 里写死了色值，变量盖不住，这里整条重写。 */
+.theme-sky body.lg {
+  background: linear-gradient(180deg, #AEDCFF 0%, #DCEEFF 45%, #F7FBFF 100%) fixed;
+  background-color: #F7FBFF;
+}
+
+/* -------------------------------------------------------------------------
+   四、装饰图换冷色版
+   -------------------------------------------------------------------------
+   三张暖色装饰图（岛、两朵登录页的云）新画了 -sky 后缀的冷色版，
+   源图一个字节没动，皮肤开着才换 URL，摘掉类名就回原图。
+   色相映射：主橙 #FF8A3D→#3B9EFF、浅橙 #FFC46B→#8FC7FF，
+   装饰里的太阳金黄 #FFC93C→#7FBFFF；粉、紫、白、蓝保留。
+   孩子端 deco-stars.svg 本来就是白色星点，浅蓝底上照样成立，不换。 */
+.theme-sky body.grown .g-deco {
+  background-image: url("parent/deco-candy-island-sky.svg");
+}
+.theme-sky .lg-deco.child  { background-image: url("login/deco-child-sky.svg"); }
+.theme-sky .lg-deco.parent { background-image: url("login/deco-parent-sky.svg"); }
+
+/* 家长端顶部暖光是写死的 radial-gradient（暖黄 rgba），冷皮上发黄，整条重写。 */
+.theme-sky body.grown .g-glow {
+  background: radial-gradient(60% 60% at 50% 0%,
+    rgba(255,255,255,.55) 0%, rgba(174,220,255,.20) 50%, rgba(174,220,255,0) 100%);
+}
+
+/* -------------------------------------------------------------------------
+   五、券的米黄件换蓝系（玩完了存档卡 / 券消息行）
+   -------------------------------------------------------------------------
+   存档卡（首页、券包共用 kAckHTML）原来是暖白底 + 米黄图标座 + 暖灰券名签，
+   压在浅蓝底上发闷。券这一类在皮肤里本来就走了蓝（--orange→蓝），
+   这几件跟着券走，不再各自带暖色。「今天用过什么」里的券图标座同理。
+   消息行底色写在 style 里（K_FEED_SRC），只能靠 child.js 加的 fk- 类名
+   加 !important 盖；糖果皮没有这些类选择器，完全不受影响。 */
+.theme-sky body.kid .tk-done { background: #FFFFFF; }
+.theme-sky body.kid .tk-done .icon-box,
+.theme-sky body.kid .tk-used-row .icon-box { background: var(--blue-bg) !important; }
+/* 消息行：券（self）换浅蓝跟图标同族，系统（system）换冷灰蓝 */
+.theme-sky body.kid .kfeed-row.fk-self   { background: var(--blue-bg) !important; }
+.theme-sky body.kid .kfeed-row.fk-system { background: #E9F1F9 !important; }
+.theme-sky body.kid .knews-ic.fk-self    { background: var(--blue-bg) !important; }
+.theme-sky body.kid .knews-ic.fk-system  { background: #E9F1F9 !important; }
+
+/* -------------------------------------------------------------------------
+   六、胶囊提示的对比度（「在做 / 大厅 / 待做 / 先到先得 / 每人一份」…）
+   -------------------------------------------------------------------------
+   这些胶囊原是暖灰底（#F2EDE5 一族）配 --ink-3 文字；蓝皮里 --ink-3 是
+   浅蓝灰，浅底浅字糊成一团。孩子端基础胶囊也是同一个病：奶油底配蓝字。
+   一律改成「浅蓝底 + 深钢蓝字」，跟糖皮「奶油底 + 深橙字」同一个逻辑。
+   金（pill--gold / tk-face 两枚金签）、粉、紫、warn、ok 都是语义色，不动。 */
+.theme-sky body.grown .pill--gray { background: #E9F1F9; color: var(--ink-2); }
+.theme-sky body.grown .tag:not(.gold):not(.ok):not(.warn):not(.blue) { color: #175A9E; }
+.theme-sky body.grown .pill--tag { background: rgba(59, 158, 255, .14); color: #175A9E; }
+.theme-sky body.grown .sband:not(.is-warn):not(.is-bad):not(.is-info) {
+  background: #EAF3FB; color: var(--ink-2);
+}
+
+.theme-sky body.kid .pill { background: #E4F1FF; color: #175A9E; }
+/* 变体各有各的脸，跟在后面原样按住，防上面的基础色漫过去 */
+.theme-sky body.kid .pill--blue   { background: var(--blue-bg);   color: var(--blue-deep); }
+.theme-sky body.kid .pill--purple { background: var(--purple-bg); color: var(--purple-deep); }
+.theme-sky body.kid .pill--pink   { background: var(--pink-bg);   color: var(--pink-dark); }
+.theme-sky body.kid .pill--gray   { background: #E9F1F9; color: var(--ink-2); }
+.theme-sky body.kid .pill--white  { background: rgba(255,255,255,.26); color: #fff; }
+.theme-sky body.kid .tk-face--active .pill,
+.theme-sky body.kid .tk-face--wait .pill { background: #FFF6DF; color: var(--gold-deep); }

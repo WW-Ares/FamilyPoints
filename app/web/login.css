@@ -280,3 +280,23 @@ body.lg #view { padding: 0; padding-bottom: 0; flex: 1; display: flex; }
   .lg-foot { margin-top: 12px; gap: 8px; }
   .lg-cells { margin-top: 8px; }
 }
+
+/* ---------------------------------------------------------- 色样（v43） */
+/* 左下角两颗色卡：糖果橙 / 晴空蓝。颜色写死是故意的 —— 它们是两套皮的
+   「色卡」，得各是各的颜色才认得出哪颗是哪套，跟着皮肤翻就失去意义了。
+   空心描边表示当前生效的那套。开关（家长端设置里 ui.theme_switch）关掉时
+   app.js 压根不渲染这一行。 */
+.lg-theme { align-self: flex-start; display: flex; gap: 10px; }
+.lg-dot {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid transparent; padding: 0; cursor: pointer;
+  box-shadow: 0 1px 4px rgba(31, 92, 150, .18);
+}
+.lg-dot:first-child { background: #FF8A3D; }
+.lg-dot.d-sky { background: #3B9EFF; }
+.lg-dot.on { border-color: var(--ink-2); }
+
+/* 选人屏：色样和「家长登录」同一行，色块左、入口右，基线对齐。
+   .lg-parent 自带的 align-self:flex-end 是给竖排 lg-foot 用的，行内要还原本位。 */
+.lg-theme-row { display: flex; align-items: center; justify-content: space-between; }
+.lg-theme-row .lg-parent { align-self: center; }

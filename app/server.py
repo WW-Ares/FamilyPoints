@@ -13,6 +13,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import db
+import hashlib
 import engine as E
 import notify
 import api
@@ -160,8 +161,21 @@ class Handler(BaseHTTPRequestHandler):
         ctype = MIME.get(ext, "application/octet-stream")
         with open(full, "rb") as f:
             data = f.read()
-        cache = "no-cache" if ext in (".html", ".js", ".css") else "public, max-age=86400"
-        return self._send(200, data, ctype, headers={"Cache-Control": cache})
+        # 内容指纹。有了它，下面那些 no-cache 的资源才能回 304 而不是每趟整份重下。
+        etag = '"%s-%s"' % (len(data), hashlib.md5(data).hexdigest()[:16])
+        if self.headers.get("If-None-Match") == etag:
+            return self._send(304, b"", ctype, headers={"ETag": etag, "Cache-Control": "no-cache"})
+        # 缓存分三档。图标和清单被系统/桌面按「快照」缓存：iOS 加到主屏幕那一刻
+        # 就拍下图标，安卓装桌面时同样，之后换文件内容它们不会回来问，只有 URL
+        # 变了才更新。所以这两类必须可随时校验（no-cache + ETag），不能压 24 小时；
+        # 换图标时再给 URL 加版本号（index.html 与 site.webmanifest 里的 ?v=）。
+        if ext in (".html", ".js", ".css", ".webmanifest", ".json", ".png", ".ico"):
+            cache = "no-cache"
+        elif ext in (".svg", ".jpg", ".jpeg", ".webp", ".gif"):
+            cache = "public, max-age=3600"
+        else:
+            cache = "public, max-age=86400"
+        return self._send(200, data, ctype, headers={"ETag": etag, "Cache-Control": cache})
 
 
 def main():

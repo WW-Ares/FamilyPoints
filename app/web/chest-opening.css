@@ -1,0 +1,185 @@
+/* 宝箱开箱组件样式（全部类名带 cs- 前缀） */
+
+.cs-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  overflow: visible; /* 白闪和光晕要越出舞台才不会切出方框边，裁切交给全屏遮罩 */
+  /* 舞台自身不再带底色：磨砂交给外层全屏遮罩（.kop-ov），这里只管摆箱子 */
+  --cs-light: #FFD54F;
+  --cs-hole: #F6EAD2;
+  user-select: none;
+}
+
+/* 光柱 */
+.cs-beam {
+  position: absolute; left: 50%; bottom: 46%;
+  width: 150px; height: 46%;
+  transform: translateX(-50%) scaleY(0);
+  transform-origin: bottom center;
+  clip-path: polygon(28% 0, 72% 0, 100% 100%, 0 100%);
+  background: linear-gradient(to top, var(--cs-light), transparent 85%);
+  opacity: .85; filter: blur(1px);
+  pointer-events: none; z-index: 1;
+  transition: transform .4s cubic-bezier(.2, .8, .3, 1), opacity .5s;
+}
+.cs-beam.on { transform: translateX(-50%) scaleY(1); }
+
+/* 开盖光芒：放射细光线 + 扩散环 + 白闪爆点，都以箱子中心为圆心、藏箱子背后
+ * （三个都挂在 .cs-chest 里，z-index:-1 压到箱图后面），尺寸按箱子宽算。 */
+.cs-rays {
+  position: absolute; left: 50%; top: 50%;
+  width: 340%; aspect-ratio: 1; max-width: 640px; max-height: 640px;
+  transform: translate(-50%, -50%) scale(.2);
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg,
+    color-mix(in srgb, var(--cs-light) 85%, #fff) 0deg 1.6deg,
+    transparent 1.6deg 12deg);
+  -webkit-mask-image: radial-gradient(circle, #000 0%, rgba(0,0,0,.55) 38%, transparent 68%);
+  mask-image: radial-gradient(circle, #000 0%, rgba(0,0,0,.55) 38%, transparent 68%);
+  opacity: 0; pointer-events: none; z-index: -1;
+}
+.cs-rays.on { animation: cs-rays-pop .7s ease-out forwards; }
+@keyframes cs-rays-pop {
+  0%   { opacity: 0;   transform: translate(-50%, -50%) scale(.2) rotate(0deg); }
+  25%  { opacity: .95; }
+  100% { opacity: 0;   transform: translate(-50%, -50%) scale(1.25) rotate(18deg); }
+}
+
+.cs-ring {
+  position: absolute; left: 50%; top: 50%;
+  width: 70%; aspect-ratio: 1;
+  transform: translate(-50%, -50%) scale(.2);
+  border-radius: 50%;
+  border: 3px solid var(--cs-light);
+  box-shadow: 0 0 14px var(--cs-light), inset 0 0 10px var(--cs-light);
+  opacity: 0; pointer-events: none; z-index: -1;
+}
+.cs-ring.on { animation: cs-ring-pop .55s ease-out forwards; }
+@keyframes cs-ring-pop {
+  0%   { opacity: .9; transform: translate(-50%, -50%) scale(.2); }
+  100% { opacity: 0;  transform: translate(-50%, -50%) scale(2.2); }
+}
+
+/* 粒子 */
+.cs-fx { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.cs-spark {
+  position: absolute; border-radius: 50%;
+  background: var(--pc, #FFD54F);
+  box-shadow: 0 0 8px var(--pc, #FFD54F);
+  animation: cs-floatup var(--dur, 1.1s) ease-out forwards;
+}
+@keyframes cs-floatup {
+  from { transform: translate(0, 0) scale(1); opacity: 1; }
+  to   { transform: translate(var(--dx, 0), var(--dy, -180px)) scale(.25); opacity: 0; }
+}
+
+/* 白闪：爆点收小、边缘收快，一闪即走，不再糊满一整片 */
+.cs-burst {
+  position: absolute; left: 50%; top: 50%;
+  width: 240%; aspect-ratio: 1; max-width: 720px; max-height: 720px;
+  transform: translate(-50%, -50%) scale(.3);
+  border-radius: 50%;
+  pointer-events: none; opacity: 0; z-index: -1;
+  background: radial-gradient(circle, #fff 0%, #fff 12%, var(--cs-light) 30%, transparent 60%);
+}
+.cs-burst.on { animation: cs-flash .3s ease-out; }
+@keyframes cs-flash {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(.3); }
+  35%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+
+/* 宝箱 */
+.cs-chest {
+  position: absolute; left: 50%; bottom: 15%;
+  width: 44%; max-width: 300px; aspect-ratio: 1;
+  transform: translateX(-50%);
+  z-index: 3; cursor: pointer;
+}
+.cs-chest.idle { animation: cs-bob 2.2s ease-in-out infinite; }
+@keyframes cs-bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%      { transform: translateX(-50%) translateY(-10px); }
+}
+.cs-chest.shaking { animation: cs-shake .55s ease-in-out; }
+@keyframes cs-shake {
+  0%, 100%    { transform: translateX(-50%) rotate(0); }
+  12%, 52%, 88% { transform: translateX(-52%) rotate(-2.4deg); }
+  32%, 70%    { transform: translateX(-48%) rotate(2.4deg); }
+}
+.cs-chest img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: contain;
+}
+.cs-chest .pop { animation: cs-pop .5s cubic-bezier(.2, .9, .3, 1.2); }
+@keyframes cs-pop {
+  0%   { transform: scale(.82); }
+  55%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* 阴影 */
+.cs-shadow {
+  position: absolute; left: 50%; bottom: 12.5%;
+  width: 34%; height: 34px; max-width: 230px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(0, 0, 0, .28) 0%, transparent 70%);
+  z-index: 2;
+}
+
+/* 提示 */
+.cs-hint {
+  position: absolute; left: 50%; bottom: 6%;
+  transform: translateX(-50%);
+  font-size: 13px; color: #7A7468;
+  letter-spacing: 1px; white-space: nowrap;
+  z-index: 4;
+  animation: cs-hint-pulse 1.8s ease-in-out infinite;
+}
+@keyframes cs-hint-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.cs-hint.off { display: none; }
+
+/* 飞出的卡 / 点券（带 ? 暗示未知，具体内容由集成方弹窗展示） */
+.cs-items { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.cs-loot {
+  position: absolute;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: bold; font-size: 13px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  border: 1.5px solid rgba(255, 255, 255, .8);
+}
+.cs-loot.card {
+  width: 26px; height: 36px; border-radius: 5px;
+  background: linear-gradient(160deg, #ffffff 0%, var(--pc, #FFD54F) 55%, color-mix(in srgb, var(--pc, #FFD54F) 65%, #334) 100%);
+  box-shadow: 0 0 10px var(--pc, #FFD54F), 0 0 24px color-mix(in srgb, var(--pc, #FFD54F) 55%, transparent);
+}
+.cs-loot.ticket {
+  width: 42px; height: 24px; border-radius: 4px;
+  position: relative; font-size: 11px;
+  background: linear-gradient(160deg, #ffffff 0%, var(--pc, #FFD54F) 62%);
+  box-shadow: 0 0 10px var(--pc, #FFD54F), 0 0 24px color-mix(in srgb, var(--pc, #FFD54F) 55%, transparent);
+}
+.cs-loot.ticket::before, .cs-loot.ticket::after {
+  content: ""; position: absolute;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--cs-hole, #F6EAD2); top: 50%; transform: translateY(-50%);
+}
+.cs-loot.ticket::before { left: -4px; }
+.cs-loot.ticket::after  { right: -4px; }
+
+/* 重开按钮 */
+.cs-replay {
+  position: absolute; left: 50%; bottom: 5%;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 7;
+  padding: 8px 26px; font-size: 14px; font-weight: 600;
+  color: #161926; background: var(--cs-light);
+  border: none; border-radius: 20px; cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity .3s, transform .3s;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--cs-light) 45%, transparent);
+}
+.cs-replay.on { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }

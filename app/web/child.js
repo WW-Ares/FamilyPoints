@@ -72,7 +72,13 @@ function kGlyph(icon, size) {
   const px = size || 16;
   const tok = String(icon == null ? '' : icon).trim();
   if (tok && ICON_TOKENS[tok]) {
-    // encodeURIComponent：token 来自数据库，万一被塞了斜杠也飞不出 icons/ 这个目录
+    // encodeURIComponent：token 来自数据库，万一被塞了斜杠也飞不出 icons/ 这个目录。
+    // 七档宝箱的图在 candy/chest/（透明 PNG，见 app.js 里 BX_PNG 的说明）。
+    const bx = (typeof BX_PNG !== 'undefined') && BX_PNG[tok];
+    if (bx) {
+      return '<img class="kgly" src="candy/chest/' + bx + '.png" alt="" ' +
+        'width="' + px + '" height="' + px + '" loading="lazy">';
+    }
     return '<img class="kgly" src="icons/' + encodeURIComponent(tok) + '.svg" alt="" ' +
       'width="' + px + '" height="' + px + '" loading="lazy">';
   }
@@ -546,7 +552,9 @@ async function kScreenHome() {
   if (rec.length) {
     h += '<div class="card card--tight kfeed">' + rec.map(x => {
       const s = K_FEED_SRC[x.kind] || K_FEED_SRC.given;
-      return '<div class="kfeed-row" style="background:' + s.bg + '">' +
+      // fk-xx 是给皮肤文件的钩子：底色写在 style 里，蓝皮要换某些来源的
+      // 底色只能靠类名覆盖（!important 压 inline style），糖果皮完全不受影响。
+      return '<div class="kfeed-row fk-' + String(x.kind || '').replace(/[^a-z]/gi, '') + '" style="background:' + s.bg + '">' +
         '<span class="kfeed-ic">' + ic(s.icon, 16, s.fg) + '</span>' +
         '<span class="kfeed-tx">' + esc(x.text) + '</span>' +
         '<span class="kfeed-ts">' + esc(kAgo(x.ts)) + '</span></div>';
@@ -596,7 +604,7 @@ function kNewsSheet() {
   const rowHTML = x => {
     const s = K_FEED_SRC[x.kind] || K_FEED_SRC.given;
     return '<div class="knews-row">' +
-      '<span class="knews-ic" style="background:' + s.bg + '">' +
+      '<span class="knews-ic fk-' + String(x.kind || '').replace(/[^a-z]/gi, '') + '" style="background:' + s.bg + '">' +
       ic(s.icon, 15, s.fg) + '</span>' +
       '<span class="knews-tx">' + esc(x.text) +
       (x.sub ? '<em>' + esc(x.sub) + '</em>' : '') + '</span>' +
@@ -1257,50 +1265,31 @@ function kItemCard(g, i) {
     '</div>';
 }
 
-/* ============================================================ 开箱这一套（v38） */
+/* ============================================================ 开箱这一套 */
 /* 结算只发箱子，箱子里有什么是点开那一刻才抽的。所以开箱是一段有过程的动作，
-   不是一次静默发货：四拍动画，然后铺结果。直购箱付完星尘当场开，走同一段。
-   两条路的差别只在「开头有没有那四拍」，结果屏是同一张 —— 各写一份的话，
-   打出来的箱和买来的箱迟早有一边少显示一样东西。
+   不是一次静默发货：动画，然后铺结果。直购箱付完星尘当场开，走同一段。
+   两条路的结果屏是同一张 —— 各写一份的话，打出来的箱和买来的箱迟早少显示一样。
 
-   v1.11 起这一套摆在屏幕正中，箱子背后一圈光跟着它转：箱子长在正中间才像个
-   开箱，从底下升上来的那张卡片，看着像一条通知。 */
+   v1.14 换成 ChestOpening 组件（web/chest-opening.js，七档共用一条时间轴）：
+   待机浮动 → 抖动蓄力 → 白闪光爆 → 开盖弹跳 → 光柱粒子 → 卡券剪影飞散，
+   档位只决定贴图（candy/chest/chest<N>_{closed,open}.png）、光色和飞出数量。
+   动画结束 onDone 交回来，结果屏照旧由 kOpenResult 接管。
 
-/* 四拍：搬过来 → 晃一晃 → 发光 → 开。总长压在 1.9 秒上下。
-   再长就不像「打开了」，像在下载。返回 Promise，动画走完才 resolve。 */
+   overlay 是自己挂在自己 body 上的全屏层，不走 sheet()：整面磨砂直接透出页面，
+   舞台本身不带底色也不带框。动画一完整层摘掉，再开结果弹层。 */
 function kPlayOpen(tier, boxName) {
   return new Promise(resolve => {
-    sheet('<div class="kop is-in" id="kStage">' +
-      // 光晕外面套一层跟卡片同宽的裁剪刀口：它放大时溢出的那圈本来是全透明的，
-      // 裁掉不损失什么；不裁的话，放大后的圆会撑出弹层的可滚动区域，
-      // 屏幕上就多出横竖两条滚动条（`.sheet-body` 是 overflow-y:auto，横向跟着变 auto）。
-      '<div class="kop-glow"><div class="kop-rays"></div></div>' +
-      '<div class="kop-box" id="kStageIn">' + kGlyph(kBoxIcon(tier), 124) + '</div>' +
-      '<div class="kop-title">' + esc(boxName || kBoxName(tier)) + '</div>' +
-      '<div class="kop-tip" id="kStageTip">把箱子搬过来</div></div>',
-      null, { center: true });
-    const st = $('#kStage'), tip = $('#kStageTip');
-    const beat = (cls, text, ms) => new Promise(r => {
-      if (st) st.className = 'kop ' + cls;
-      if (tip) tip.textContent = text;
-      setTimeout(r, ms);
-    });
-    // 「开！」那一拍整屏白闪一下，下一帧才是结果 —— 这一下是留给「开了」的。
-    const boom = () => {
-      const f = document.createElement('div');
-      f.className = 'kop-flash';
-      document.body.appendChild(f);
-      setTimeout(() => { if (f.parentNode) f.parentNode.removeChild(f); }, 640);
-    };
-    (async () => {
-      await beat('is-in', '把箱子搬过来', 450);
-      await beat('is-shake', '晃一晃，里面有东西在响', 500);
-      await beat('is-glow', '有亮光从缝里冒出来', 500);
-      const burst = beat('is-burst', '开！', 470);
-      boom();
-      await burst;
+    const ov = document.createElement('div');
+    ov.className = 'kop-ov';
+    ov.innerHTML = '<div class="kop-ov-box"></div>';
+    document.body.appendChild(ov);
+    const inst = window.ChestOpening.create(ov.querySelector('.kop-ov-box'),
+      { assetPath: 'candy/chest/', hint: false });
+    inst.play(+tier || 1, () => {
+      ov.classList.add('out');
+      setTimeout(() => { inst.destroy(); if (ov.parentNode) ov.parentNode.removeChild(ov); }, 170);
       resolve();
-    })();
+    });
   });
 }
 
@@ -2399,6 +2388,24 @@ async function kScreenMine() {
     '<span class="grow" style="font-size:12.5px;font-weight:500">退出登录</span>' +
     ic('i-chevron', 16, 'var(--ink-line)') + '</div></div>';
 
+  /* 界面颜色（v43）。家长把 ui.theme_switch 关掉之后这一行整个不渲染：
+     关掉的意思就是「全家锁一套，谁也别切」。色样是全局委托（app.js）绑的，
+     这一行不用单独 bind。样式 .lg-theme / .lg-dot 在 login.css 里 ——
+     登录页那对色块和这里是同一对色卡，共用一份样式，别复制两份。 */
+  if (S.theme && S.theme.switch !== false) {
+    const sky = document.documentElement.classList.contains('theme-sky');
+    h += '<div class="card" style="padding:0;overflow:hidden;margin-top:10px">' +
+      '<div class="hb" style="padding:13px">' +
+      ic('i-palette', 20, 'var(--blue-deep)') +
+      '<span class="grow" style="font-size:12.5px;font-weight:500">界面颜色</span>' +
+      '<span class="lg-theme" role="group" aria-label="界面颜色">' +
+      '<button type="button" class="lg-dot' + (!sky ? ' on' : '') +
+      '" data-ltheme="candy" aria-label="糖果橙"></button>' +
+      '<button type="button" class="lg-dot d-sky' + (sky ? ' on' : '') +
+      '" data-ltheme="sky" aria-label="晴空蓝"></button>' +
+      '</span></div></div>';
+  }
+
   h += '<div class="footnote">' + ic('i-lock', 12, 'var(--ink-line)') +
     '这是你自己的页面 · 爸妈那端不显示等级</div>';
   return kShell({}, h);
@@ -2968,7 +2975,7 @@ CHILD.render = async function () {
       });
     }
     startTkTick();
-    startTicketPoll();
+    startPulse();
   } catch (e) {
     console.error('[kid] ' + S.view + ':', e);
     const msg = String((e && e.message) || e);

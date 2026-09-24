@@ -222,6 +222,17 @@ const ICON_DEFAULT = {
   ticket: 'rw_ticket', card: 'rw_card', dim: 'dim_study', pool: 'sys_pool', item: 'rw_card',
 };
 
+/* 七档宝箱的图换成透明 PNG（candy/chest/，闭合那张当档位图，开盖那张给开箱
+   动画用）。token 还是 bx_wood…bx_perfect 没变 —— 数据库里 box_tier.icon 存的
+   默认值就是这套，名字一换全库都得迁移，犯不上。文件从 icons/<t>.svg 变成
+   candy/chest/chest<N>_closed.png，所以渲染出口要先查这张表。
+   家长换图换成别的 token（bxold_* 或任务/奖励那些）不受影响，照走 icons/。 */
+var BX_PNG = {
+  bx_wood: 'chest1_closed', bx_copper: 'chest2_closed', bx_silver: 'chest3_closed',
+  bx_gold: 'chest4_closed', bx_diamond: 'chest5_closed', bx_king: 'chest6_closed',
+  bx_perfect: 'chest7_closed',
+};
+
 function iconLabel(icon, kind) {
   const t = String(icon == null ? '' : icon).trim() || (ICON_DEFAULT[kind] || '');
   if (!t) return '不加图';
@@ -244,6 +255,11 @@ function glyph(icon, kind, size, cls, eager) {
     // encodeURIComponent：token 来自数据库，万一被塞了斜杠也飞不出 icons/ 这个目录。
     // gly-svg 是给外面那层容器（.dic / .dr-ic 这些）看的：自带的糖果色圆底
     // 已经够看了，别再给它垫一层淡绿背景，方角会从圆的四个角露出来。
+    const bx = BX_PNG[tok];
+    if (bx) {
+      return '<img class="gly gly-svg' + c + '" src="candy/chest/' + bx + '.png" alt="" ' +
+        'width="' + px + '" height="' + px + '"' + (eager ? '' : ' loading="lazy"') + '>';
+    }
     return '<img class="gly gly-svg' + c + '" src="icons/' + encodeURIComponent(tok) + '.svg" alt="" ' +
       'width="' + px + '" height="' + px + '"' + (eager ? '' : ' loading="lazy"') + '>';
   }
@@ -671,6 +687,52 @@ async function pg(path, fallback) {
 }
 
 /* ------------------------------------------------------------------ 启动 */
+/* ---------------------------------------------------------------- 皮肤切换 */
+/* 两套配色（v43）：candy 糖果橙 / sky 晴空蓝。只换颜色，功能布局文案全不动。
+   皮肤类挂在 html 上、不挂 body：index.html 头部那段防闪 inline script
+   执行的时候 body 还没解析出来，只能挂 documentElement，JS 这边跟着挂同一处，
+   theme-sky.css 里那套 .theme-sky body.kid 选择器两种来源都能命中。 */
+const THEME_COLORS = { candy: '#FFD08A', sky: '#AEDCFF' };
+
+function applyTheme(name) {
+  const sky = name === 'sky';
+  document.documentElement.classList.toggle('theme-sky', sky);
+  // 记一份本地：冷启动时防闪脚本抢在 bootstrap 之前用它上色。
+  try { localStorage.setItem('fp.theme', sky ? 'sky' : 'candy'); } catch (e) { }
+  const tc = document.querySelector('meta[name="theme-color"]');
+  if (tc) tc.setAttribute('content', sky ? THEME_COLORS.sky : THEME_COLORS.candy);
+}
+
+/* 切颜色：写服务端（全家一致），成功后本地立刻翻类名。谁都能点 ——
+   登录页没登录时也能点，接口那边不校验身份（颜色碰不到数据）。 */
+async function setUiTheme(name) {
+  try {
+    const r = await api('POST', '/api/ui/theme', { theme: name });
+    if (r && r.ok) {
+      if (S.theme) S.theme.now = name;
+      applyTheme(name);
+      return true;
+    }
+  } catch (e) {
+    // 多半是家长把开关关了。把原因翻出来，顺手把入口收起来。
+    err(e);
+    if (S.theme) S.theme.switch = false;
+    // 登录页（还没登录）重画登录页把色块收掉；登录态里重画当前页就行，
+    // 千万别 renderLogin —— 那会把人整个踢回登录屏。
+    if (!S.me) renderLogin(); else render();
+  }
+  return false;
+}
+
+/* 色样点击走全局委托，绑一次就够：登录页四屏都带这对色块，
+   每次渲染重新绑反而容易漏掉某一屏。 */
+document.addEventListener('click', function (e) {
+  const b = e.target.closest('[data-ltheme]');
+  if (!b) return;
+  e.preventDefault();
+  setUiTheme(b.dataset.ltheme);
+});
+
 async function boot() {
   window.__APP_BOOTED__ = true;   // 供 index.html 的启动探测读，防止白屏无声失败
   // 滚动位置由这个 app 自己管（VIEW_POS 那套）。浏览器那份「回到上次的位置」
@@ -693,6 +755,10 @@ async function boot() {
       pool: b.pool || null, version: b.version || '', needsSetup: !!b.needs_setup };
     // 登录页第一行那句家庭名。设置项 family.name，默认「我们家」。
     S.famName = b.family_name || '我们家';
+    // 两套配色（v43）：现在用哪套（now）+ 允不允许自己切（switch）。
+    // 都在 setting 表里（ui.theme / ui.theme_switch），全家一套，切了所有设备跟着变。
+    S.theme = b.theme || { now: 'candy', switch: true };
+    applyTheme(S.theme.now);
     if (!S.me) {
       // 试一下 cookie 失效的情况：直接进登录页
       renderLogin();
@@ -715,9 +781,9 @@ async function boot() {
        页面从它底下才开始画 —— 值必须等于页面顶部那一档 --bg-top #FFD08A，
        写深橙就是顶部横着一条跟页面对不上的色带。v1.8 只把 index.html 那条
        改了，被这里在启动时又盖回图标那档橙，等于白改，真机上看还是深橙。
-       三处（这条 / index.html / site.webmanifest）必须同一个值，少一处都漏。 */
-    const tc = document.querySelector('meta[name="theme-color"]');
-    if (tc) tc.setAttribute('content', '#FFD08A');
+       三处（这条 / index.html / site.webmanifest）必须同一个值，少一处都漏。
+       v43 起这个值交给 applyTheme 按 skin 取：糖果橙 #FFD08A / 晴空蓝 #AEDCFF。 */
+    applyTheme(S.theme.now);
     if (S.isParent) {
       // hash 里有合法的屏就用它，刷新后还停在原来那一屏；旧屏名在 pPick 里换掉
       S.view = pPick(S.view);
@@ -727,6 +793,7 @@ async function boot() {
       S.view = CHILD.pickView(S.view);
     }
     $('#topbar').style.display = '';
+    $('#tabs').style.display = '';
     renderTabs();
     renderTop();
     await render();
@@ -813,7 +880,24 @@ function lgShell(deco, body) {
     '<div class="lg-inner">' + body + '</div>';
 }
 function lgFoot(extra) {
-  return '<div class="lg-foot">' + (extra || '') +
+  // 左下角那对色样（v43）：现在用哪套就亮哪颗，点了走全局委托那一份。
+  // 家长把切换关了就整个不渲染 —— S.theme 还没回来时按当前 html 类猜一下，
+  // 防闪脚本多半已经把类挂上了，先显示出来，bootstrap 一到自然对齐。
+  const sky = document.documentElement.classList.contains('theme-sky');
+  const dots = (S.theme && S.theme.switch === false) ? '' :
+    '<div class="lg-theme" role="group" aria-label="界面颜色">' +
+    '<button type="button" class="lg-dot' + (!sky ? ' on' : '') +
+    '" data-ltheme="candy" aria-label="糖果橙"></button>' +
+    '<button type="button" class="lg-dot d-sky' + (sky ? ' on' : '') +
+    '" data-ltheme="sky" aria-label="晴空蓝"></button>' +
+    '</div>';
+  // 选人屏把「家长登录」和色样排进同一行（色块左、入口右），别再上下叠两层。
+  if (extra === LG_PARENT_BTN) {
+    return '<div class="lg-foot"><div class="lg-theme-row">' + dots +
+      '<button type="button" class="lg-parent" id="lgPar">家长登录</button></div>' +
+      '<div class="lg-note">' + LG_FOOT + '</div></div>';
+  }
+  return '<div class="lg-foot">' + (extra || '') + dots +
     '<div class="lg-note">' + LG_FOOT + '</div></div>';
 }
 const LG_PARENT_BTN = '<button type="button" class="lg-parent" id="lgPar">家长登录</button>';
@@ -1048,9 +1132,12 @@ function renderLogin() {
   document.body.classList.remove('grown');
   document.body.classList.add('lg');
   $('#topbar').style.display = 'none';
+  // 底栏一并藏掉：#tabs 是 fixed 贴底的一条毛玻璃，innerHTML 清空只剩壳，
+  // 壳也横在登录页底部盖住「家长登录」和脚注 —— 真机上那条奶白带子就是它。
+  $('#tabs').style.display = 'none';
   $('#tabs').innerHTML = '';
   stopTkTick();
-  stopTicketPoll();
+  stopPulse();
   LG_PIN_TAP = null;
   // 版本号不挂在登录页：孩子每天要输好几次密码，屏幕上多一个 v36
   // 只会让人以为还有另一个版本要选。版本在家长端「我的」那一版说明里看。
@@ -1426,7 +1513,7 @@ async function render() {
     }
     renderTop();
     startTkTick();
-    startTicketPoll();
+    startPulse();
   } catch (e) {
     // 渲染挂了整页就是空的，这里不能再无声吞掉。
     // 两个必须保留的动作：① console.error 打出来，巡检靠它抓；
@@ -2550,42 +2637,76 @@ function startTkTick() {
   tkTimer = setInterval(tkRunTick, 1000);
 }
 
-/* 孩子提交完就盯着屏幕等 —— 家长什么时候点同意，他这块得自己翻过去，
-   否则「不知道审核了没」会一直挂在那儿。每 15 秒问一次状态，
-   只有真的变了才重画，不然会把人从正在看的地方弹走。 */
-let tkPollTimer = null;
-let tkSig = null;
-let tkSigView = '';
+/* v44 心跳：有新动静自己重画当前页，不用手动刷。
+   取代原来那个只管券的 15 秒轮询（tkPoll）—— 券的状态签名现在由
+   /api/pulse 在服务端算好一起回来，前端不用为了比对再打一次 tickets/mine。
 
-async function tkPollOnce() {
-  if (!S.me || S.isParent) return;
+   三条规矩，破一条就把人从正在看的地方弹走：
+   ① 只有签名真变了才动。签名里绝不能有自己会变的值（当前时间、剩余秒数），
+      否则每轮都判「变了」，页面十秒抽一次风。
+   ② 正在打字、或者弹层开着的时候不许重画，先记一笔欠账，等空闲了再补。
+   ③ 页面在后台时不问，回到前台立刻补一次。 */
+let pulseTimer = null;
+let pulseSig = null;
+let pulseOwe = false;
+
+async function pulseOnce() {
+  if (!S.me) return;
+  if (document.hidden) return;
+  // 上一轮欠下的重画，等这一轮开头不忙了再还，不用干等间隔。
+  if (pulseOwe && !pulseBusy()) { pulseOwe = false; render(); return; }
   try {
-    const r = await api('GET', '/api/tickets/mine?member_id=' + S.me.id);
-    const sig = JSON.stringify({
-      i: (r.items || []).map(x => [x.id, x.status, x.start_at, x.end_at]),
-      // preparing 要进签名：准备中翻成正在玩的时候，id 和 end_at 都没变，
-      // 光看这两个值以为「什么都没发生」，卡片就不会自己翻过去。
-      p: (r.playing || []).map(x => [x.id, x.end_at, x.preparing ? 1 : 0]),
-    });
-    if (tkSig === null) { tkSig = sig; return; }
-    if (sig !== tkSig) { tkSig = sig; render(); }
+    const data = await api('GET', '/api/pulse');
+    // 主题不进签名比对：换了颜色不用重画整页，html 上类名一翻，
+    // CSS 变量立刻生效，比 render 快也不会把人从当前页弹走。
+    if (data.th && S.theme && data.th !== S.theme.now) {
+      S.theme.now = data.th;
+      applyTheme(data.th);
+    }
+    const sig = JSON.stringify(data);
+    if (pulseSig === null) { pulseSig = sig; return; }
+    if (sig === pulseSig) return;
+    pulseSig = sig;
+    pulseApply();
   } catch (e) { /* 网络抖一下不管，下一轮再说 */ }
 }
 
-function startTicketPoll() {
-  stopTicketPoll();
-  if (S.isParent || !S.me) return;
-  // 只有可能看到券状态的那几页值得轮询。别的页面白问一轮是浪费，也容易把人弹走。
-  // 孩子端的首页（home）和券包页（coupon）也要：券卡就摆在那两屏第一眼，
-  // 等审核从「等同意」变成「正在玩」，得自己翻过来。
-  if (['mine', 'shop', 'week', 'home', 'coupon'].indexOf(S.view) < 0) return;
-  if (tkSigView !== S.view) { tkSigView = S.view; tkSig = null; }
-  tkPollTimer = setInterval(tkPollOnce, 15000);
+function pulseBusy() {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' ||
+            a.tagName === 'SELECT' || a.isContentEditable)) return true;
+  // 半屏弹层（#sheet.on）开着的时候重画，会把人家正在填的东西连着弹层一起冲掉。
+  const sh = $('#sheet');
+  if (sh && sh.classList.contains('on')) return true;
+  return false;
 }
 
-function stopTicketPoll() {
-  if (tkPollTimer) { clearInterval(tkPollTimer); tkPollTimer = null; }
+function pulseApply() {
+  if (pulseBusy()) { pulseOwe = true; return; }
+  render();
 }
+
+function startPulse() {
+  stopPulse();
+  if (!S.me) return;
+  // 家长端 10 秒：待审那几样是「孩子等着的」，慢了他就一直盯着屏幕。
+  // 孩子端 15 秒：那边多是「批没批」这种十几秒内不影响体验的事。
+  if (pulseTimer) return;
+  pulseTimer = setInterval(pulseOnce, S.isParent ? 10000 : 15000);
+}
+
+function stopPulse() {
+  if (pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
+  pulseSig = null;
+  pulseOwe = false;
+}
+
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) return;
+  // 回到前台：后台时攒下的变化不能等到下一个间隔才看见。
+  if (pulseOwe && !pulseBusy()) { pulseOwe = false; render(); }
+  else pulseOnce();
+});
 
 /* 孩子首页的券状态卡（v29）。
    以前它躺在「我的 → 我的券」里：提交了不知道审没审、批了不知道还剩多久，
@@ -6608,6 +6729,7 @@ const GRP_TREE = [
     grps: ['四条红线', '运维与权限'] },
   { n: '通知与推送', sub: '提醒时间、Bark、免打扰', grps: ['通知', '通知与推送'],
     qa: ['i-bell', '家人的手机与推送', '谁收通知、收到哪台设备', 'push'] },
+  { n: '界面与显示', sub: '两套配色、允许谁自己切', grps: ['界面与显示'] },
 ];
 let P_SETGRP = '';   // 空 = 一级（列七组）；非空 = 正在看这一组
 
@@ -6705,6 +6827,17 @@ async function renderAdminSettings(v) {
       toast(r.message); render();
     } catch (e) { err(e); }
   }));
+  // 界面颜色那对色卡（v43）。走 /api/settings 的家长通道：开了双人确认的话
+  // 同样要另一位家长点头，跟改别的设置一个待遇。本地翻色要等真的生效 ——
+  // 消息回来说「已提交待确认」时颜色其实还没变，所以只在 ok: true 才 applyTheme。
+  $$('#view button[data-settheme]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      const r = await api('POST', '/api/settings', { key: 'ui.theme', value: b.dataset.settheme });
+      toast(r.message);
+      if (r.ok && r.message === '已更新') { applyTheme(b.dataset.settheme); }
+      render();
+    } catch (e) { err(e); }
+  }));
   $$('#view button[data-edit]').forEach(b => b.addEventListener('click', () => {
     const key = b.dataset.edit, cur = b.dataset.v;
     pEditSheet(key, cur, () => render());
@@ -6714,6 +6847,19 @@ async function renderAdminSettings(v) {
 function pSetItem(it) {
   const val = typeof it.value === 'object' ? JSON.stringify(it.value) : it.value;
   const ro = it.locked || !it.editable;
+  // ui.theme 不走「点开弹层手输」那一路：颜色是点色卡选的，不是打的。
+  // 色卡样式 .lg-dot 在 login.css —— 跟登录页、孩子端「我的」那两对是同一份。
+  if (it.key === 'ui.theme' && !ro) {
+    const sky = it.value === 'sky';
+    return '<div class="item"><div class="txt"><div class="nm">' + esc(it.label) + '</div>' +
+      '<div class="ds">' + esc(it.note) + '</div></div>' +
+      '<span style="display:flex;gap:8px;align-items:center">' +
+      '<button type="button" class="lg-dot' + (!sky ? ' on' : '') +
+      '" data-settheme="candy" aria-label="糖果橙"></button>' +
+      '<button type="button" class="lg-dot d-sky' + (sky ? ' on' : '') +
+      '" data-settheme="sky" aria-label="晴空蓝"></button>' +
+      '</span></div>';
+  }
   let h = '<div class="item"><div class="txt"><div class="nm">' + esc(it.label) +
     (it.locked ? ' <span class="tag warn">红线</span>' : '') + '</div>' +
     '<div class="ds">' + esc(it.note) + '</div>' +

@@ -745,6 +745,9 @@ table.cal td { padding: 2px; }
 .gly-t { font-weight: 650; color: var(--ink-2); }
 /* SVG 自带彩色圆底，外面那层方角容器就别再垫背景了 */
 .gly-svg.dic, .gly-svg.dr-ic, .gly-svg.mx-ic { background: none; }
+/* 图库图一律按框等比缩：SVG 是正方形看不出差别，七档宝箱换成透明 PNG 后
+   （candy/chest/，闭合 722×603 / 1024×853 不等边），不写这条会被方框拉扁。 */
+.gly-svg, .kgly { object-fit: contain; }
 
 /* ---------- v21 · 选图面板 ---------- */
 .ip-btn {

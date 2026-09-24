@@ -2915,6 +2915,126 @@ def member_news(member_id, *, since=None, until=None, limit=30, offset=0):
             "until": until, "limit": n, "offset": off}
 
 
+def ui_theme():
+    """现在全家用的那套配色（v43）。candy = 糖果橙，sky = 晴空蓝。
+
+    存在 setting 表（ui.theme）。心跳签名里带一份（pulse 的 "th"），
+    谁切了颜色，其他设备下一轮心跳就把类名换过来，不用刷新。
+    """
+    v = str(db.cfg("ui.theme") or "candy")
+    return v if v in ("candy", "sky") else "candy"
+
+
+def ui_theme_switch():
+    """允不允许自己换颜色（设置项 ui.theme_switch）。"""
+    return bool(db.cfg("ui.theme_switch", True))
+
+
+def pulse(member_id=None, is_parent=False):
+    """轮询心跳的签名（v44）。前端每 10~15 秒问一次「有没有变」，
+    只有这份东西跟上一轮不一样才重画当前页。
+
+    两条硬规矩，破一条页面就会自己抽风：
+
+    1. **里面不许有自己会变的值**。当前时间、还剩多少秒、进度百分比都不行 ——
+       它们每轮必然不同，前端会判定「变了」，于是页面每 10 秒重画一次，
+       把人从正在看的地方弹走。券卡那次 preparing 就是这么踩的：光比对
+       id 和 end_at，准备翻成正在玩那一刻两边都没变，卡片反而不动。
+    2. **只取 COUNT / MAX，不 join 正文**。这一条一天要被问几千次，
+       贵一分钱都不行。
+
+    返回的东西按角色分：家长看「待办数 + 未读 + 最新一笔账的时间」，
+    孩子看「最新消息时间 + 未读 + 自己的券状态」。两边都只回签名，不回内容。
+    """
+    # db.query_one 回的是 sqlite3.Row，没有 .get，别顺手写字典那套。
+    def _mx(sql, args=()):
+        r = db.query_one(sql, args)
+        return (r["v"] if r and r["v"] is not None else "")
+
+    if is_parent:
+        # 待办跟 /api/dashboard 数的是同一批（todo_counts 是那一块的唯一来源），
+        # 只是这里不顺便去算成员卡片和星池，省掉大头。
+        out = {"todo": todo_counts(),
+               "unread": int(db.query_one(
+                   "SELECT COUNT(*) c FROM notification"
+                   " WHERE member_id IS NULL AND read_at IS NULL")["c"])}
+        # 家长端的「有日志」= 账本里又多了一笔 / 有任务交上来了。
+        # 取 MAX 不取条数：条数在补数据时会跳，MAX 只在真有新的时才动。
+        # 「有日志」= 这几张表里多了一行。用 MAX(id) 不用 MAX(ts)：
+        # id 只增不减，时间却可能被未来的记录顶死 —— 演示库里就有一批
+        # 18:00 的账，按时间去比，之后任何一笔新账都「不算新」。
+        # 分数那一路额外看 revised_at：改一次分是 UPDATE，id 不动，
+        # 只看 id 的话家长改完孩子那端永远不刷。
+        out["act"] = [
+            _mx("SELECT MAX(id) v FROM ledger"),
+            _mx("SELECT MAX(id) v FROM score_entry"),
+            _mx("SELECT MAX(COALESCE(revised_at, created_at)) v FROM score_entry"),
+            _mx("SELECT MAX(id) v FROM task WHERE submitted_at IS NOT NULL"),
+        ]
+        # 待审券：家长这端最要紧的就是「有孩子递了东西上来」。
+        out["tk"] = [[x["id"], x["member_id"]] for x in ticket_pending_list()]
+        # 主题在签名里带一份：谁切了颜色，别的设备下一轮心跳就跟着换。
+        out["th"] = ui_theme()
+        return out
+
+    mid = int(member_id)
+    out = {
+        # 消息：只取「最新一行」不看条数。条数在补数据时会跳，
+        # 而 MAX(id) 只在真多了一行时才动；时间的坑见上面家长那一段。
+        "news": [
+            _mx("SELECT MAX(id) v FROM ledger WHERE member_id=?", (mid,)),
+            _mx("SELECT MAX(id) v FROM score_entry WHERE member_id=?", (mid,)),
+            _mx("SELECT MAX(COALESCE(revised_at, created_at)) v"
+                " FROM score_entry WHERE member_id=?", (mid,)),
+            _mx("SELECT MAX(id) v FROM task WHERE assignee_id=?", (mid,)),
+            _mx("SELECT MAX(id) v FROM calibration WHERE member_id=?", (mid,)),
+            _mx("SELECT MAX(id) v FROM wish WHERE member_id=?", (mid,)),
+            _mx("SELECT MAX(id) v FROM box_open WHERE member_id=?", (mid,)),
+        ],
+        "unread": int(db.query_one(
+            "SELECT COUNT(*) c FROM notification"
+            " WHERE (member_id=? OR member_id IS NULL) AND read_at IS NULL",
+            (mid,))["c"]),
+    }
+    # 券的签名跟原来那个 15 秒轮询（tkPoll）取的是同一组值，只是搬到服务端算，
+    # 前端不用为了比对再打一次 /api/tickets/mine。
+    lst = my_ticket_list(mid) or []
+    out["tk"] = [[x.get("id"), x.get("status"), x.get("start_at"), x.get("end_at")]
+                 for x in lst]
+    playing = ticket_playing(mid) or []
+    out["play"] = [[x.get("id"), x.get("end_at"), 1 if x.get("preparing") else 0]
+                   for x in playing]
+    out["th"] = ui_theme()
+    return out
+
+
+def todo_counts():
+    """家长端待办的七个数（唯一来源）。
+
+    首页铃铛角标、首页那张「待审核」卡、审核页顶上的计数胶囊、心跳签名，
+    全读这一份，不许在别处再数一遍 —— 数两遍迟早对不上。
+    """
+    pending_tasks = db.query_one(
+        "SELECT COUNT(*) c FROM task WHERE status='submitted'")["c"]
+    pending_ot = db.query_one(
+        "SELECT COUNT(*) c FROM overtime_request WHERE status='pending'")["c"]
+    pending_help = db.query_one(
+        "SELECT COUNT(*) c FROM help_request WHERE verified_at IS NULL")["c"]
+    pending_set = db.query_one(
+        "SELECT COUNT(*) c FROM setting_change WHERE status='pending'")["c"]
+    # 券核销待办会自己过期，先刷一遍再数，免得把已经作废的算进去
+    expire_ticket_requests()
+    pending_ticket = db.query_one(
+        "SELECT COUNT(*) c FROM ticket_request WHERE status='pending'")["c"]
+    pending_card = db.query_one(
+        "SELECT COUNT(*) c FROM card_redeem WHERE status='pending'")["c"]
+    pending_wish = db.query_one(
+        "SELECT COUNT(*) c FROM wish WHERE status='wished'")["c"]
+    return {"tasks": pending_tasks, "overtime": pending_ot, "help": pending_help,
+            "settings": pending_set, "tickets": pending_ticket, "cards": pending_card,
+            "cash": pending_cash_count(), "wishes": pending_wish}
+
+
 # ---------------------------------------------------------------------------
 # 七个维度的报告（v28）：孩子端「分数」页用这一份
 # ---------------------------------------------------------------------------

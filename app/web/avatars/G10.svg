@@ -1,1 +1,26 @@
-<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg"><circle cx="48" cy="48" r="48" fill="#F2E4FF"/><rect x="21" y="40" width="13" height="24" rx="6.5" fill="#C9761F"/><circle cx="27" cy="66" r="9" fill="#C9761F"/><circle cx="30" cy="76" r="7" fill="#C9761F"/><rect x="62" y="40" width="13" height="24" rx="6.5" fill="#C9761F"/><circle cx="69" cy="66" r="9" fill="#C9761F"/><circle cx="66" cy="76" r="7" fill="#C9761F"/><ellipse cx="48" cy="47" rx="25" ry="24" fill="#C9761F"/><ellipse cx="48" cy="54" rx="20.5" ry="21" fill="#FBD1A6"/><ellipse cx="41" cy="52" rx="2.6" ry="3.3" fill="#3A2A1E"/><ellipse cx="55" cy="52" rx="2.6" ry="3.3" fill="#3A2A1E"/><circle cx="42" cy="50.8" r="1" fill="#FFFFFF"/><circle cx="56" cy="50.8" r="1" fill="#FFFFFF"/><ellipse cx="34" cy="59" rx="4.6" ry="2.9" fill="#FF8FB8" opacity="0.5"/><ellipse cx="62" cy="59" rx="4.6" ry="2.9" fill="#FF8FB8" opacity="0.5"/><path d="M44 62.5q4 3 8 0" fill="none" stroke="#C07A45" stroke-width="1.7" stroke-linecap="round"/><path d="M60 24l-9-6v12z" fill="#4EC9A0"/><path d="M68 24l9-6v12z" fill="#4EC9A0"/><circle cx="64" cy="24" r="3.2" fill="#2F9E7A"/></svg>
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="女孩 10 毛线帽">
+  <title>女孩 10 毛线帽</title>
+  <defs><clipPath id="ring-girl-10"><circle cx="48" cy="48" r="47.0"/></clipPath></defs>
+  <g clip-path="url(#ring-girl-10)">
+  <circle cx="48" cy="48" r="47.0" fill="#E0F2F1"/>
+  <path d="M40.5 60 L40.5 77 C40.5 80 55.5 80 55.5 77 L55.5 60 Z" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M15 96 C15 81 28 72 41 72 L48 79 L55 72 C68 72 81 81 81 96 Z" fill="#EF9A9A" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <ellipse cx="24" cy="52" rx="3.6" ry="5.2" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <ellipse cx="72" cy="52" rx="3.6" ry="5.2" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <ellipse cx="48" cy="45" rx="22.5" ry="23" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <path d="M22.5 54 C22.5 27 33 15 48 15 C63 15 73.5 27 73.5 54 L73.5 31 C64 27.5 32 27.5 22.5 31 Z" fill="#7A4A28" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M21 32 C21 16 32 9 48 9 C64 9 75 16 75 32 C75 33.5 66 34.5 48 34.5 C30 34.5 21 33.5 21 32 Z" fill="#FF9BB8" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M20 30 C20 32.5 30 34.5 48 34.5 C66 34.5 76 32.5 76 30 L76 32.5 C76 35 66 37 48 37 C30 37 20 35 20 32.5 Z" fill="#FF9BB8" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <circle cx="48" cy="7" r="4.5" fill="#FF9BB8" stroke="#3A3733" stroke-width="1.9"/>
+  <path d="M35 37.5 C37.5 34.8 41 35 43 37.2" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M61 37.5 C58.5 34.8 55 35 53 37.2" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M48 50 C49.7 52.2 49.7 53.8 47.4 54.3" fill="none" stroke="#3A3733" stroke-width="1.8" stroke-linecap="round"/>
+  <circle cx="39" cy="46" r="3.7" fill="#3A3733"/>
+  <circle cx="57" cy="46" r="3.7" fill="#3A3733"/>
+  <circle cx="40.2" cy="44.7" r="1.35" fill="#FFFFFF"/>
+  <circle cx="58.2" cy="44.7" r="1.35" fill="#FFFFFF"/>
+  <path d="M42 57.5 C44.6 61.5 51.4 61.5 54 57.5" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <ellipse cx="32" cy="51.5" rx="4.6" ry="2.8" fill="#FF9BB8" opacity="0.5"/>
+  <ellipse cx="64" cy="51.5" rx="4.6" ry="2.8" fill="#FF9BB8" opacity="0.5"/>
+  </g>
+</svg>

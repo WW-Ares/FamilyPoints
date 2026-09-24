@@ -155,6 +155,9 @@ def bootstrap(ctx):
         "needs_setup": is_first_run(),
         "holiday": None,
         "pool": None,
+        # 两套配色（v43）。登录页还没登录就要看着它上色，所以放进 bootstrap ——
+        # 这是唯一一个不需要登录就能拿到的接口。
+        "theme": {"now": E.ui_theme(), "switch": E.ui_theme_switch()},
     }
     me = None
     if getattr(ctx, "token", None):
@@ -169,6 +172,31 @@ def bootstrap(ctx):
     out["pool"] = E.pool_progress()
     out["open_notifications"] = len(E.open_notifications(me["id"] if me else None))
     return out
+
+
+@route("POST", "/api/ui/theme")
+def set_ui_theme(ctx):
+    """换界面颜色（v43）。
+
+    登录页左下角那对色块是没登录的时候点的，孩子端「我的」里那一项也是
+    孩子自己点的 —— 所以这里不校验身份。颜色是纯显示，碰不到任何数据，
+    能打开登录页的人本来就看得到家庭名和孩子的脸，多一道锁拦不住谁，
+    只会让「登出状态下切回原来的颜色」这件事做不成。
+
+    家长把 ui.theme_switch 关掉之后这里直接拒绝：那时颜色只认设置页那一项，
+    谁都别想绕过去。
+    """
+    want = str(ctx.need("theme") or "")
+    if want not in ("candy", "sky"):
+        raise ApiError("只有 candy 与 sky 两套")
+    if not E.ui_theme_switch():
+        raise ApiError("家长把切换关了，颜色在家长端设置里指定")
+    me = getattr(ctx, "member", None)
+    ok, msg = db.set_setting("ui.theme", want,
+                             actor_id=me["id"] if me else None)
+    if not ok:
+        raise ApiError(msg)
+    return {"ok": True, "theme": want, "message": msg}
 
 
 @route("POST", "/api/login")

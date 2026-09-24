@@ -696,27 +696,14 @@ def dashboard(ctx):
                     "card_flags": E.card_flags(m["id"], today),
                     "next_tier": snap["next_tier"],
                     "level": lv.get("level"), "level_title": lv.get("title")})
-    pending_tasks = db.query_one(
-        "SELECT COUNT(*) c FROM task WHERE status='submitted'")["c"]
-    pending_ot = db.query_one("SELECT COUNT(*) c FROM overtime_request WHERE status='pending'")["c"]
-    pending_help = db.query_one("SELECT COUNT(*) c FROM help_request WHERE verified_at IS NULL")["c"]
-    pending_set = db.query_one("SELECT COUNT(*) c FROM setting_change WHERE status='pending'")["c"]
-    # 券核销待办会自己过期，所以先刷一遍再数，免得把已经作废的算进去
-    E.expire_ticket_requests()
-    pending_ticket = db.query_one("SELECT COUNT(*) c FROM ticket_request WHERE status='pending'")["c"]
-    pending_card = db.query_one("SELECT COUNT(*) c FROM card_redeem WHERE status='pending'")["c"]
-    # 挂起的心愿也算待办。它一直卡在「等爸爸妈妈定条件」那一句上，
-    # 家长不点，孩子那边永远看不到进度 —— 之前它只在总览的动态里露个脸，
-    # 审核页里没有，等于藏起来了。
-    pending_wish = db.query_one("SELECT COUNT(*) c FROM wish WHERE status='wished'")["c"]
+    # 待办那几个数只在 engine.todo_counts() 里数一遍（心跳签名也读它），
+    # 这里不再自己数 —— 两处各数一遍，迟早对不上。
     return {
         "today": today,
         "is_holiday": bool(E.holiday_at(today)),
         "is_transition": E.is_transition(today),
         "members": out,
-        "todo": {"tasks": pending_tasks, "overtime": pending_ot, "help": pending_help,
-                 "settings": pending_set, "tickets": pending_ticket, "cards": pending_card,
-                 "cash": E.pending_cash_count(), "wishes": pending_wish},
+        "todo": E.todo_counts(),
         "pool": E.pool_progress(),
     }
 

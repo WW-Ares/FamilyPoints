@@ -5,17 +5,26 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#FFD08A">
 <title>家庭积分</title>
-<!-- 图标全套由 tools/build_app_icons.py 生成，改图形改那个脚本重跑，别手改这几个文件。
+<!-- 图标全套由 .tmp/build_icons_v44.js 生成（方案 D），改图形重跑那个脚本，别手改这几个文件。
      svg 给现代浏览器（标签页里带圆角），ico 兜老浏览器，png 给添加到主屏幕。
+     ?v=44 是图标版本号，不是应用版本号：iOS / 安卓把桌面图标按快照缓存，
+     文件内容换了它们不会回来问，只有 URL 变了才更新。换图标时这里的四个 ?v
+     和 site.webmanifest 里三个 src 的 ?v 一起加一。
+
      theme-color 不能写深橙：iOS 加到主屏之后，会拿这个值去画状态栏那一整条
      （59px，就是这台机器的 safe-area-inset-top），页面自己从这一条底下开始画。
      写 #FF8A3D 的话，顶部就横着一条跟页面对不上的橙色，看着像「上面空了一截
      没铺满」。改成 --bg-top 那档 #FFD08A，三个页面（家长端 / 孩子端 / 登录页）
-     顶部本来就是这个色，一条 meta 通吃，安卓地址栏那截也跟着归位。 -->
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="icon" href="favicon.ico" sizes="32x32">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="manifest" href="site.webmanifest">
+     顶部本来就是这个色，一条 meta 通吃，安卓地址栏那截也跟着归位。
+     开了晴空蓝皮肤时 app.js 会把它换成 #AEDCFF。 -->
+<!-- 浅蓝皮肤「晴空」首屏防闪：bootstrap 回来之前，localStorage 里要是记着
+     sky 就先把类挂上，不然开皮肤的孩子冷启动会先闪一下橙再变蓝。
+     类挂在 html 上（此刻 body 还没解析），theme-sky.css 的选择器两种都认。 -->
+<script>try{if(localStorage.getItem('fp.theme')==='sky')document.documentElement.classList.add('theme-sky')}catch(e){}</script>
+<link rel="icon" href="favicon.svg?v=44" type="image/svg+xml">
+<link rel="icon" href="favicon.ico?v=44" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=44">
+<link rel="manifest" href="site.webmanifest?v=44">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="家庭积分">
@@ -27,10 +36,15 @@
      所以家长端是完全不生效的（同一个 index.html，两边共用）。 -->
 <link rel="stylesheet" href="child-tokens.css">
 <link rel="stylesheet" href="child.css">
+<!-- 开箱动画组件（ChestOpening，类名 cs- 前缀）。孩子端点开宝箱那一下的
+     待机 → 抖动 → 光爆 → 开盖 → 卡券飞散全在这里，贴图在 candy/chest/。 -->
+<link rel="stylesheet" href="chest-opening.css">
 <!-- 家长端「糖果冒险 · 角色换位」那套：跟孩子端同一套色板，靠角色语汇区分。
      选择器全挂在 body.grown 下，孩子端不生效。 -->
 <link rel="stylesheet" href="parent-tokens.css">
 <link rel="stylesheet" href="parent.css">
+<!-- 浅蓝皮肤「晴空」。放最后：靠 .theme-sky body.kid 这层选择器压住上面所有皮。 -->
+<link rel="stylesheet" href="theme-sky.css">
 </head>
 <body>
 <!-- 家长端的背景装饰层（云 / 太阳 / 星芒 + 顶部暖光）。放在 #app 外面：
@@ -54,6 +68,7 @@
 <script src="avatars.js"></script>
 <script src="candy-icons.js"></script>
 <script src="parent-icons.js"></script>
+<script src="chest-opening.js"></script>
 <script src="app.js"></script>
 <script src="child.js"></script>
 <script>

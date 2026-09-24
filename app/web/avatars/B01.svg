@@ -1,1 +1,28 @@
-<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg"><circle cx="48" cy="48" r="48" fill="#CDE3FF"/><ellipse cx="48" cy="47" rx="25" ry="24" fill="#3B3240"/><ellipse cx="48" cy="54" rx="20.5" ry="21" fill="#FBD1A6"/><ellipse cx="41" cy="52" rx="2.6" ry="3.3" fill="#3A2A1E"/><ellipse cx="55" cy="52" rx="2.6" ry="3.3" fill="#3A2A1E"/><circle cx="42" cy="50.8" r="1" fill="#FFFFFF"/><circle cx="56" cy="50.8" r="1" fill="#FFFFFF"/><ellipse cx="34" cy="59" rx="4.6" ry="2.9" fill="#FF8FB8" opacity="0.5"/><ellipse cx="62" cy="59" rx="4.6" ry="2.9" fill="#FF8FB8" opacity="0.5"/><path d="M44 62.5q4 3 8 0" fill="none" stroke="#C07A45" stroke-width="1.7" stroke-linecap="round"/></svg>
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="男孩 01 齐刘海">
+  <title>男孩 01 齐刘海</title>
+  <defs><clipPath id="ring-boy-01"><circle cx="48" cy="48" r="47.0"/></clipPath></defs>
+  <g clip-path="url(#ring-boy-01)">
+  <circle cx="48" cy="48" r="47.0" fill="#EADFFB"/>
+  <path d="M40.5 60 L40.5 77 C40.5 80 55.5 80 55.5 77 L55.5 60 Z" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M15 96 C15 81 28 72 41 72 L48 79 L55 72 C68 72 81 81 81 96 Z" fill="#FFC93C" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <defs><clipPath id="cloth-boy-01"><path d="M15 96 C15 81 28 72 41 72 L48 79 L55 72 C68 72 81 81 81 96 Z"/></clipPath></defs>
+  <g clip-path="url(#cloth-boy-01)">
+    <path d="M8 80 H88" stroke="#FFFFFF" stroke-width="5.5" opacity="0.85"/>
+    <path d="M8 90 H88" stroke="#FFFFFF" stroke-width="5.5" opacity="0.85"/>
+  </g>
+  <ellipse cx="24" cy="52" rx="3.6" ry="5.2" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <ellipse cx="72" cy="52" rx="3.6" ry="5.2" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <ellipse cx="48" cy="45" rx="22.5" ry="23" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <path d="M22.5 54 C22.5 27 33 15 48 15 C63 15 73.5 27 73.5 54 L73.5 31 C64 27.5 32 27.5 22.5 31 Z" fill="#7A4A28" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M35 37.5 C37.5 34.8 41 35 43 37.2" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M61 37.5 C58.5 34.8 55 35 53 37.2" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M48 50 C49.7 52.2 49.7 53.8 47.4 54.3" fill="none" stroke="#3A3733" stroke-width="1.8" stroke-linecap="round"/>
+  <circle cx="39" cy="46" r="3.7" fill="#3A3733"/>
+  <circle cx="57" cy="46" r="3.7" fill="#3A3733"/>
+  <circle cx="40.2" cy="44.7" r="1.35" fill="#FFFFFF"/>
+  <circle cx="58.2" cy="44.7" r="1.35" fill="#FFFFFF"/>
+  <path d="M41.5 57.5 C44.2 62.8 51.8 62.8 54.5 57.5 Z" fill="#FFFFFF" stroke="#3A3733" stroke-width="2.1" stroke-linejoin="round"/>
+  <ellipse cx="32" cy="51.5" rx="4.6" ry="2.8" fill="#FF9BB8" opacity="0.5"/>
+  <ellipse cx="64" cy="51.5" rx="4.6" ry="2.8" fill="#FF9BB8" opacity="0.5"/>
+  </g>
+</svg>

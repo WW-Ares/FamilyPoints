@@ -152,6 +152,17 @@ def my_news(ctx):
                          limit=limit, offset=offset)
 
 
+@route("GET", "/api/pulse")
+def pulse(ctx):
+    """心跳（v44）：只回「有没有变」的签名，不回内容。
+
+    前端每 10~15 秒问一次，跟上一轮不一样才重画当前页。家长端看
+    待办数 / 未读 / 最新一笔账，孩子端看最新消息 / 未读 / 券状态。
+    """
+    me = ctx.as_member()
+    return E.pulse(me["id"], is_parent=(me["role"] == "parent"))
+
+
 @route("GET", "/api/dims")
 def dims(ctx):
     """七个维度的报告（v28）：孩子端「分数」页用这一份。

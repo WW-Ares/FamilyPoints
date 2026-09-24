@@ -238,11 +238,13 @@ async function walkTabs(page, tag) {
       });
     }
 
-    // ② theme-color 三处同值，且必须等于页面顶部那档 --bg-top
+    // ② theme-color 四处同值，且必须等于页面顶部那档 --bg-top。
+    //    v1.14 起启动那句换成 applyTheme：candy/sky 两套皮肤各带自己的
+    //    theme-color（THEME_COLORS），断言抓 candy 那个值（默认皮）。
     const g = (s, re) => (s.match(re) || [])[1];
     const top = g(read('parent-tokens.css'), /--bg-top:\s*(#[0-9A-Fa-f]{6})/);
     const meta = g(read('index.html'), /name="theme-color" content="(#[0-9A-Fa-f]{6})"/);
-    const run = g(read('app.js'), /setAttribute\('content', '(#[0-9A-Fa-f]{6})'\)/);
+    const run = g(read('app.js'), /candy:\s*'(#[0-9A-Fa-f]{6})'/);
     const man = g(read('site.webmanifest'), /"theme_color":\s*"(#[0-9A-Fa-f]{6})"/);
     say('   [theme-color] --bg-top ' + top + ' / meta ' + meta + ' / 启动时 ' + run +
       ' / manifest ' + man);
@@ -250,6 +252,9 @@ async function walkTabs(page, tag) {
       bad('[theme-color] 四处不一致（--bg-top ' + top + ' / meta ' + meta + ' / 启动时 ' +
         run + ' / manifest ' + man + '）：iOS 拿这个值画状态栏那 59px，' +
         '不一致就是顶部横着一条跟页面对不上的色带');
+    }
+    if (!/setAttribute\('content',\s*sky \? THEME_COLORS\.sky : THEME_COLORS\.candy\)/.test(read('app.js'))) {
+      bad('[theme-color] app.js 里 applyTheme 没按皮肤切 theme-color，iOS 状态栏会停在旧皮的颜色');
     }
 
     // ③ iOS 输入框字号兜底：聚焦时算出来的字号 < 16px，WKWebView 会把整页放大
@@ -608,15 +613,16 @@ async function walkTabs(page, tag) {
   const boxCols = await page.locator('#view .btcol').count();
   say('   七档: ' + boxCols + ' 列');
   if (boxCols !== 7) bad('[v39] 七档不是 7 列，是 ' + boxCols);
-  /* v1.7：七档的图从雪碧图换成图库那套 bx_*（和家长「给它们换张图」里
-     能挑的是同一批），所以这里认的是 icons/<token>.svg 的地址。
+  /* v1.7：七档的图换成图库那套 bx_*。v1.14 整批换成 candy/chest/ 的 PNG
+     （七张实拍风格的箱子图，开箱动画用同一套），token 不变、文件名按档位编号，
+     所以这里认的是 candy/chest/chest<N>_closed.png 的地址。
      七张必须各不相同 —— 全家长得一个样，这一档和那一档就分不出来了。 */
   const srcs = await page.evaluate(() => Array.from(
     document.querySelectorAll('#view .btcol img')).map(u => u.getAttribute('src')));
   say('   七档图: ' + srcs.join(' '));
   if (srcs.length !== 7) bad('[v1.7] 七档的图不是 7 张，是 ' + srcs.length);
-  if (srcs.some(s => !/^icons\/bx_/.test(s || ''))) {
-    bad('[v1.7] 七档有哪一列没用图库那批宝箱图：' + srcs.join(' '));
+  if (srcs.some(s => !/^candy\/chest\/chest[1-7]_closed\.png$/.test(s || ''))) {
+    bad('[v1.7] 七档有哪一列没用 candy/chest 那批宝箱图：' + srcs.join(' '));
   }
   if (new Set(srcs).size !== srcs.length) bad('[v1.7] 七档宝箱的图有重复：' + srcs.join(' '));
   for (const nm of ['木箱', '铜箱', '银箱', '金箱', '钻石箱', '王者箱', '完美箱']) {
@@ -724,7 +730,9 @@ async function walkTabs(page, tag) {
     }
     say('   待开箱提醒: ' + flat(await alert.innerText()).slice(0, 50));
     await fig.click();
-    await page.waitForTimeout(2700);          // 四拍动画走完，结果铺出来
+    // v1.14：点箱子先走 ChestOpening 整段动画（抖动→开盖→光芒→卡券飞散，
+    // 约 3.4s），onDone 之后才开结果弹层，等待要比四拍时代长。
+    await page.waitForTimeout(5200);
     const openTxt = flat(await page.locator('#sheetBody').innerText());
     say('   开箱结果: ' + openTxt.slice(0, 80));
     if (openTxt.indexOf('开出来了') < 0) {
@@ -2114,9 +2122,10 @@ async function walkTabs(page, tag) {
   const setTxt = await flat(await page.locator('#view').innerText());
   const grpRows = await page.locator('#view [data-setgrp]').count();
   say('   设置页一级: ' + grpRows + ' 组 | ' + setTxt.slice(0, 46));
-  if (grpRows !== 7) bad('[v40] 设置页一级不是 7 组，是 ' + grpRows);
+  /* v1.14：设置新增「界面与显示」一组（皮肤切换开关），一级从 7 组变 8 组。 */
+  if (grpRows !== 8) bad('[v40] 设置页一级不是 8 组，是 ' + grpRows);
   for (const want of ['每天的七分', '周期与假期', '任务与心愿', '奖励与道具',
-    '校准与钱', '红线与运维', '通知与推送']) {
+    '校准与钱', '红线与运维', '通知与推送', '界面与显示']) {
     if (setTxt.indexOf(want) < 0) bad('[v40] 设置页一级缺组「' + want + '」');
   }
   // 每条红线都该还在，只是不再单独占一组
@@ -2130,7 +2139,7 @@ async function walkTabs(page, tag) {
   if (subItems < 10) bad('[v40] 「校准与钱」这一组的项太少：' + subItems);
   if (subTxt.indexOf('补差通道') >= 0) bad('[v40] 设置里还留着「补差通道」那条墓碑');
   await clickSel(page, '#view #pSetBack', '设置二级 返回');
-  if ((await page.locator('#view [data-setgrp]').count()) !== 7) {
+  if ((await page.locator('#view [data-setgrp]').count()) !== 8) {
     bad('[v40] 二级页返回没回到设置页一级');
   }
   await clickSel(page, '#view [data-back]', '设置 返回');

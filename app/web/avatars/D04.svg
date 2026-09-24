@@ -1,1 +1,25 @@
-<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg"><circle cx="48" cy="48" r="48" fill="#E7D8BC"/><ellipse cx="48" cy="47" rx="25" ry="24" fill="#3B3240"/><ellipse cx="48" cy="54" rx="20.5" ry="21" fill="#D69A6B"/><ellipse cx="41" cy="52" rx="2.6" ry="3.3" fill="#3A2A1E"/><ellipse cx="55" cy="52" rx="2.6" ry="3.3" fill="#3A2A1E"/><circle cx="42" cy="50.8" r="1" fill="#FFFFFF"/><circle cx="56" cy="50.8" r="1" fill="#FFFFFF"/><ellipse cx="34" cy="59" rx="4.6" ry="2.9" fill="#FF8FB8" opacity="0.5"/><ellipse cx="62" cy="59" rx="4.6" ry="2.9" fill="#FF8FB8" opacity="0.5"/><path d="M44 62.5q4 3 8 0" fill="none" stroke="#C07A45" stroke-width="1.7" stroke-linecap="round"/><circle cx="41" cy="52" r="7.8" fill="none" stroke="#8B5A32" stroke-width="1.8"/><circle cx="55" cy="52" r="7.8" fill="none" stroke="#8B5A32" stroke-width="1.8"/><path d="M33 52h-5" stroke="#8B5A32" stroke-width="1.8" stroke-linecap="round"/><path d="M63 52h5" stroke="#8B5A32" stroke-width="1.8" stroke-linecap="round"/></svg>
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="爸爸 04 背头领带">
+  <title>爸爸 04 背头领带</title>
+  <defs><clipPath id="ring-dad-04"><circle cx="48" cy="48" r="47.0"/></clipPath></defs>
+  <g clip-path="url(#ring-dad-04)">
+  <circle cx="48" cy="48" r="47.0" fill="#F5EFE3"/>
+  <path d="M40.5 60 L40.5 77 C40.5 80 55.5 80 55.5 77 L55.5 60 Z" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M15 96 C15 81 28 72 41 72 L48 79 L55 72 C68 72 81 81 81 96 Z" fill="#A85D5D" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <defs><clipPath id="cloth-dad-04"><path d="M15 96 C15 81 28 72 41 72 L48 79 L55 72 C68 72 81 81 81 96 Z"/></clipPath></defs>
+  <path d="M48 80 L44.5 86 L48 96 L51.5 86 Z" fill="#E8615A" stroke="#3A3733" stroke-width="1.8" stroke-linejoin="round"/>
+  <ellipse cx="24" cy="52" rx="3.6" ry="5.2" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <ellipse cx="72" cy="52" rx="3.6" ry="5.2" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <ellipse cx="48" cy="45" rx="22.5" ry="23" fill="#FBD3B0" stroke="#3A3733" stroke-width="2.2"/>
+  <path d="M24 50 C24 28 34 17 48 17 C62 17 72 28 72 50 C72 50 70.5 29 63 26.8 C57 24.8 51 30.5 45 30.5 C39 30.5 33 25.2 28 27.2 C25.5 28.6 24 50 24 50 Z" fill="#3B2A22" stroke="#3A3733" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M35 37.5 C37.5 34.8 41 35 43 37.2" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M61 37.5 C58.5 34.8 55 35 53 37.2" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M48 50 C49.7 52.2 49.7 53.8 47.4 54.3" fill="none" stroke="#3A3733" stroke-width="1.8" stroke-linecap="round"/>
+  <circle cx="39" cy="46" r="3.7" fill="#3A3733"/>
+  <circle cx="57" cy="46" r="3.7" fill="#3A3733"/>
+  <circle cx="40.2" cy="44.7" r="1.35" fill="#FFFFFF"/>
+  <circle cx="58.2" cy="44.7" r="1.35" fill="#FFFFFF"/>
+  <path d="M42 57.5 C44.6 61.5 51.4 61.5 54 57.5" fill="none" stroke="#3A3733" stroke-width="2.1" stroke-linecap="round"/>
+  <ellipse cx="32" cy="51.5" rx="4.6" ry="2.8" fill="#FF9BB8" opacity="0.5"/>
+  <ellipse cx="64" cy="51.5" rx="4.6" ry="2.8" fill="#FF9BB8" opacity="0.5"/>
+  </g>
+</svg>
