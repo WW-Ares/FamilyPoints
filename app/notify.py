@@ -433,13 +433,18 @@ def run_scheduled(now_dt=None):
     """每 5 分钟跑一次。每件事自己判「今天做过没有」，靠 meta 表里的日期戳，
     重启不会重复发。"""
     now_dt = now_dt or datetime.now()
-    # 忘打卡兜底刻意排在推送开关前面：它是系统的一笔账，不是一条提醒。
-    # 推送关着（默认关）的时候，家里照样不希望孩子因为大人忘了打分少一天分。
+    # 这三件是账和备份，不是提醒，一律排在推送开关前面：
+    # 推送关着（默认关）的时候，家里照样不希望孩子因为大人忘了打分少一天分，
+    # 也不希望一周结束没人打开页面就永远不结算、快照一直停在重启那一天。
     _sched_missed_score(now_dt)
+    _sched_settle(now_dt)
+    _sched_snapshot(now_dt)
+    # 国家节假日日历不在这里同步。它要出网，而这套系统默认跑在没有外网
+    # 的 Docker 里，自动联网只会换来一堆超时日志。那张表只由家长在设置页
+    # 点「立即更新」来填，见 holiday_cn.sync。
     if not db.cfg("push.enabled", False):
         return
     _sched_daily_score(now_dt)
-    _sched_settle(now_dt)
     _sched_expiring(now_dt)
     _sched_repair(now_dt)
 
@@ -494,7 +499,9 @@ def _sched_settle(now_dt):
 
     结算本身是惰性的（有人打开网页才算），孩子那一周的成绩不能
     取决于家长哪天心血来潮点了一下。这里每天推一次，把它推到该结的时候。
-    结算结果由 settle_cycle 自己写通知，不用在这里再写一遍。
+    「该不该结」由 engine.settle_ready 判：最后一天的账还没落定的时候不结，
+    免得周五那份永远赶不上。结算结果由 settle_cycle 自己写通知，不用在这里
+    再写一遍。
     """
     if not _once_today("push.sched.settle", now_dt):
         return
@@ -504,6 +511,21 @@ def _sched_settle(now_dt):
             E.ensure_settled(r["id"])
         except Exception:
             traceback.print_exc()
+
+
+def _sched_snapshot(now_dt):
+    """每天一份库快照。
+
+    以前 db.snapshot 只有 server.py 启动时那一次调用，进程不重启就再也不
+    生成 —— 09-24 那次重启之后，25、26 两天一份都没有，看着像备份一直在跑，
+    其实停在两天前。挂在这里每天推一次，跟推送开关无关。
+    """
+    if not _once_today("ops.snapshot", now_dt):
+        return
+    try:
+        db.snapshot(int(db.cfg("ops.snapshot_keep_days", 30)))
+    except Exception:
+        traceback.print_exc()
 
 
 def _sched_expiring(now_dt):

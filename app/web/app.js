@@ -107,12 +107,17 @@ bindIconField($('#sheetBody'));
    back 是给「弹层里再弹一层」用的（比如心愿条那个「看看」）：
    取消的时候退回原来那层，而不是把整个弹层关掉。
 
+   line 是标题下面那一条要让人看见的话，单独占一行；加 warn 就换成警示色，
+   用在「不看就点下去会做错事」的地方。它排在说明（hint）前面 ——
+   要紧的那句先出现，别让它藏在小字下面。
+
    按钮位置：做事的那颗在左，取消永远在右，两颗分贴弹层两边。
    手指按错「确认」的代价，比多点一次取消大得多。 */
 function askSheet(o, fn, back) {
   sheet('<h3>' + esc(o.title || '') + '</h3>' +
+    (o.line ? '<div class="callout-line' + (o.warn ? ' is-warn' : '') + '">' +
+      esc(o.line) + '</div>' : '') +
     (o.hint ? '<p class="muted">' + esc(o.hint) + '</p>' : '') +
-    (o.line ? '<div class="callout-line">' + esc(o.line) + '</div>' : '') +
     '<div class="act-row">' +
     '<button type="button" class="btn btn--primary" id="askGo">' +
     esc(o.ok || '确认') + '</button>' +
@@ -907,7 +912,7 @@ function lgWall(onId, slim) {
   const kids = KIDS();
   if (!kids.length) {
     return '<div class="lg-empty">还没有孩子的账号。<br>' +
-      '让管理员在「我的 → 家人账号」里加一个，再回来登录。</div>';
+      '让管理员在「我的 → 家庭和账号」里加一个，再回来登录。</div>';
   }
   return '<div class="lg-wall' + (slim ? ' slim' : '') + '">' + kids.map(k =>
     '<button type="button" class="lg-pick lg-group' +
@@ -1008,7 +1013,7 @@ function lgScreenSetup() {
     '</div>' +
     '<div class="lg-fill"></div>' +
     '<div class="lg-foot"><div class="lg-note wide">这个账号是管理员：能给别人开通账号、' +
-    '能重置别人的密码。其他人现在进不来，等管理员进去以后在「我的 → 家人账号」里一个个开通。</div></div>');
+    '能重置别人的密码。其他人现在进不来，等管理员进去以后在「我的 → 家庭和账号」里一个个开通。</div></div>');
 }
 
 /* ---------------------------------------------------------- 绑定 */
@@ -1026,7 +1031,7 @@ function lgBindWall() {
     if (!k) return;
     if (!k.has_password) {
       // 还没开通过的号：不装死，也不把人往输密码那屏领
-      err({ message: k.name + ' 还没设过密码，让爸妈在「家人账号」里开一个' });
+      err({ message: k.name + ' 还没设过密码，让爸妈在「家庭和账号」里开一个' });
       return;
     }
     lgHash('login/' + k.id);
@@ -1104,7 +1109,7 @@ function lgBindParent() {
   $('#lgForgot').addEventListener('click', () => sheet(
     '<h3>密码忘了怎么办</h3>' +
     '<p class="muted">这套东西没有自助找回，也没有密保问题 —— 规则层就这么定的。</p>' +
-    '<p class="muted">孩子忘了：随便哪个家长进「我的 → 家人账号」里给他重置一个。</p>' +
+    '<p class="muted">孩子忘了：随便哪个家长进「我的 → 家庭和账号」里给他重置一个。</p>' +
     '<p class="muted">家长自己忘了：让另一个管理员给你重置。家里只有一位管理员又忘了，' +
     '只能在 NAS 上停掉容器改一次库。</p>' +
     '<div class="muted" style="margin-top:10px">重置之后他只在本机掉一次登录，别的设备不受影响。</div>'));
@@ -3564,12 +3569,21 @@ function bindTodoActions(TD) {
         // 的话，家长以为点完就在扣时间，孩子还在找平板 —— 那是在骗他。
         const sec = +(TD.tk.start_delay || 0);
         const wait = sec > 0 ? (sec >= 60 ? num(sec / 60) + ' 分钟' : num(sec) + ' 秒') : '';
+        // 这张提交之后当天的身份变过（多半是当天才同步了国家日历），券面值
+        // 跟着变了，但这一张还是按提交时那个数算 —— 得在他按同意之前说。
+        // 说不说在明处：一句话挂在按钮上面那条警示带里，按同意的那颗按钮
+        // 上也再写一遍老面值，有家长真会不看提示就点。（文案与老面值由
+        // 引擎给，见 engine._minutes_change，没变就没有。）
+        const oldNote = x.minutes_note || '';
         return askSheet({
           title: (x.who || '') + ' 想用 ' + num(x.qty) + ' 张' + (x.item || ''),
+          line: oldNote, warn: !!oldNote,
           hint: wait
             ? '点完先给他 ' + wait + ' 准备，之后才开始计时，这段时间不算在券里。'
             : '点完这 ' + num(x.qty) + ' 张券立刻生效，倒计时开始走。',
-          ok: '同意，扣他 ' + num(x.qty) + ' 张券',
+          ok: oldNote
+            ? '同意，按老的 ' + num(x.minutes_then) + ' 分钟/券'
+            : '同意，扣他 ' + num(x.qty) + ' 张券',
         }, async () => {
           await api('POST', '/api/tickets/resolve', { request_id: id, approve: true });
           closeSheet(); await done('同意了');
@@ -4686,10 +4700,10 @@ function bindCal(target, day, rf, boxId) {
 /* 七维那一行。做到是实心圆勾，没做到是空描边 + 划掉的名字。
    可编辑时点一下切换；锁死的那一天点不动（光标不是手型，点了也不变）。
 
-   v37：可编辑分两种。没打分的日子（未打 / 补卡）点一项记一项，不用保存；
-   打过的日子要先点「修改」才动得了，改完按保存，或者按取消退回去。
-   以前一律点一下就生效，改错了只能靠「24 小时内再改回来」兜底 ——
-   那句话在结算前是对的，但在已经打完分的那一屏上，一点就改等于没有确认。 */
+   v37：点一下就生效留下一个没有确认的缝；v43 改成一次打分一次提交。点一下只动界面，
+   落库统一走「提交」：还没打的日子里那颗按钮就是「提交」，打过的日子里先是「修改」
+   （这一格只读），点开才是「提交」「取消」并排。以前一律点一下就生效，改错了只能靠
+   「24 小时内再改回来」兜底，那句话在结算前是对的，在已打完分的那一屏上等于没确认。 */
 function pDimRow(d, editable) {
   const off = d.value === 0;
   return '<div class="dim-row' + (off ? ' is-off' : '') +
@@ -4715,11 +4729,14 @@ function pKidSwitch(target) {
 }
 function pScoreHead(title, target, day, tail, sub2) {
   const kids = KIDS();
+  // tail 为空就是「页头右上角不摆数字」。打分页那份合计挪到「今天做到的吗」
+  // 那一行去了 —— 一处就够，顶上再摆一份是同一件事说两遍。月度统计那份留着。
   return pHead({
     title: title, sub: pDayLine() + ' · ' + (sub2 || '改完就生效') +
       (day === todayStr() ? '' : '　' + day.slice(5)),
     right: pKidSwitch(target) +
-      '<span class="num num--lg" style="font-size:15px">' + (kids.length ? tail : '—') + '</span>',
+      (tail && kids.length
+        ? '<span class="num num--lg" style="font-size:15px">' + tail + '</span>' : ''),
   });
 }
 
@@ -4740,7 +4757,7 @@ async function renderAdminScore(v) {
     (!sc.can_edit ? (sc.scored ? 'locked' : 'overdue') : (sc.scored ? 'modify' : 'unscored'));
   // 正在改的那一屏。点「修改」才进，进去之前这一格是只读的。
   const editing = P_EDIT && state === 'modify';
-  // 未打分 / 补卡：点一项记一项，不用保存。改：只动界面，等保存。
+  // 未打分 / 补卡：点一项只动界面，按「提交」才落库。改：先点「修改」才进得来。
   const tapNow = state === 'unscored' || state === 'backfill';
   const editable = tapNow || editing;
   // 未打分的日子，维度默认算完成（value 由 null 归一成 1），
@@ -4753,7 +4770,7 @@ async function renderAdminScore(v) {
     reason: sc.reason, scored: sc.scored, deadline: sc.deadline || '', editing: editing };
   const sum = () => dims.reduce((a, x) => a + (x.value || 0), 0);
 
-  let h = pScoreHead('打分', target, day, num(sum()) + '/' + num(sc.full), pStateSub(state, editing));
+  let h = pScoreHead('打分', target, day, '', pStateSub(state, editing));
   h += '<div class="seg">' +
     '<button type="button" class="seg-item on" data-seg="score">今日打分</button>' +
     '<button type="button" class="seg-item" data-seg="month">月度统计</button></div>';
@@ -4776,13 +4793,11 @@ async function renderAdminScore(v) {
   h += '<div class="card" style="padding:12px 14px">' +
     '<div class="sec-head" style="margin-bottom:6px">' +
     '<span class="card-title">' + (day === todayStr() ? '今天做到的吗' : '这天做到的吗') + '</span>' +
-    '<span class="caption">' + pDimHint(state, editing) + '</span></div>' +
-    '<div id="pDimList">' + dims.map(d => pDimRow(d, editable)).join('') + '</div>' +
-    '<div class="hr"></div>' +
-    '<div class="sec-head"><span class="caption">合计</span>' +
     '<span><span class="num num--lg" id="pSum">' + num(sum()) + '</span>' +
     '<span class="caption"> / ' + num(sc.full) + '</span></span></div>' +
-    pScoreBtns(state, editing) +
+    '<div id="pDimList">' + dims.map(d => pDimRow(d, editable)).join('') + '</div>' +
+    (pScoreBtns(state, editing) || pScoreNote(state, sc) ? '<div class="hr"></div>' : '') +
+    pScoreBtns(state, editing) + pScoreNote(state, sc) +
     '</div>';
 
   // 额外表现。走「发星星时刻」那一套：必须附一句话，每天最多 2 次。
@@ -4792,8 +4807,6 @@ async function renderAdminScore(v) {
     '<span class="card-title">今天有额外表现</span>' +
     '<span class="caption">填一句话，加 1 分 · 每天最多 2 次</span></div>' +
     '<span class="chev">›</span></div>';
-
-  h += '<p class="footnote footnote--left">' + pScoreFoot(state, sc, editing) + '</p>';
 
   v.innerHTML = h;
 
@@ -4811,7 +4824,8 @@ async function renderAdminScore(v) {
   if (be) be.addEventListener('click', () => pScoreEdit());
   const bc = $('#pCancel');
   if (bc) bc.addEventListener('click', () => { P_EDIT = false; render(); });
-  const bs = $('#pSave');
+  // 两颗都叫「提交」：没打过分那一次，和改完这一下，走的都是同一条保存的路。
+  const bs = $('#pSave') || $('#pSubmit');
   if (bs) bs.addEventListener('click', () => pScoreSave());
   const bn = $('#pBonus');
   if (bn) bn.addEventListener('click', () => exploreSheet());
@@ -4825,7 +4839,7 @@ let P_EDIT = false;        // 打分页是不是停在「改」这一屏
 const P_STATE_TAG = {
   unscored: ['未打', 'pill--gray'], backfill: ['补卡', 'pill--tag'],
   modify: ['修改', 'pill--blue'], overdue: ['超时', 'pill--warn'],
-  locked: ['锁死', 'pill--gray'],
+  locked: ['锁死', 'pill--gray'], settled: ['已结算', 'pill--gray'],
 };
 function pDeadlineText(s) {
   if (!s) return '';
@@ -4833,7 +4847,7 @@ function pDeadlineText(s) {
   return (+p[1]) + '月' + (+p[2]) + '日 ' + s.slice(11, 16);
 }
 function pStateSub(state, editing) {
-  if (state === 'modify') return editing ? '改完按保存' : '打过了';
+  if (state === 'modify') return editing ? '改完按提交' : '打过了';
   if (state === 'unscored') return '还没打分';
   if (state === 'backfill') return '补卡';
   if (state === 'overdue') return '超时，锁死了';
@@ -4845,20 +4859,28 @@ function pStateBand(state, sc, editing) {
   const dl = pDeadlineText(sc.deadline);
   let tone = '', txt = '';
   if (state === 'unscored') {
-    tone = ''; txt = '今天还没打分。' + (dl ? dl + ' 之前补上都算数，' : '') +
+    tone = ''; txt = '七项默认都算做到，没做到的点一下，按提交。' +
+      (dl ? dl + ' 之前补上都算数，' : '') +
       '过点系统按满分补记，并从许愿池罚一笔星尘。';
   } else if (state === 'backfill') {
-    tone = 'is-warn'; txt = '这天还空着，' + (dl ? dl + ' 之前还能补，' : '还能补，') +
+    tone = 'is-warn'; txt = '这天还空着，七项默认都算做到，没做到的点一下，按提交。' +
+      (dl ? dl + ' 之前还能补，' : '还能补，') +
       '过点系统按满分补记并从许愿池罚一笔星尘，之后就锁死了。';
   } else if (state === 'modify') {
     tone = 'is-info'; txt = editing
-      ? '改完按保存才算数，按取消就退回刚才那样。'
-      : '打过了，24 小时内还能改。先点下面的「修改」，改完按保存。';
+      ? '改完按提交才算数，按取消就退回刚才那样。'
+      : '打过了，24 小时内还能改。先点下面的「修改」，改完按提交。';
   } else if (state === 'overdue') {
-    tone = 'is-bad'; txt = esc(sc.reason || '过了第二天 12:00，这天锁死了') +
-      '。要改只能走家长调整。';
+    // 只说到「什么时候锁的」为止。补了多少分、罚了多少、钱去了哪，由下面
+    // 按钮那块位置的那句话讲 —— 两边说同一件事的话，家长要读两遍才发现
+    // 是同一句（以前这里跟后端的 reason 撞过车，屏幕上出现过「要改只能走
+    // 家长调整。要改只能走家长调整。」）。
+    tone = 'is-bad';
+    txt = (dl ? dl + ' 之后' : '过了第二天 12:00') + '这一天的分就落定了，改不了。';
   } else if (state === 'locked') {
-    tone = ''; txt = esc(sc.reason || '这一天的记录已经锁定了');
+    tone = ''; txt = '这一天的记录已经锁定了，改不了。';
+  } else if (state === 'settled') {
+    tone = ''; txt = '这一周的账已经封了，这里只能看。';
   } else {
     return '';                       // 过渡日 / 未来的日子，走下面那条 notice
   }
@@ -4866,30 +4888,57 @@ function pStateBand(state, sc, editing) {
     (t ? '<span class="pill ' + t[1] + '">' + t[0] + '</span>' : '') +
     '<span>' + txt + '</span></div>';
 }
-function pDimHint(state, editing) {
-  if (state === 'unscored' || state === 'backfill') return '没做到的点一下';
-  if (state === 'modify') return editing ? '改完按保存' : '点下面的「修改」才能改';
-  return '这一天的记录已经锁定了';
-}
+/* 底部按钮三种样子：没提交过只有【提交】，提交过只有【修改】，改的时候是
+   【取消】【提交】。取消在左 —— 左边那颗是「算了」，右边那颗是「就这么办」。
+
+   顺带把没打分那几天改成「先勾后交」：七项默认全是满分，全做到的那天一次
+   都不用点，直接按提交；没做到的点掉那几项再交。以前是点一项立刻记一项，
+   加了这颗提交按钮之后那套就自相矛盾了（点第一下其实已经把整周提交了）。 */
 function pScoreBtns(state, editing) {
-  if (state === 'modify' && !editing) {
-    return '<button type="button" class="btn btn--ghost" id="pEdit" style="margin-top:12px">修改</button>';
-  }
   if (editing) {
     return '<div class="act-row" style="margin-top:12px">' +
-      '<button type="button" class="btn btn--primary" style="flex:1" id="pSave">保存</button>' +
-      '<button type="button" class="btn btn--ghost" style="flex:1" id="pCancel">取消</button></div>';
+      '<button type="button" class="btn btn--ghost" style="flex:1" id="pCancel">取消</button>' +
+      '<button type="button" class="btn btn--primary" style="flex:1" id="pSave">提交</button></div>';
+  }
+  if (state === 'unscored' || state === 'backfill') {
+    return '<div class="act-row" style="margin-top:12px">' +
+      '<button type="button" class="btn btn--primary" style="flex:1" id="pSubmit">提交</button></div>';
+  }
+  if (state === 'modify') {
+    return '<div class="act-row" style="margin-top:12px">' +
+      '<button type="button" class="btn btn--gold" style="flex:1" id="pEdit">修改</button></div>';
   }
   return '';
 }
-function pScoreFoot(state, sc, editing) {
-  if (state === 'unscored' || state === 'backfill') {
-    return '点一项记一项，不用保存' +
-      (sc.deadline ? '　' + pDeadlineText(sc.deadline) + ' 前补上都算数' : '');
+
+/* 动不了的那一天不给按钮，按钮那块位置改说一句话：这一天最后成了什么样
+   （补了多少分、罚了多少、还能不能改）。四句话是 WW 先生 09-26 定的原文，
+   一个字不改。罚款那句要照实说：没设许愿池目标的时候是「先记着」，
+   不能写成已经投了。 */
+function pScoreNote(state, sc) {
+  const full = num(sc.full);
+  const wrap = t => '<div class="dim-note">' + t + '</div>';
+  if (state === 'overdue') {
+    const p = sc.penalty;
+    if (p && p.stardust > 0) {
+      return wrap(p.pooled
+        ? '这天没人打分，系统按满分 ' + full + ' 分补上；罚 ' + num(p.stardust) +
+          ' 星尘，已经投进许愿池。'
+        : '这天没人打分，系统按满分 ' + full + ' 分补上。那天还没有许愿池目标，' +
+          num(p.stardust) + ' 星尘罚款已累计。');
+    }
+    return wrap('这天没人打分，系统按满分 ' + full + ' 分补上。要改只能走家长调整。');
   }
-  if (editing) return '改完按保存才算数，按取消就退回刚才那样';
-  if (state === 'modify') return '24 小时内的修改会留一条记录，不删原始流水';
-  return '锁死的这一天改不了，要改走家长调整';
+  if (state === 'locked') {
+    return wrap('这天的分打过了，24 小时已过，改不了。要改走家长调整。');
+  }
+  if (state === 'settled') {
+    return wrap('这个周期已经结算，分和箱子都定了，改不了。要改走家长调整。');
+  }
+  if (state === 'transition') {
+    return wrap('这两天是假期过渡日，不计分。');
+  }
+  return '';
 }
 
 /* 进「改」这一屏。取消不靠存一份快照，直接重拉服务端那一版 ——
@@ -4901,32 +4950,22 @@ function pScoreEdit() {
   render();
 }
 
-/* 点一下维度。两种走法：
-     · 还没打分的日子（未打 / 补卡）：点一项立刻记一项，不用保存，
-       因为那天本来就该赶紧补上，多加一道按钮只会拖。
-     · 改这一屏：只改界面，等保存。改错了按取消就回来了。 */
+/* 点一下维度：只动界面，提交（或保存）那一下才落库。
+
+   以前未打分那几天是「点一项立刻记一项」，理由是那天本来就该赶紧补上。
+   有了提交按钮之后那套就不成立了：点第一下其实已经把整周按满分提交了，
+   底下再摆一颗提交纯属多余。现在统一成先勾后交 —— 七项默认全是满分，
+   全做到的那天一次都不用点，直接按提交。 */
 let pScoreBusy = false;
-async function pScoreTap(el) {
+function pScoreTap(el) {
   const s = S.score;
-  if (!s || pScoreBusy) return;
-  const tapNow = s.state === 'unscored' || s.state === 'backfill';
-  if (!tapNow && !s.editing) return;
+  if (!s) return;
+  if (!s.editing && s.state !== 'unscored' && s.state !== 'backfill') return;
   const d = s.dims.filter(x => x.code === el.dataset.code)[0];
   if (!d) return;
   d.value = d.value === 0 ? 1 : 0;
   pDimPaint(el, d);
   pScoreSum();
-  if (!tapNow) return;                 // 改这一屏只在本地动，保存时才报
-  pScoreBusy = true;
-  try {
-    await api('POST', '/api/score', { member_id: s.target, day: s.day,
-      undone: s.dims.filter(x => x.value === 0).map(x => x.code) });
-  } catch (e) {
-    d.value = d.value === 0 ? 1 : 0;   // 界面上先亮着、后端其实没记上，
-    pDimPaint(el, d);                  // 家长就再也发现不了这一天少了一分
-    pScoreSum();
-    err(e);
-  } finally { pScoreBusy = false; }
 }
 function pScoreSum() {
   const st = $('#pSum');
@@ -4939,12 +4978,18 @@ async function pScoreSave() {
   const s = S.score;
   if (!s || pScoreBusy) return;
   const undone = s.dims.filter(x => x.value === 0).map(x => x.code);
+  const wasEditing = s.editing;
   pScoreBusy = true;
   try {
-    await api('POST', '/api/score',
+    const r = await api('POST', '/api/score',
       { member_id: s.target, day: s.day, undone: undone });
     P_EDIT = false;
-    toast(undone.length ? '改好了，扣掉 ' + undone.length + ' 项' : '改好了，满分');
+    // 补的是周期最后一天的话，后端顺手把这一周结了 —— 说一句，别让家长
+    // 以为还得等到中午。
+    const settled = !!(r && r.settled && r.settled.ok);
+    toast((wasEditing ? '改好了' : '记好了') +
+      (undone.length ? '，扣掉 ' + undone.length + ' 项' : '，满分') +
+      (settled ? '。这一周也一起结算了' : ''));
     await render();
   } catch (e) { err(e); } finally { pScoreBusy = false; }
 }
@@ -5472,11 +5517,11 @@ async function renderAdminRulesCore(v) {
     '<div class="row-title">打分页四态，状态由后端一处给</div>' +
     '<div style="margin-top:12px">' +
     '<div class="kd-bullet"><span class="kd-kw" style="color:#E8722A">未打</span>' +
-    '<span class="kd-ds">今天还没打，点一项记一项，不加保存按钮</span></div>' +
+    '<span class="kd-ds">今天还没打；七项先按满分摆着，点掉他没做到的，按「提交」才记上</span></div>' +
     '<div class="kd-bullet"><span class="kd-kw" style="color:#5B3FD6">补卡</span>' +
-    '<span class="kd-ds">往日欠着；能往回翻 ' + num(backfill) + ' 天，截止次日 12:00</span></div>' +
+    '<span class="kd-ds">往日欠着；能往回翻 ' + num(backfill) + ' 天，截止次日 12:00，同样按「提交」</span></div>' +
     '<div class="kd-bullet"><span class="kd-kw" style="color:#2F7FE8">修改</span>' +
-    '<span class="kd-ds">打过之后 ' + num(cwin) + ' 小时内可改可撤，原记录不删</span></div>' +
+    '<span class="kd-ds">打过之后 ' + num(cwin) + ' 小时内点「修改」重开，改完再按「提交」，原记录不删</span></div>' +
     '<div class="kd-bullet"><span class="kd-kw" style="color:#8A7359">超时</span>' +
     '<span class="kd-ds">过了窗口就锁死，只剩家长调整那条路</span></div>' +
     '</div></div>';
@@ -5588,7 +5633,7 @@ async function renderAdminRulesTicket(v) {
     '<div class="gd-li">一轮上限：白天 ' + num(s.single_max || 3) + ' 张 / 晚间 '
     + num(s.evening_max || 2) + ' 张，加时各 +1</div>' +
     '<div class="gd-li">硬停止判的是结束时间：上学日 ' + esc(s.curfew_school || '21:30')
-    + '，周末假期 ' + esc(s.curfew_weekend || '22:00') + '</div>' +
+    + '，不用上学的日子 ' + esc(s.curfew_weekend || '22:00') + '</div>' +
     '<div class="gd-li">一轮结束休息 ' + num(s.cooldown_minutes || 60)
     + ' 分钟；续费窗口看提交时刻，时段看此刻</div>' +
     '</div></div>';
@@ -6616,15 +6661,54 @@ async function wishSheet() {
   });
 }
 
+/* 国家法定节假日那一块。数据来自国务院的放假安排，每年发一次文（通常前一年
+   11 月）。系统不会自己出网 —— 这套东西跑在没有外网的 Docker 里是常态，
+   自动联网只会换来一堆超时。所以它只由家长点下面那颗按钮来填，这里负责
+   显示「拉到没有、覆盖哪几年、上次什么时候」，外加那颗按钮。
+   拿不到就照实说，不假装一切正常 —— 拿不到意味着调休上班的周末还会按周末算。 */
+function hcalHTML(c) {
+  const y = (c.years || []).map(x => x + ' 年').join('、');
+  if (!c.days) {
+    return '<div class="card"><div class="row-title">国家法定节假日</div>' +
+      '<p class="muted" style="margin:6px 0 0">还没拉过。系统不会自己联网，' +
+      '要你点下面那颗按钮取一次。取不到也不影响打分和结算，' +
+      '只是「调休上班的周末」会继续按周末算。</p></div>';
+  }
+  return '<div class="card"><div class="row-title">国家法定节假日</div>' +
+    '<div class="kv"><span class="k">覆盖</span><span class="v">' + esc(y) + '</span></div>' +
+    '<div class="kv"><span class="k">放假 / 调休上班</span><span class="v">' +
+    num(c.off_days) + ' 天 / ' + num(c.days - c.off_days) + ' 天</span></div>' +
+    '<div class="kv"><span class="k">上次更新</span><span class="v">' +
+    esc((c.last_at || '').slice(5, 16)) + '</span></div></div>';
+}
+
 async function holidaySheet() {
   const d = await api('GET', '/api/holidays');
-  sheet('<h3>假期日历</h3><p class="muted">填一次管一年。假期里维度换成假期版，每天还是 7 分；卡片到期撞上假期会自动顺延，不会在假期开头把东西收走。</p>' +
+  sheet('<h3>假期日历</h3><p class="muted">上面是国家放的假，要手动点一次才拉；下面填的是自家放的（寒暑假、学校自己放的），' +
+      '填一次管一年。假期里维度换成假期版，每天还是 7 分；卡片到期撞上假期会自动顺延，不会在假期开头把东西收走。</p>' +
+    '<div id="hcal">' + hcalHTML(d.calendar || {}) + '</div>' +
+    '<button class="btn wide" id="hsync">立即更新国家日历</button>' +
+    '<p class="muted" style="margin:8px 0 0">不会自动更新。国务院每年 11 月前后发下一年的安排，' +
+    '发完之后点一次就够。点的时候才会联网。</p>' +
+    '<div class="hr"></div>' +
     (d.items.length ? d.items.map(x => '<div class="kv"><span class="k">' + esc(x.name) + '</span><span class="v">' +
       esc(x.start_date) + ' → ' + esc(x.end_date) + '</span></div>').join('') + '<div class="hr"></div>' : '') +
     '<div class="field"><label>名字</label><input id="hn" placeholder="例如：寒假"></div>' +
     '<div class="grid2"><div class="field"><label>开始</label><input id="hs" type="date"></div>' +
     '<div class="field"><label>结束</label><input id="he" type="date"></div></div>' +
     '<button class="btn wide" id="go">加上去</button>', box => {
+      $('#hsync', box).addEventListener('click', async () => {
+        const b = $('#hsync', box);
+        b.disabled = true; b.textContent = '正在取…';
+        try {
+          const r = await api('POST', '/api/holidays/sync');
+          const c = r.calendar || {};
+          $('#hcal', box).innerHTML = hcalHTML(c);
+          toast(c.fetched ? '拿到了 ' + c.fetched + ' 天'
+            : (c.days ? '已经是最新的一份' : '没取到。国务院可能还没发这一年的安排，或者这台机器连不上网'));
+        } catch (e) { err(e); }
+        b.disabled = false; b.textContent = '立即更新国家日历';
+      });
       $('#go', box).addEventListener('click', async () => {
         try {
           const r = await api('POST', '/api/holidays', { name: $('#hn', box).value, start_date: $('#hs', box).value, end_date: $('#he', box).value });
@@ -6718,8 +6802,11 @@ const GRP_TREE = [
   { n: '每天的七分', sub: '满分、维度、星探、修正窗口、求助、忘打卡', grps: ['成员与打分'] },
   // qa = 这一组里除了数字之外还有一个要单独开的东西。原先它们挂在「我的 →
   // 更多」，跟设置页这两组说的是同一件事，两个入口各自漂。
+  // badge: 'holiday' = 国家日历一张都没拉的时候，这一行右边挂个「未同步」。
+  // 它不会自己联网，家长不进二级页也得知道有这么件事没做。
   { n: '周期与假期', sub: '一周从哪天起、多长、假期模式与顺延', grps: ['周期', '假期'],
-    qa: ['i-hourglass', '假期日历', '填一次管一年', 'holiday'] },
+    qa: ['i-hourglass', '假期日历', '国家放的假手动拉一次，自家的假填一次管一年', 'holiday'],
+    badge: 'holiday' },
   { n: '任务与心愿', sub: '奖励上限、自动确认、心愿单件数', grps: ['两套系统'] },
   { n: '奖励与道具', sub: '娱乐券、加时、卡到期、七档门槛、等级表',
     grps: ['券与道具', '宝箱', '星球等级'] },
@@ -6773,10 +6860,12 @@ async function renderAdminSettings(v) {
       GRP_TREE.map(g => {
         const n = d.groups.filter(x => g.grps.indexOf(x.grp) >= 0)
           .reduce((a, x) => a + x.items.length, 0);
+        const badge = g.badge === 'holiday' && !d.holiday_days
+          ? '<span class="tag warn">未同步</span>' : '';
         return '<div class="row" data-setgrp="' + esc(g.n) + '">' +
           '<div class="row-body"><span class="row-title">' + esc(g.n) + '</span>' +
           '<span class="row-sub">' + esc(g.sub) + '</span></div>' +
-          '<span class="sub">' + n + ' 项</span><span class="chev">›</span></div>';
+          badge + '<span class="sub">' + n + ' 项</span><span class="chev">›</span></div>';
       }).join('') + '</div>';
     h += '<button class="btn btn--block btn--quiet" id="iconBtn" style="margin-top:10px">' +
       '给它们换张图</button>';

@@ -38,10 +38,17 @@ def _day_view(member_id, day, ctx):
     # 状态只认引擎那一处（engine.score_day_state）。界面不许自己拿
     # scored / can_edit 再拼一遍，拼出来的标签迟早跟后端能对上的那条不一致。
     st = E.score_day_state(member_id, day)
+    # 这天有没有挨过忘打卡的罚款、那笔钱投进池子没有（pooled）。界面要照实说：
+    # 没设许愿池目标的时候罚款是「先记着」，不能写成已经投了。
+    pen = db.query_one("SELECT * FROM wish_pool_log WHERE kind='penalty' AND day=?"
+                       " ORDER BY id DESC LIMIT 1", (day,))
+    penalty = None
+    if pen:
+        penalty = {"stardust": float(pen["stardust"] or 0), "pooled": bool(pen["counted"])}
     return {"day": day, "mode": mode, "dims": rows, "score": sc, "full": full,
             "scored": bool(existing), "can_edit": st["can_edit"], "reason": st["reason"],
             "state": st["state"], "auto_filled": st["auto_filled"],
-            "deadline": st.get("deadline", ""),
+            "deadline": st.get("deadline", ""), "penalty": penalty,
             "revisions": E.day_revision_flag(member_id, day)}
 
 
@@ -70,7 +77,10 @@ def post_day(ctx):
     db.execute("INSERT INTO audit_log (actor_id, action, target_type, target_id, after_json, ts)"
                " VALUES (?,'score.submit','member',?,?,?)",
                (m["id"], mid, json.dumps({"day": day, "undone": undone}, ensure_ascii=False), db.now()))
-    return {"ok": True, "view": _day_view(mid, day, ctx), "cycle": r["cycle"]}
+    # settled：补的是周期最后一天的话，submit_day 顺手把这一周结了。
+    # 带出去是为了让界面能说一句「这一周也一起结算了」，别让家长以为还要等。
+    return {"ok": True, "view": _day_view(mid, day, ctx), "cycle": r["cycle"],
+            "settled": r.get("settled")}
 
 
 @route("GET", "/api/score/cycle")
@@ -166,7 +176,9 @@ def post_settle(ctx):
                        " ORDER BY start_date LIMIT 1", (mid,))
     if not cyc:
         return {"ok": True, "message": "没有待结算的周期"}
-    r = E.settle_cycle(cyc["id"], operator_id=me["id"])
+    # force：家长是当着界面按下去的，系统不替他改主意，但 settle_cycle 会把
+    # 「最后一天还空着」这句话放在 warn 里带回来。
+    r = E.settle_cycle(cyc["id"], operator_id=me["id"], force=True)
     if not r.get("ok"):
         raise ApiError(r.get("msg", "结算失败"))
     return r
@@ -183,7 +195,8 @@ def post_settle_all(ctx):
         cyc = db.query_one("SELECT * FROM cycle WHERE member_id=? AND status='open'"
                            " ORDER BY start_date LIMIT 1", (m["id"],))
         if cyc:
-            out.append(dict(name=m["name"], result=E.settle_cycle(cyc["id"], operator_id=me["id"])))
+            out.append(dict(name=m["name"],
+                            result=E.settle_cycle(cyc["id"], operator_id=me["id"], force=True)))
     return {"ok": True, "results": out}
 
 

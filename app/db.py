@@ -242,6 +242,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v40(conn)
     _migrate_v41(conn)
     _migrate_v42(conn)
+    _migrate_v43(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -532,7 +533,8 @@ def export_json() -> dict:
     """整库导出，用于一键备份。"""
     tables = ["member", "setting", "dimension", "cycle", "score_entry", "ledger", "ledger_item",
               "item", "holding", "box_tier", "box_open", "explore", "wish", "wish_pool",
-              "wish_pool_entry", "wish_pool_log", "task", "calibration", "holiday", "help_request",
+              "wish_pool_entry", "wish_pool_log", "task", "calibration", "holiday",
+              "calendar_day", "help_request",
               "overtime_request", "notification", "fragment_use", "item_use", "audit_log"]
     out = {"exported_at": now(), "schema_version": seed_data.SCHEMA_VERSION}
     for t in tables:
@@ -1096,6 +1098,41 @@ def _migrate_v42(conn):
     _ensure_column(conn, "ticket_request", "fulfilled_by", "INTEGER")
     _ensure_column(conn, "ticket_request", "remind_at", "TEXT")
     _ensure_column(conn, "ticket_request", "ack_at", "TEXT")
+
+
+def _migrate_v43(conn):
+    """v43：国家法定节假日日历。
+
+    新增 calendar_day 表（DDL 在 schema.sql 里，init_db 会自动建），
+    用来回答「这天放不放假」。跟 holiday 表是两件事，别合并：holiday
+    是家长手填的区间，带着「假期版维度名」和「首尾过渡日不计分」；
+    calendar_day 是从公开数据源拉回来的国家日历，只回答放不放假。
+
+    判定链（engine.is_off_day）：家长填的假期 → 国家日历说放假 →
+    国家日历说调休上班（不放假）→ 周六周日。券面值翻倍和硬停止
+    两处共用它。以前只认最后一条，所以调休上班的周末两头都错。
+
+    存量库不用补任何数据：表是空的，第一次同步会把今年和明年拉回来；
+    在那之前判定退回老行为（只看周末），不会突然把哪天判错。
+
+    另有两处设置项的显示名和说明跟着换口径：判定不再是「周末」，是
+    「不用上学的日子」。seed_data 里改了只管新建的库，存量库里还是老话，
+    留着就是同一件事两套说法。判据带上老文案 —— 哪家自己改过显示名的，
+    不在这句话上的就不动。
+    """
+    conn.execute(
+        "UPDATE setting SET label=?, note=? WHERE key='ticket.weekend_double'"
+        " AND label='周末快乐翻倍'",
+        ("放假的日子翻倍",
+         "默认关。打开后「不用上学的日子」娱乐券面值翻倍（30 分钟变 60）：周末、"
+         "国家法定假日、家长在假期日历里填的寒暑假都算；调休上班的那个周末不算，"
+         "那天翻倍不生效。只放大兑换时长，券的张数、有效期、其他券一律不动。"))
+    conn.execute(
+        "UPDATE setting SET label=?, note=? WHERE key='ticket.curfew_weekend'"
+        " AND label='硬停止（周末与假期）'",
+        ("硬停止（不用上学的日子）",
+         "周末、国家法定假日、家长填的寒暑假用这个，可以比上学日放宽一点。"
+         "调休上班的周末按上学日算，那天要上学。"))
 
 
 if __name__ == "__main__":

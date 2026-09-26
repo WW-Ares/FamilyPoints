@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 import db
 import engine as E
+import holiday_cn
 import seed_data
 from . import ApiError, route
 
@@ -457,7 +458,10 @@ def get_settings(ctx):
                              "label": r["label"], "note": r["note"],
                              "locked": bool(r["locked"]), "editable": bool(r["editable"])})
     pending = db.query("SELECT * FROM setting_change WHERE status='pending' ORDER BY id DESC")
-    return {"groups": groups, "pending": db.to_dicts(pending)}
+    # holiday_days 是给一级列表那个「未同步」角标用的：国家日历一张都没拉
+    # 的时候，家长不进二级页也该看见这件事。它不会自己联网，得有人去点。
+    return {"groups": groups, "pending": db.to_dicts(pending),
+            "holiday_days": holiday_cn.state_of()["days"]}
 
 
 @route("POST", "/api/settings")

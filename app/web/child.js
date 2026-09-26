@@ -1614,7 +1614,7 @@ async function kScreenCoupon() {
       num(st.cooldown_minutes) + ' 分钟' +
       (st.cooldown_left > 0 ? '（还要等 ' + num(st.cooldown_left) + ' 分钟）' : '') +
       '；到点会自动结束，不用自己点' +
-      (st.weekend_double ? '。今天一张券算 ' + num(st.minutes) + ' 分钟，因为是周末' : '') +
+      (st.weekend_double ? '。今天不用上学，一张券算 ' + num(st.minutes) + ' 分钟' : '') +
       '</div></div>';
   }
 
@@ -2778,7 +2778,7 @@ async function kGuideBodyCard(mid) {
     + num(s.single_max || 3) + ' 张，晚上 ' + num(s.evening_max || 2) + ' 张</div>' +
     '<div class="gd-li">中间停超过 ' + num(s.renew_within_minutes || 10)
     + ' 分钟，这一轮就结束，休息 ' + num(s.cooldown_minutes || 60) + ' 分钟再来</div>' +
-    '<div class="gd-li">上学日 ' + esc(s.curfew_school || '21:30') + ' 前要停，周末和假期 '
+    '<div class="gd-li">上学日 ' + esc(s.curfew_school || '21:30') + ' 前要停，不用上学的日子 '
     + esc(s.curfew_weekend || '22:00') + ' 前停</div>' +
     '</div></div>';
 

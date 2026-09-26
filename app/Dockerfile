@@ -12,7 +12,7 @@ RUN apk add --no-cache tzdata \
 
 WORKDIR /srv
 
-COPY server.py db.py engine.py notify.py schema.sql seed_data.py ./
+COPY server.py db.py engine.py notify.py holiday_cn.py schema.sql seed_data.py ./
 COPY api ./api
 COPY web ./web
 

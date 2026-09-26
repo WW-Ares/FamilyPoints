@@ -572,6 +572,36 @@ def is_weekend(day):
     return parse_day(day).weekday() >= 5
 
 
+def is_off_day(day):
+    """这一天是不是「不用上学」的日子。整个系统只认这一个判定。
+
+    从上往下问，命中就停：
+
+      1. 家长手填的假期区间（holiday 表）—— 寒暑假、学校自己放的那几天。
+         全国没有统一数据，国务院的安排里也没有，只能家长填。
+      2. 国家日历说这天放假（calendar_day.is_off = 1）。
+      3. 国家日历说这天调休上班（is_off = 0）—— 哪怕是周六周日，
+         这天孩子要上学。
+      4. 日历里没有这天，那就看是不是周六周日。
+
+    以前只有第 4 条。于是 2026 那六个调休上班的周末（01-04、02-14、
+    02-28、05-09、09-20、10-10）被当成放假：券翻倍、收工放宽到 22:00，
+    而第二天是要上学的。反过来的也一样：端午落在周三，确实放假，
+    却拿不到翻倍。
+
+    券面值翻倍和硬停止两处都只认这一个函数 —— 分开判的话，改口径
+    迟早只改掉一半，那天的账就又说不清了。
+    """
+    if not day:
+        return False
+    if holiday_at(day):
+        return True
+    r = db.query_one("SELECT is_off FROM calendar_day WHERE day=?", (day,))
+    if r is not None:
+        return bool(r["is_off"])
+    return is_weekend(day)
+
+
 def _hhmm(text, fallback=0):
     try:
         h, m = str(text).strip().split(":")
@@ -607,13 +637,15 @@ def _minutes_between(a, b):
 
 
 def curfew_of(day, member_id=None):
-    """这天的硬停止时间（当天第几分钟）。上学日和周末/假期分开。
+    """这天的硬停止时间（当天第几分钟）。上学日和不用上学的日子分开。
+
+    「不用上学」怎么判，全在 is_off_day() 里，跟券翻倍共用同一把尺子。
 
     晚睡卡在这里加进去：它是唯一一张能把这条线往后挪的卡，
     而且给孩子之前就已经限定了 30 分钟额度，红线（不碰安全与健康）
     仍然成立 —— 挪动的是家长自己设的那条线，不是孩子的睡眠。
     """
-    relaxed = day_mode(day) == "holiday" or is_weekend(day)
+    relaxed = is_off_day(day)
     key, dflt = ("ticket.curfew_weekend", "22:00") if relaxed else ("ticket.curfew_school", "21:30")
     base = _hhmm(db.cfg(key, dflt), _hhmm(dflt))
     if member_id:
@@ -731,13 +763,14 @@ def _day_ticket_stats(member_id, item_id, day, exclude_request=None):
 
 
 def weekend_double_on(day):
-    """周末快乐翻倍这一天生效没有。
+    """放假的日子娱乐券翻倍，这一天生效没有。
 
-    开关默认关；开了也只认周六周日，不认假期（写的是「周末」）。
+    开关默认关；开了认「不用上学的日子」，判定全在 is_off_day() 里：
+    家长填的假期、国务院放的假、普通周末都算，调休上班的周末不算。
     判定只写这一处，面值计算和界面提示都调它，免得两处各判一次、
     哪天改了口径只改掉一半。
     """
-    return bool(day and is_weekend(day) and db.cfg("ticket.weekend_double", False))
+    return bool(day and is_off_day(day) and db.cfg("ticket.weekend_double", False))
 
 
 def ticket_minutes(item, day=None):
@@ -747,12 +780,12 @@ def ticket_minutes(item, day=None):
     「娱乐券面值」改掉之后，如果还从 effect_json 读，就成了「设置改了、实际没变」——
     一个会骗人的设置项，比没有这个设置项更糟。
 
-    day 是「这一天用」的意思，不是「这张券哪天的」。周末快乐翻倍只认周六周日，
-    所以同一张券在周五值 30 分钟、周六值 60 分钟。判定压在这一个函数里，
-    是为了让三条读面值的地方（能不能用的快照、发起核销、手上的券列表）
+    day 是「这一天用」的意思，不是「这张券哪天的」。翻倍只认不用上学
+    的日子（见 is_off_day），所以同一张券在周四值 30 分钟、周六值 60 分钟，
+    而调休上班的那个周日还是 30 分钟。判定压在这一个函数里，是为了让
+    三条读面值的地方（能不能用的快照、发起核销、手上的券列表）
     永远说同一个数 —— 分开算的话，孩子会看到「列表写 60、用的时候按 30 扣」。
 
-    假期不翻倍：写的是「周末快乐翻倍」，假期是另一件事，别顺手带上。
     day 为 None 表示没有具体哪天（老调用点），按不翻倍处理。
     """
     if not item:
@@ -861,7 +894,7 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
         # 同意之后要等多久才开始计时（秒）。前端那句「1 分钟后开始」用这个数，
         # 别再写死 60 —— 改成 0 或者 120 的时候界面要跟着变。
         "start_delay": delay,
-        "relaxed": day_mode(day) == "holiday" or is_weekend(day),
+        "relaxed": is_off_day(day),
         # 今天面值是不是翻倍了。界面据这句说清楚「为什么一张券能换 60 分钟」，
         # 不然孩子会以为是系统算错了。
         "weekend_double": weekend_double_on(day) and bool(item and item["code"] == FUN_CODE),
@@ -1302,8 +1335,57 @@ def ack_ticket(request_id, member_id):
     return {"ok": True}
 
 
+def _minutes_change(r, g):
+    """这张券提交之后，当天的身份变了没有。变了就把该说的话和几个数交出去。
+
+    `ticket_request.minutes` 在**申请那一刻**就按当时的面值固化了，批准、
+    计时、扣余额全程读那个字段，不重算 —— 不追溯已经发出去的东西是这个
+    项目的红线，反过来「家长点了同步、孩子正在玩的那 30 分钟突然变 60」
+    才是乱账。代价是孩子页面上可能写着 60、拿到手还是 30，他自己看不明
+    白。所以这句话是在家长按下去之前说的，不是事后找补。
+
+    `relaxed`（当天算不算不用上学的日子）在申请时就存进 gate 快照了，
+    拿它跟此刻比就知道是不是「当天的身份变了」。两边一样但面值不一样，
+    那是家长改了「放假的日子翻倍」那个开关或者券面值，归设置页管，
+    不在这里冒充「身份变了」。
+
+    返回两样：要说的话（note），和这一张每券的老面值（per_then）。
+    后者要写进确认按钮 —— 光靠一行提示，有家长真会不看就点。
+    没变化返回 None。
+    """
+    if is_chore_ticket(r["item_code"]):
+        return None                     # 不带时长的券没有面值这回事
+    if not g.get("ok"):
+        return None                     # 闸门都过不去，眼前的问题不是面值
+    st = g.get("state") or {}
+    qty = float(r["qty"] or 0)
+    per_now = float(st.get("minutes") or 0)
+    if not qty or abs(per_now - float(r["minutes"] or 0) / qty) < 0.01:
+        return None                     # 面值没变
+    try:
+        was = bool(json.loads(r["gate"] or "{}").get("relaxed"))
+    except (ValueError, TypeError):
+        return None
+    now_off = bool(st.get("relaxed"))
+    if was == now_off:
+        return None                     # 面值变了但身份没变，交给设置页说
+    per_then = float(r["minutes"] or 0) / qty
+    return {
+        "note": "这天后来变了，算%s了：新券现在一张 %g 分钟，这一张还是按他提交时的 %g 分钟算。"
+                % ("放假日" if now_off else "上学日", per_now, per_then),
+        "per_then": per_then,
+        "per_now": per_now,
+        "now_off": now_off,
+    }
+
+
 def ticket_pending_list(day=None):
-    """家长侧待处理列表。每条都带上「现在批了还能不能用」，省得批完才发现过点了。"""
+    """家长侧待处理列表。每条都带上「现在批了还能不能用」，省得批完才发现过点了。
+
+    还带一句「这天后来变了，算放假日了……」—— 只在当天身份真的变过、
+    而且面值跟着变了的时候才有，见 _minutes_change。连每券老面值
+    （minutes_then）一起带上，确认按钮上也要写一遍，不靠小字提醒。
+    """
     expire_ticket_requests()
     out = []
     for r in db.query(
@@ -1313,11 +1395,14 @@ def ticket_pending_list(day=None):
             " WHERE tr.status='pending' ORDER BY tr.ts"):
         g = ticket_gate(r["member_id"], r["item_id"], r["qty"], r["day"],
                         submit_at=r["ts"], request_id=r["id"])
+        ch = _minutes_change(r, g) or {}
         out.append({"id": r["id"], "member_id": r["member_id"], "who": r["who"],
                     "item": r["item_name"], "code": r["item_code"], "icon": r["icon"],
                     "qty": r["qty"], "minutes": r["minutes"], "day": r["day"],
                     "note": r["note"], "ts": r["ts"], "expire_at": r["expire_at"],
-                    "can_now": g["ok"], "block_reason": g["msg"]})
+                    "can_now": g["ok"], "block_reason": g["msg"],
+                    "minutes_note": ch.get("note", ""),
+                    "minutes_then": ch.get("per_then", 0)})
     return out
 
 
@@ -1771,7 +1856,7 @@ def score_day_state(member_id, day):
       future     还没到这天
       transition 假期过渡日，不计分
       settled    这个周期已经结算了
-      unscored   今天还没打分，点一项记一项
+      unscored   今天还没打分；七项先按满分摆着，点掉没做到的，按「提交」才落库
       backfill   往日欠着，还在那天的次日 12:00 之前，补得上
       modify     打过了，还在 24 小时修正窗口内，得先点「修改」才动得了
       overdue    过了次日 12:00 还是空的（含系统补记的那些），锁死
@@ -1784,22 +1869,31 @@ def score_day_state(member_id, day):
         return {"state": "future", "can_edit": False, "scored": False,
                 "auto_filled": False, "reason": "还没到这天"}
     cyc = get_or_create_cycle(member_id, day)
-    if cyc and cyc["status"] == "settled":
-        return {"state": "settled", "can_edit": False, "scored": False,
-                "auto_filled": False, "reason": "这个周期已经结算了"}
     existing = day_scores(member_id, day)
     deadline = _missed_deadline(day)
     base = {"deadline": deadline.strftime("%Y-%m-%d %H:%M")}
     if existing:
         auto = any(str(r["note"] or "") == MISSED_NOTE for r in existing.values())
         if auto:
+            # 系统补记的那一天，先于「这一周结算了」说：家长要知道这一天为什么
+            # 是满分的、罚了多少、这钱去了哪 —— 「周期已结算」回答不了这个问题。
+            # 补记之后这一周马上就会结算（settle_ready 放过最后一天），所以这两条
+            # 几乎总是一起成立，只能有一个赢，赢的是信息更多的那条。
             return dict(base, state="overdue", can_edit=False, scored=True,
                         auto_filled=True,
                         reason="这天没人打分，系统按满分补记并罚了款，要改只能走家长调整")
+        if cyc and cyc["status"] == "settled":
+            return dict(base, state="settled", can_edit=False, scored=True,
+                        auto_filled=False, reason="这个周期已经结算了")
         okw, why = score_correct_window(member_id, day)
         return dict(base, state="modify" if okw else "locked", can_edit=okw,
                     scored=True, auto_filled=False,
                     reason="" if okw else why + "，只能走家长调整")
+    if cyc and cyc["status"] == "settled":
+        # 空着的那几天碰上周期已结算：结算完了就没得补了。这一天多半是上周
+        # 中间漏的（最后一天由兜底管，兜底没跑完周期不会结算）。
+        return dict(base, state="settled", can_edit=False, scored=False,
+                    auto_filled=False, reason="这个周期已经结算了")
     backfill = int(db.cfg("score.backfill_days", 2))
     if parse_day(day) < parse_day(today()) - timedelta(days=backfill - 1):
         return dict(base, state="locked", can_edit=False, scored=False,
@@ -1892,7 +1986,14 @@ def submit_day(member_id, day, undone, operator_id=None, note=""):
     # v20：打完分回来问一句「有没有哪条心愿刚够」
     if changed:
         check_wish_ready(member_id)
-    return {"ok": True, "changed": changed, "cycle": cycle_snapshot(cycle["id"])}
+    # 周期最后一天补上分之后，这一周就可以封账了。以前结算只看「end_date 到了
+    # 没有」，于是周六零点一过谁先打开页面谁结算，家长周六上午补的那一份永远
+    # 赶不上（补分截止要到周六 12:00）。现在由提交这一下自己把结算推起来。
+    settled = None
+    if changed:
+        settled = _settle_after_last_day(member_id, day)
+    return {"ok": True, "changed": changed, "cycle": cycle_snapshot(cycle["id"]),
+            "settled": settled}
 
 
 def day_revision_flag(member_id, day):
@@ -3317,8 +3418,47 @@ def has_double_week(member_id, cycle_start):
     return False
 
 
-def settle_cycle(cycle_id, operator_id=None):
-    """周期结算：星尘按本周固定分一次性入账，再按周能量发免费宝箱。"""
+def _last_day_scored(cycle_id):
+    """这一周最后一天有没有固定分（提交过或者被系统补过都算）。"""
+    c = db.query_one("SELECT end_date FROM cycle WHERE id=?", (cycle_id,))
+    if not c:
+        return False
+    n = db.query_one("SELECT COUNT(*) c FROM score_entry WHERE cycle_id=? AND day=?"
+                     " AND is_fixed=1 AND voided=0", (cycle_id, c["end_date"]))["c"]
+    return n > 0
+
+
+def settle_ready(cycle_id):
+    """这一周现在能不能结账。
+
+    等的是「最后一天的账落定了没有」，不是「钟点到了没有」。以前只看
+    end_date < today，于是周六零点一过、谁先打开页面谁结算，而最后一天
+    （周五）的补分截止要到周六 12:00 —— 那一格永远轮不到兜底，孩子白丢
+    一天分，箱子还掉一档。现在放行三条，是「或」不是「且」，缺任何一条
+    都可能把周期挂死：
+      1. 最后一天已经有固定分（提交过、或者被补记过）；
+      2. 最后一天是过渡日，那天不计分，等不到任何提交；
+      3. 已经过了最后一天的次日 12:00 —— 兜底那条线到了，先补一次再结
+         （补的那一步自己会顺手把账结掉）。
+    """
+    c = db.query_one("SELECT * FROM cycle WHERE id=?", (cycle_id,))
+    if not c or c["status"] != "open":
+        return False
+    end = c["end_date"]
+    if is_transition(end):
+        return True
+    if _dtnow() >= _missed_deadline(end):
+        ensure_missed_day(end)        # 先补一次：兜底线程没起、或者这天刚过线
+        return True
+    return _last_day_scored(cycle_id)
+
+
+def settle_cycle(cycle_id, operator_id=None, force=False):
+    """周期结算：星尘按本周固定分一次性入账，再按周能量发免费宝箱。
+
+    force 只给「家长在设置页点了立即结算」那条路：那是他当着界面按下去的，
+    系统不替他改主意，但会把「最后一天还空着」这句话说在返回里。
+    """
     c = recalc_cycle(cycle_id)
     if not c:
         return {"ok": False, "msg": "周期不存在"}
@@ -3326,6 +3466,12 @@ def settle_cycle(cycle_id, operator_id=None):
         return {"ok": False, "msg": PARENT_MSG}
     if c["status"] == "settled":
         return {"ok": False, "msg": "本周期已结算"}
+    warn = ""
+    if not force and not settle_ready(cycle_id):
+        return {"ok": False, "msg": "这一周最后一天（%s）还没落账，等补上分再结算"
+                                    % c["end_date"]}
+    if force and not settle_ready(cycle_id):
+        warn = "%s 还没打分，这样结算它就永远空着了，孩子这周会少一天分" % c["end_date"]
 
     m = db.query_one("SELECT * FROM member WHERE id=?", (c["member_id"],))
     rate = float(db.cfg("rate.fixed_to_stardust", 1))
@@ -3403,15 +3549,28 @@ def settle_cycle(cycle_id, operator_id=None):
     check_wish_ready(c["member_id"])
     return {"ok": True, "cycle": cycle_snapshot(cycle_id), "stardust": net, "offset": offset,
             "forgiven": forgiven, "cleared_minutes": cleared_minutes, "kept_minutes": kept_minutes,
-            "doubled": doubled, "box": box, "auto_opened": auto_opened, "level_up": levels}
+            "doubled": doubled, "box": box, "auto_opened": auto_opened, "level_up": levels,
+            "warn": warn}
 
 
 def ensure_settled(member_id, day=None):
-    """把已经过期但还没结算的周期补结掉（惰性触发，不需要定时任务）。"""
+    """把已经过期、而且最后一天的账已经落定的周期补结掉（惰性触发）。
+
+    多问一句 settle_ready：周期最后一天（默认配置下是周五）家长还能补打到
+    次日 12:00，那一格没落定之前不能封账，否则补分永远赶不上结算。
+    """
     d = day or today()
     rows = db.query("SELECT id FROM cycle WHERE member_id=? AND status='open' AND end_date<?"
                     " ORDER BY start_date", (member_id, d))
-    return [settle_cycle(r["id"]) for r in rows]
+    out = []
+    for r in rows:
+        if not settle_ready(r["id"]):
+            continue
+        now_row = db.query_one("SELECT status FROM cycle WHERE id=?", (r["id"],))
+        if not now_row or now_row["status"] != "open":
+            continue                  # 上面补最后一天那一步顺手结掉了
+        out.append(settle_cycle(r["id"]))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -5720,9 +5879,39 @@ def create_pool(title, target_desc="", target_stardust=0, operator_id=None):
     target_stardust = float(target_stardust or 0)
     if target_stardust <= 0:
         return {"ok": False, "msg": "要攒多少星尘得填一个正数"}
-    return {"ok": True, "pool_id": db.execute(
+    pid = db.execute(
         "INSERT INTO wish_pool (title, target_desc, target_stardust, status, created_at)"
-        " VALUES (?,?,?,'active',?)", (title, target_desc, target_stardust, now()))}
+        " VALUES (?,?,?,'active',?)", (title, target_desc, target_stardust, now()))
+    # 目标是今天才立的，那之前「没处投」的罚款不能就这么算了 —— 一起投进去。
+    flushed = _flush_pending_penalty(pid)
+    if flushed:
+        push_notify(None, "missed_score", "许愿池立起来了",
+                    "之前记下的 %g 星尘忘打卡罚款，已经一起投进去了。" % flushed)
+    return {"ok": True, "pool_id": pid, "penalty_flushed": flushed}
+
+
+def _flush_pending_penalty(pool_id):
+    """把「还没设目标时先记着」的那几笔罚款投进刚建好的池子。
+
+    v30 那时候写的是「等以后设了目标也不补发」，于是没设池子的那些天，
+    家长忘打卡等于什么都没发生，界面连一句话都说不出来。现在金额照记
+    （counted=0 表示欠着），目标一立起来就一并投进去 —— 家长的疏忽不管
+    什么时候都该留下痕迹，孩子那边不亏什么。
+    """
+    rows = db.query("SELECT * FROM wish_pool_log WHERE kind='penalty' AND counted=0"
+                    " AND COALESCE(stardust,0)>0 ORDER BY day, id")
+    if not rows:
+        return 0.0
+    total = round(sum(float(r["stardust"] or 0) for r in rows), 2)
+    if total <= 0:
+        return 0.0
+    days = "、".join(r["day"] for r in rows)
+    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, note, ts)"
+               " VALUES (?,NULL,'penalty',?,?,?)",
+               (pool_id, total, "忘打卡罚款补投：%s" % days, now()))
+    for r in rows:
+        db.execute("UPDATE wish_pool_log SET pool_id=?, counted=1 WHERE id=?", (pool_id, r["id"]))
+    return total
 
 
 def pool_progress(pool_id=None):
@@ -5888,19 +6077,21 @@ def _missed_pool_penalty(day, kids):
     amount = float(MISSED_PENALTY_STARDUST)
 
     if not pool:
-        # 还没设过目标。罚款无处可投，但这件事得留下 —— 日志的作用是让
-        # 家长看见「那天我们两个都忘了」，不是记一笔债。等以后设了目标
-        # 也不补发，孩子没有因为这 100 星尘损失什么。
+        # 还没设过目标。钱没处投，但这笔账得记下来 —— v30 那会儿写的是
+        # 「不补发」，于是没设池子的那些天，家长忘打卡等于什么都没发生，
+        # 界面上连一句话都说不出来。现在改成真累计：金额照样记进日志，
+        # counted=0 表示「还欠着」，等家长设了目标由 create_pool 一起投进去
+        # （_flush_pending_penalty）。家长的疏忽不管什么时候都该留下痕迹。
         db.execute(
             "INSERT INTO wish_pool_log (pool_id, kind, day, member_id, kids_json, kids_days,"
             " stardust, counted, note, ts)"
-            " VALUES (NULL,'penalty',?,NULL,?,?,0,0,?,?)",
-            (day, kids_json, len(kids),
-             "全家忘打卡。当天还没有许愿池目标，%g 星尘罚款没处投" % amount, now()))
+            " VALUES (NULL,'penalty',?,NULL,?,?,?,0,?,?)",
+            (day, kids_json, len(kids), amount,
+             "全家忘打卡。当天还没有许愿池目标，罚 %g 星尘先记着" % amount, now()))
         push_notify(None, "missed_score", "补记 %s：那天没人打分" % day,
                     "%s 这天空着，系统按满分补上了（往回补的历史空白，不是今天的账）。"
-                    "罚款没入池（还没设许愿池目标）。" % "、".join(names))
-        return None
+                    "罚 %g 星尘先记着，等设了许愿池目标一起投进去。" % ("、".join(names), amount))
+        return amount
 
     db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, note, ts)"
                " VALUES (?,NULL,'penalty',?,?,?)",
@@ -5914,6 +6105,51 @@ def _missed_pool_penalty(day, kids):
                 "%s 这天空着，系统按满分补上了（往回补的历史空白，不是今天的账），"
                 "罚 %g 星尘投进许愿池。" % ("、".join(names), amount))
     return amount
+
+
+def _settle_after_last_day(member_id, day):
+    """周期最后一天落了账（提交或补记），这一周就结账。
+
+    见 settle_ready 那段取舍：结算等的是「这一周最后一天的账有没有落定」，
+    不是「钟点到了没有」。所以补记和提交都要走到这里。
+    """
+    c = get_or_create_cycle(member_id, day)
+    if not c or c["status"] != "open":
+        return None
+    if c["end_date"] != day or c["end_date"] >= today():
+        return None                   # 不是最后一天，或者这一天还没过完
+    return settle_cycle(c["id"])
+
+
+def ensure_missed_day(day):
+    """就查这一天：过了次日 12:00 还空着，就补满分、罚款，再看看能不能结账。
+
+    单独拆出这一天，是因为结算前要拿它当最后一道关（settle_ready）：
+    周期最后一天如果还空着，就得先问一句「该补的补了没有」，
+    不能让一只空白的周五被结进账里。
+    """
+    none = {"filled": [], "penalty": [], "settled": []}
+    if not _is_day(day):
+        return none
+    if _dtnow() < _missed_deadline(day):
+        return none                   # 还没到「次日 12:00」
+    if is_transition(day):
+        return none                   # 过渡日不计分，没有「漏打」这回事
+    kids = missed_kids(day)
+    if not kids:
+        return none
+    out = {"filled": [], "penalty": [], "settled": []}
+    for k in kids:
+        _fill_missed_day(k, day)
+        out["filled"].append({"day": day, "member_id": k["id"], "name": k["name"]})
+    amt = _missed_pool_penalty(day, kids)
+    if amt:
+        out["penalty"].append({"day": day, "stardust": amt, "kids": len(kids)})
+    for k in kids:                    # 最后一天补上之后，这一周就能结账了
+        r = _settle_after_last_day(k["id"], day)
+        if r and r.get("ok"):
+            out["settled"].append({"day": day, "member_id": k["id"], "name": k["name"]})
+    return out
 
 
 def ensure_missed_scores(day=None, lookback_days=None):
@@ -5930,25 +6166,15 @@ def ensure_missed_scores(day=None, lookback_days=None):
     back = int(lookback_days if lookback_days is not None
                else db.cfg("missed.lookback_days", MISSED_LOOKBACK_DAYS))
     start = start_date()
-    out = {"filled": [], "penalty": [], "before_start": 0}
+    out = {"filled": [], "penalty": [], "settled": [], "before_start": 0}
     for i in range(max(0, back), 0, -1):
         dd = fmt(d0 - timedelta(days=i))
         if start and dd <= start:
             out["before_start"] += 1
             continue                  # 起用日当天与之前：这套系统还不存在
-        if _dtnow() < _missed_deadline(dd):
-            continue                  # 还没到「次日 12:00」
-        if is_transition(dd):
-            continue                  # 过渡日不计分，没有「漏打」这回事
-        kids = missed_kids(dd)
-        if not kids:
-            continue
-        for k in kids:
-            _fill_missed_day(k, dd)
-            out["filled"].append({"day": dd, "member_id": k["id"], "name": k["name"]})
-        amt = _missed_pool_penalty(dd, kids)
-        if amt:
-            out["penalty"].append({"day": dd, "stardust": amt, "kids": len(kids)})
+        r = ensure_missed_day(dd)
+        for key in ("filled", "penalty", "settled"):
+            out[key].extend(r[key])
     return out
 
 

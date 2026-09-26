@@ -6,6 +6,7 @@ from datetime import datetime
 
 import db
 import engine as E
+import holiday_cn
 from . import ApiError, route
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -604,10 +605,25 @@ def post_homework(ctx):
 @route("GET", "/api/holidays")
 def list_holidays(ctx):
     ctx.as_member()
+    cal = holiday_cn.state_of()
+    cal["today"] = holiday_cn.today_state()
     return {"items": db.to_dicts(db.query("SELECT * FROM holiday ORDER BY start_date")),
             "today": E.today(),
             "is_holiday": bool(E.holiday_at(E.today())),
-            "is_transition": E.is_transition(E.today())}
+            "is_transition": E.is_transition(E.today()),
+            "calendar": cal}
+
+
+@route("POST", "/api/holidays/sync")
+def sync_holidays(ctx):
+    """家长点了「立即更新」。这是全系统唯一会出网的接口。
+
+    没有自动同步：不开机拉、不定时拉。容器没外网是常态，自动拉只会换来
+    一堆超时日志，还让「上次更新」这个时间变得说不清是谁拉的。
+    拉不到也要把回执带回去，界面上得说清楚，不能点了没反应。
+    """
+    ctx.as_parent()
+    return {"ok": True, "calendar": holiday_cn.sync(force=True)}
 
 
 @route("POST", "/api/holidays")

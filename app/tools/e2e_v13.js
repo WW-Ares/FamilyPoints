@@ -1826,8 +1826,9 @@ async function walkTabs(page, tag) {
   if (await page.locator('#sheet.on').count()) bad('[任务页] 确认层点背景关不掉');
 
   // 家长端打分页（v37）：这一天站在哪一格，页头那颗标签说了算。
-  // 未打 / 补卡是点一下即存；打过的（修改）默认只读，先点「修改」，
-  // 底部才出现取消 / 保存。超时与锁死那两格一个按钮都没有。
+  // v1.15 起底部三态：没提交过只有【提交】，提交过只有【修改】，改的时候是
+  // 【取消】【提交】（取消在左）。超时与锁死那两格一个按钮都没有，按钮那块
+  // 位置换成一件事一句话。
   await tabTo(page, '打分');
   await page.waitForTimeout(900);
   const score = flat(await page.locator('#view').innerText());
@@ -1839,26 +1840,37 @@ async function walkTabs(page, tag) {
     ' 打分, 状态「' + dayTag + '」');
   if (dimCount !== 7) bad('[打分页] 维度数不是 7，是 ' + dimCount);
   if (!swNow) bad('[打分页] 没标出这一屏在给谁打分');
-  if (await page.locator('#view #saveScore').count()) bad('[打分页] 还留着「提交」按钮');
+  if (await page.locator('#view #saveScore').count()) bad('[打分页] 还留着老的「保存打分」按钮');
   if (DAY_TAGS.indexOf(dayTag) < 0) {
     bad('[打分页] 没给出当天状态标签，读到的是「' + dayTag + '」');
   }
   if (dayTag === '修改') {
-    if (score.indexOf('点下面的「修改」才能改') < 0) {
+    if (score.indexOf('先点下面的「修改」') < 0) {
       bad('[打分页] 打过的那天没提示要先点「修改」');
     }
     if (!(await page.locator('#view #pEdit').count())) bad('[打分页] 修改态没给「修改」按钮');
+    if (flat(await page.locator('#view #pEdit').innerText()) !== '修改') {
+      bad('[打分页] 只读那一屏的按钮不是「修改」');
+    }
     if (await page.locator('#view #pSave').count()) {
-      bad('[打分页] 还没点「修改」就出现了保存按钮');
+      bad('[打分页] 还没点「修改」就出现了提交按钮');
+    }
+    if (await page.locator('#view #pSubmit').count()) {
+      bad('[打分页] 打过的那天不该再出现「提交」这颗单独的按钮');
     }
     await page.locator('#view #pEdit').click();
     await page.waitForTimeout(800);
     const hasSave = await page.locator('#view #pSave').count();
     const hasCancel = await page.locator('#view #pCancel').count();
-    say('   点「修改」之后: 保存 ' + hasSave + ' 个 / 取消 ' + hasCancel + ' 个');
-    if (!hasSave || !hasCancel) bad('[打分页] 点了「修改」没出现取消/保存');
-    if (flat(await page.locator('#view').innerText()).indexOf('改完按保存才算数') < 0) {
-      bad('[打分页] 编辑态没写清「保存才算数」');
+    say('   点「修改」之后: 提交 ' + hasSave + ' 个 / 取消 ' + hasCancel + ' 个');
+    if (!hasSave || !hasCancel) bad('[打分页] 点了「修改」没出现取消/提交');
+    const duo = (await page.locator('#view #pCancel, #view #pSave').allInnerTexts()).map(flat);
+    say('   两颗按钮从左到右: ' + duo.join(' / '));
+    if (duo.join('/') !== '取消/提交') {
+      bad('[打分页] 编辑态两颗按钮不是「取消 / 提交」：' + duo.join('/'));
+    }
+    if (flat(await page.locator('#view').innerText()).indexOf('改完按提交才算数') < 0) {
+      bad('[打分页] 编辑态没写清「提交才算数」');
     }
     await page.locator('#view #pCancel').click();
     await page.waitForTimeout(800);
@@ -1866,17 +1878,27 @@ async function walkTabs(page, tag) {
       bad('[打分页] 按了取消没退回只读那一屏');
     }
     if (await page.locator('#view #pSave').count()) {
-      bad('[打分页] 取消之后保存按钮还留着');
+      bad('[打分页] 取消之后提交按钮还留着');
     }
-  } else {
+  } else if (dayTag === '未打' || dayTag === '补卡') {
     if (await page.locator('#view #pEdit').count()) {
       bad('[打分页] 还没打分的日子不该有「修改」按钮');
     }
     if (await page.locator('#view #pSave').count()) {
-      bad('[打分页] 点一下即存的日子不该有保存按钮');
+      bad('[打分页] 还没进编辑态就出现了提交按钮');
     }
     if (await page.locator('#view #pCancel').count()) {
       bad('[打分页] 还没进编辑态就出现了取消按钮');
+    }
+    // v1.15：没打过分的那天只有一颗【提交】，七项默认满分，点一下整页就落了。
+    if (!(await page.locator('#view #pSubmit').count())) {
+      bad('[打分页] 没打过分的那天没给「提交」按钮');
+    }
+    if (flat(await page.locator('#view #pSubmit').innerText()) !== '提交') {
+      bad('[打分页] 没打过分的那天那颗按钮不是「提交」');
+    }
+    if (score.indexOf('按提交') < 0) {
+      bad('[打分页] 没打过分的那天没写清「按提交」');
     }
   }
   await page.screenshot({ path: path.join(SHOT, 'dad-score.png'), fullPage: true });

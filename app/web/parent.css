@@ -528,6 +528,20 @@ body.grown .dim-row:not(.is-off) .dim-check {
   background: var(--orange); border-color: var(--orange); color: #fff;
 }
 
+/* 打分页底部那块位置：有按钮的时候摆按钮，动不了的那天摆一句话。
+   两处占同一块地方、同一个上间距，切换状态的时候界面不会跳。 */
+body.grown .dim-note {
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--r-md);
+  background: var(--gold-soft); border: 1px dashed var(--card-line);
+  font-size: calc(12 * var(--u)); line-height: 1.7; color: var(--ink-2);
+}
+/* 「修改」是黄底：它的分量在「提交」（橙实心）和「取消」（白底）中间，
+   三颗摆在一起的时候才分得清哪颗是这一屏的主角。 */
+body.grown .btn--gold {
+  background: var(--gold-soft); color: var(--gold-deep); border-color: var(--gold-deep);
+  box-shadow: none;
+}
+
 /* ------------------------------------------------------------------ 七天日期条 */
 body.grown .daystrip { display: flex; gap: 6px; }
 body.grown .daycell {
@@ -737,6 +751,14 @@ body.grown .any-need input { width: 56px; text-align: center; padding: 6px 4px; 
 body.grown .callout-line {
   font-size: calc(11 * var(--u)); color: var(--ink-2); background: rgba(255,138,61,.10);
   border-radius: var(--r-xs); padding: 8px 10px; margin-top: 10px;
+}
+/* 弹层里那条「不看就点下去会做错事」的话。上面那版底色淡、字号比正文还小，
+   家长当成装饰划过去就点了；这一版抬到正文大小、加粗、用警示色压住，
+   左边再压一道竖线，一眼扫得到。（目前用在「这天后来变了」那一处） */
+body.grown .callout-line.is-warn {
+  font-size: calc(12.5 * var(--u)); line-height: 1.6; font-weight: 600;
+  color: #A2601F; background: var(--warn-soft);
+  border-left: 3px solid var(--warn); border-radius: 8px; padding: 9px 11px;
 }
 body.grown .dr-sum { font-size: calc(13 * var(--u)); color: var(--ink-2); margin: 6px 0 10px; }
 body.grown .dr-sum b { font-family: var(--font-num); font-size: calc(20 * var(--u)); color: var(--orange-deep); }

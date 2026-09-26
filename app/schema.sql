@@ -1,5 +1,5 @@
 -- 家庭积分工程 · 数据库结构
--- 规则真值以最新的《项目当前开发文档》为准（当前 schema v42），结构变更都带 _migrate_vNN 迁移。
+-- 规则真值以最新的《项目当前开发文档》为准（当前 schema v43），结构变更都带 _migrate_vNN 迁移。
 --
 -- 两条贯穿全库的约定：
 --   1. 所有余额都由流水求和得出，不存冗余余额字段（项目原则 6）。
@@ -439,6 +439,22 @@ CREATE TABLE IF NOT EXISTS holiday (
   end_date   TEXT    NOT NULL,
   auto_mode  INTEGER NOT NULL DEFAULT 1,
   created_at TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- 国家法定节假日（自动拉取，只读）
+-- ---------------------------------------------------------------------------
+-- 跟上面那张 holiday 是两件事，别合并：
+--   holiday      = 家长手填的放假区间（寒暑假、学校自己放的），带着
+--                  「假期版维度名」和「首尾过渡日不计分」两层副作用。
+--   calendar_day = 从公开数据源拉回来的国家日历，只回答「这天放不放假」。
+-- 把法定假日塞进 holiday，元旦那三天的前后两天就变成「不计分」了。
+CREATE TABLE IF NOT EXISTS calendar_day (
+  day        TEXT    PRIMARY KEY,          -- YYYY-MM-DD
+  is_off     INTEGER NOT NULL,             -- 1=放假  0=调休上班
+  name       TEXT    NOT NULL DEFAULT '',  -- 元旦、春节、国庆节…
+  year       INTEGER NOT NULL,             -- 冗余，删整年时省一次扫描
+  updated_at TEXT
 );
 
 -- 求助记录（常驻按钮，每周 ≤3 次）
