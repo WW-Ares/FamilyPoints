@@ -132,28 +132,22 @@ def main():
             E.add_explore(k["id"], E.fmt(E.parse_day(today) - timedelta(days=8 - j)),
                           phrase, kind=kind, dimension_code=dim, operator_id=dad["id"])
 
-    # 3) 只结算已经过完的周期。本周还在进行中，得留着給「这周」页看进度。
+    # 3) 结算所有已经过完的周期。本周还在进行中，得留着給「这周」页看进度。
+    #    force 不能省：这两个旧周期「最后一天的账没落定」，不 force 就结不动、
+    #    一直 open 挂着 —— 页面一加载 ensure_settled 又会把它们补结掉，
+    #    那一下会把 9d2 挂的欠款顺手扣光，券包页「还欠 N 星尘」时有时无。
     past = db.query("SELECT * FROM cycle WHERE status='open' AND end_date<?"
                     " ORDER BY start_date", (today,))
     for c in past:
-        r = E.settle_cycle(c["id"], operator_id=dad["id"])
+        r = E.settle_cycle(c["id"], operator_id=dad["id"], force=True)
         print("  结算周期 member=%s start=%s: %s"
               % (c["member_id"], c["start_date"], r.get("msg") or "ok"))
 
-    # 3.5) v38：结算只把箱子发下来，箱子里有什么要点开才知道。
-    #      演示库把一周的历史压在同一秒里造出来，前面那几个周期发下来的箱子
-    #      ts 会全撞在同一刻 —— auto_open_stale 是按 ts 判「陈箱」的，那就一只
-    #      都判不出来。先把箱子时间挪回它自己那个周期，再照 ③ 走一遍：
-    #      当前周期之前的箱子，真实系统里在「下一次结算」时已经替孩子开掉了。
+    # 3.5) v44：没开的箱子不再被系统代开（v38 的「陈箱下期结算开掉」整条删了），
+    #      留到新赛季让他自己点开。演示库把一周的历史压在同一秒里造出来，
+    #      把箱子时间挪回它自己那个周期，好让「哪天发的」看得出来。
     db.execute("UPDATE box_open SET ts = COALESCE((SELECT c.end_date || ' 20:00:00'"
                " FROM cycle c WHERE c.id = box_open.cycle_id), ts)")
-    for k in kids:
-        cur = E.current_cycle(k["id"])
-        if cur:
-            done = E.auto_open_stale(k["id"], before_day=cur["start_date"],
-                                     operator_id=dad["id"])
-            if done:
-                print("  陈箱替开 member=%s: %d 只" % (k["id"], len(done)))
     # 开箱那一刻挪回箱子时间，跟 ts 对齐 —— 不然「最近开出来的」会显示成建库时刻
     db.execute("UPDATE box_open SET opened_at = ts WHERE opened_at IS NOT NULL")
 
@@ -210,8 +204,14 @@ def main():
                        "旧的塞不下了", "自己出一半", 0, operator_id=dad["id"]), "新卡册")  # 靠星尘
     wbuf = must(E.create_wish(kids[1]["id"], "周末去吃一次自助", "fixed", {"value": 21},
                               "说好了这周去", "", 0, operator_id=dad["id"]), "自助餐")
-    must(E.update_wish_status(wbuf["wish_id"], "achieved", operator_id=dad["id"]), "心愿兑现")
-    print("  心愿：挂起 1 / 进行中 2 / 已达成 1")
+    must(E.update_wish_status(wbuf["wish_id"], "achieved", operator_id=dad["id"]), "心愿达成")
+    # v44：达成之后还得家长去办、办完孩子再确认一次。两头都要有样品，
+    # 不然家长端「等你去满足」、孩子端「等你说收到」这两块在演示库里都看不见。
+    wgot = must(E.create_wish(kids[1]["id"], "买一副新球拍", "fixed", {"value": 49},
+                              "旧的那副握把裂了", "", 0, operator_id=dad["id"]), "新球拍")
+    must(E.update_wish_status(wgot["wish_id"], "achieved", operator_id=dad["id"]), "球拍达成")
+    must(E.update_wish_status(wgot["wish_id"], "delivered", operator_id=dad["id"]), "已经给他了")
+    print("  心愿：挂起 1 / 进行中 2 / 等你去满足 1 / 等他说收到 1")
 
     # 11) 历史心愿（v18）：结束的心愿也留在墙上，还得看得出是怎么结束的。
     #     一条是还挂着的时候被家长驳回，一条是孩子自己放弃的 ——
@@ -430,6 +430,52 @@ def main():
     db.settings_all(force=True)
     print("  任务记录：做成 %d / 被退回 %d / 自己放下 %d（摊在近三周，共 %d 条）"
           % (tally["confirmed"], tally["returned"], tally["abandoned"], len(hist)))
+
+    # 9d2) v44 的三笔「欠」都要在券包页留出对应那一行 ——
+    #      星尘欠款（下次结算先扣）、券欠账（下次发到券先抵）、
+    #      分钟欠账（下一张券只能玩 X 分钟）。缺一样，那一页就少一行字。
+    #
+    #      这段必须压在所有会触发周期结算的步骤**之后**：确认任务、兑换发放
+    #      都可能把当期结算带起来，结算一到，星尘欠款当场被扣掉（那正是
+    #      引擎该干的事），券包页那条「还欠 N 星尘」就没了。
+    #      前两笔直接落账目行，不靠「罚一个很大的数试试能不能罚出欠款」：
+    #      那样跟孩子当时手上攒了多少绑在一起，重灌一次演示库就可能没有欠款，
+    #      而这三行正是要看的。扣时间那笔走真引擎 —— 它顺带落下那条
+    #      「上次的惩罚扣掉了 N 张券」，也就是券包页带「知道了」的那一行；
+    #      金额取「一张半」：整张那张扣得动（券包里的数真的少），
+    #      半张那个零头挂成分钟欠账，正好把两半都演出来。
+    #
+    #      挂账前先把过期还 open 的旧周期结干净：12 步冻结时钟造历史任务时，
+    #      confirm_task 会惰性把更早那两周开成 open 周期；页面一加载
+    #      ensure_settled 就把它们补结掉，那一下会把刚挂的欠款顺手扣光
+    #      （欠款是全局的，不跟着周期走）。先结旧账，欠款才留得住。
+    for c in db.query("SELECT * FROM cycle WHERE status='open' AND end_date<?"
+                      " ORDER BY start_date", (E.today(),)):
+        E.settle_cycle(c["id"], operator_id=dad["id"], force=True)
+    E.add_ledger(kids[0]["id"], "fine", debt=35,
+                 note="上一笔大额罚款罚到余额见底，剩下的先记着", operator_id=dad["id"])
+    E.add_ledger(kids[0]["id"], "fine", ticket=-2,
+                 note="券不够扣，先欠着 2 张", operator_id=dad["id"])
+    _fun = E.item_by_code("ticket_fun")
+    _per = E.ticket_minutes(_fun, today)
+    _fc = E.add_calibration(kids[0]["id"], 3, "说好写完作业再玩，偷着开了游戏",
+                            dimension_code="order", effect_type="ticket_min",
+                            amount=round(_per * 1.5, 2), operator_id=dad["id"])
+    _fe = (_fc or {}).get("effect") or {}
+    print("  欠账：星尘 35 / 券 2 张 / 分钟 %g（扣时间那笔真扣了 %s 张券，零头 %g 分钟）"
+          % (E.minutes_debt(kids[0]["id"]), _fe.get("tickets", 0), _fe.get("minutes", 0)))
+
+    # 13) 赛季（v44）。这份演示数据看着像「已经用了大半个月」，把第一季的起点
+    #     往前挪一点，让「还剩 N 天」像个真数 —— 建库当天就显示「还剩 89 天」，
+    #     一眼就看得出是刚装上的库。结束日照旧按长度重算（假期顺延一并算上）。
+    _season = E.current_season()
+    _slen = int(db.cfg("season.length_days", 90))
+    _sstart = E.fmt(E.parse_day(today) - timedelta(days=27))
+    db.execute("UPDATE season SET start_date=?, end_date=? WHERE id=?",
+               (_sstart, E.season_end(_sstart, _slen), _season["id"]))
+    _sn = E.season_snapshot()
+    print("  赛季：第 %s 季 %s → %s（还剩 %s 天，一季 %s 天）"
+          % (_sn["idx"], _sn["start_date"], _sn["end_date"], _sn["days_left"], _slen))
 
     print("")
     for k in kids:

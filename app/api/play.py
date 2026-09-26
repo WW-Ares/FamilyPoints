@@ -408,7 +408,10 @@ def get_holdings(ctx):
                           "renew_left": (h["renew_times"] or 1) - (h["renew_count"] or 0)}
                          for h in E.expiring_soon(mid)],
             "fragment": E.fragment_balance(mid), "stardust": E.stardust_balance(mid),
-            "debt": max(0.0, E.debt_balance(mid))}
+            "debt": max(0.0, E.debt_balance(mid)),
+            # 券欠账（正数=欠几张）。跟星尘欠款一起回，券包页那两条提示
+            #（「还欠 N 张券」「欠 N 分钟」）就不用各发一次请求。
+            "ticket_debt": E.ticket_debt(mid)}
 
 
 @route("POST", "/api/items/use")

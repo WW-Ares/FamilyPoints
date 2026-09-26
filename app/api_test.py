@@ -16,6 +16,7 @@ os.environ["FAMILY_DB"] = os.path.join(_TEST_DIR, "family.db")
 
 import db
 import engine as E
+import notify
 import api
 from api import ApiError
 from api import auth as A
@@ -316,26 +317,15 @@ def main():
     db.execute("UPDATE box_tier SET random_rate=?, random_pool=? WHERE tier=5",
                (_t5["random_rate"], _t5["random_pool"]))
 
-    # 一直不开的箱子：搭下个周期结算由系统替他开掉，东西照发不回收，
-    # 并且留下一条写着「这是系统干的」的通知。
-    fun_id = E.item_by_code("ticket_fun")["id"]
+    # v44：没开的箱子不再被系统替他开（v38 的「陈箱下期结算开掉」整条删了），
+    # 留到新赛季让他自己点开。这里确认它一直挂在待开箱里。
     stale = E.issue_box(BOY, 3, source="free", operator_id=DAD)
     db.execute("UPDATE box_open SET ts=? WHERE id=?",
                ("2000-01-01 00:00:00", stale["box_id"]))
-    tb = E.item_balance(BOY, fun_id)
-    auto = E.auto_open_stale(BOY, "2010-01-01", operator_id=None)
-    check("隔了一个周期的箱被系统开掉",
-          any(x["box_id"] == stale["box_id"] for x in auto), auto)
-    check("系统替他开的照发不回收", E.item_balance(BOY, fun_id) == tb + 6,
-          (tb, E.item_balance(BOY, fun_id)))
-    check("系统自己动手留下的通知写着是谁干的",
-          any(n["kind"] == "box_auto" for n in db.query(
-              "SELECT * FROM notification WHERE member_id=? ORDER BY id DESC LIMIT 20",
-              (BOY,))))
-    check("被系统开过的箱不再是待开箱",
-          not [x for x in (call("GET", "/api/boxes", query={"member_id": str(BOY)},
+    check("没开的箱子不会被系统代开（v44 起留给他自己）",
+          bool([x for x in (call("GET", "/api/boxes", query={"member_id": str(BOY)},
                                 actor=boy) or {}).get("pending") or []
-               if x["box_id"] == stale["box_id"]])
+                if x["box_id"] == stale["box_id"]]))
 
     print("\n--- 星球等级（v13）---")
     lv = call("GET", "/api/levels", query={"member_id": str(GIRL)}, actor=girl)
@@ -564,6 +554,276 @@ def main():
     call("GET", "/api/calibration", query={"member_id": str(GIRL)}, actor=mom)
     call("GET", "/api/calibration", query={"member_id": str(GIRL)}, actor=girl)
 
+    print("\n--- v44：保底公式（罚款与还款都不许把他打空）---")
+    # 三个数取最小：① 该扣的 ② 手上的 ×(1−比例) ③ 手上的 − 地板。
+    # 比例管「一次别扣太多」，地板管「别扣到零」。两条都不管他自己花钱 ——
+    # 去商店买券买卡花到 0 也行，那是他自己选的。
+    set_setting("calib.fine_amount", 5)
+    set_setting("calib.fine_per_yuan", 2)
+    set_setting("calib.floor_stardust", 15)
+    set_setting("calib.floor_tickets", 2)
+    set_setting("calib.reserve_pct", 25)
+    check("保底·该扣的比上限小，就按该扣的扣",
+          E.payable_stardust(100, 10) == 10, E.payable_stardust(100, 10))
+    check("保底·按比例最多扣 75%（100 里最多 75）",
+          E.payable_stardust(100, 90) == 75, E.payable_stardust(100, 90))
+    check("保底·地板咬住时按地板算（20 最多扣 5，留 15）",
+          E.payable_stardust(20, 90) == 5, E.payable_stardust(20, 90))
+    check("保底·贴着地板时连续地少扣，不会出现全扣或全不扣的突变",
+          E.payable_stardust(16, 90) == 1 and E.payable_stardust(15, 90) == 0,
+          (E.payable_stardust(16, 90), E.payable_stardust(15, 90)))
+    check("保底·手上空了就一分不扣", E.payable_stardust(0, 90) == 0)
+    # 券这一侧要整数，留 max(地板, 四分之一)，一律往多留（宁可少扣，不可扣没）
+    check("券保底·留 max(2 张, 四分之一)，往多留",
+          E.payable_tickets(10, 99) == 7 and E.payable_tickets(4, 99) == 2,
+          (E.payable_tickets(10, 99), E.payable_tickets(4, 99)))
+    check("券保底·手上不到 3 张时一张都扣不动（留底 2 张）",
+          E.payable_tickets(2, 99) == 0 and E.payable_tickets(3, 99) == 1,
+          (E.payable_tickets(2, 99), E.payable_tickets(3, 99)))
+
+    print("\n--- v44：罚款当场填、汇率单独一项 ---")
+    # 把余额垫到一个定数（前面那些注入会飘），跌回地板以下才验得出「扣不动」
+    E.add_ledger(GIRL, "adjust", stardust=40 - E.stardust_balance(GIRL), note="巡检：把余额垫到 40")
+    check("垫到 40", E.stardust_balance(GIRL) == 40, E.stardust_balance(GIRL))
+    call("POST", "/api/calibration", {"member_id": GIRL, "level": 3, "reason": "罚 20 元看保底",
+                                      "effect_type": "fine", "amount": 20}, actor=dad)
+    eff = json.loads(db.query_one(
+        "SELECT effect_json FROM calibration WHERE member_id=? ORDER BY id DESC LIMIT 1",
+        (GIRL,))["effect_json"])
+    # 20 元 × 2 星尘 = 40 星尘。手上 40：比例上限 30、地板只留 15 → 取小 = 25
+    check("罚款按当场填的金额算（不再吃设置里那个默认值）", eff["cash"] == 20, eff)
+    check("汇率解耦成「每 1 元 N 星尘」", eff["stardust"] == 40, eff)
+    check("守保底：40 里只扣 25（比例 30 与地板 25 取小）", eff["kept"] == 25, eff)
+    check("扣不动的 15 记成欠款，不出现负星尘", eff["debt"] == 15, eff)
+    check("罚完余额正好压在那条地板上", E.stardust_balance(GIRL) == 15,
+          E.stardust_balance(GIRL))
+    check("欠款真的记在账上（不是凭空消失）", E.debt_balance(GIRL) >= 15, E.debt_balance(GIRL))
+    # 再罚一次：一分都扣不动，全额转欠款
+    call("POST", "/api/calibration", {"member_id": GIRL, "level": 3, "reason": "贴地板再罚",
+                                      "effect_type": "fine", "amount": 10}, actor=dad)
+    eff2 = json.loads(db.query_one(
+        "SELECT effect_json FROM calibration WHERE member_id=? ORDER BY id DESC LIMIT 1",
+        (GIRL,))["effect_json"])
+    check("已经贴着地板：一分不扣、全额转欠款",
+          eff2["kept"] == 0 and eff2["debt"] == eff2["stardust"], eff2)
+    check("余额没有变成负数", E.stardust_balance(GIRL) == 15, E.stardust_balance(GIRL))
+    # 汇率改了，罚金不动 —— 以前这两件事绑在一个数上，改一个顺带改另一个
+    set_setting("calib.fine_per_yuan", 3)
+    call("POST", "/api/calibration", {"member_id": BOY, "level": 3, "reason": "汇率改过之后",
+                                      "effect_type": "fine"}, actor=dad)
+    eff3 = json.loads(db.query_one(
+        "SELECT effect_json FROM calibration WHERE member_id=? ORDER BY id DESC LIMIT 1",
+        (BOY,))["effect_json"])
+    check("汇率改成 3 之后，默认罚金 5 元还是 5 元、换算成 15 星尘",
+          eff3["cash"] == 5 and eff3["stardust"] == 15, eff3)
+    set_setting("calib.fine_per_yuan", 2)
+    # 还没立许愿池的那几天，罚的钱以前直接消失（`if pool:` 一句跳过），
+    # 界面一个字不说。现在记成 counted=0 的「先记着」，等立了池子一并投进去。
+    # 这一段必须跑在下面「心愿单与许愿池」建池之前 —— 建完池子这条就看不到了。
+    pl = call("GET", "/api/pool", actor=dad)
+    check("还没立池子时，罚的钱没丢：摆成「先记着」那一栏",
+          not pl["pool"] and any(x["kind"] == "fine" for x in pl["logs"]),
+          pl["logs"])
+
+    print("\n--- v44：扣娱乐时间改成满一张扣券库 ---")
+    fun = E.item_by_code("ticket_fun")
+    per = E.ticket_minutes(fun, E.today())
+    E.grant_item(GIRL, fun["id"], 6, source="shop", note="巡检：垫 6 张娱乐券", operator_id=DAD)
+    held0 = E.item_balance(GIRL, fun["id"])
+    want = per * 2 + per / 2.0          # 2 张 + 半张的零头
+    call("POST", "/api/calibration", {"member_id": GIRL, "level": 3, "reason": "扣两张半",
+                                      "effect_type": "ticket_min", "amount": want}, actor=dad)
+    eff4 = json.loads(db.query_one(
+        "SELECT effect_json FROM calibration WHERE member_id=? ORDER BY id DESC LIMIT 1",
+        (GIRL,))["effect_json"])
+    # 「该扣的」是 2 张整的 + 半张零头；保底从「发下来之后手上会有多少」算起
+    exp_can = int(E.payable_tickets(held0, 2))
+    check("满一张的当场从券库扣掉，零头不当整张算",
+          eff4["whole"] == 2 and eff4["tickets"] == exp_can, (eff4, per, held0))
+    check("张数账真的少了那么多", E.item_balance(GIRL, fun["id"]) == held0 - exp_can,
+          (held0, E.item_balance(GIRL, fun["id"])))
+    check("零头（半张）挂到券的时长上，不是砍掉一整张",
+          eff4["minutes"] == round(per / 2.0, 2), eff4)
+    check("库存够的时候没有券欠账", eff4["ticket_debt"] == 2 - exp_can, eff4)
+    check("当场扣掉整张要留一条「知道了」的告知（券包里的数少了总得有个说法）",
+          any(n["kind"] == "ticket_fine" for n in db.query(
+              "SELECT * FROM notification WHERE member_id=? ORDER BY id DESC LIMIT 8", (GIRL,))),
+          "ticket_fine 没落库")
+    # 零头也一起说清：券包页那条 tip 拿的是 /api/tickets/state 的 play_minutes
+    st = call("GET", "/api/tickets/state", query={"member_id": str(GIRL)}, actor=girl)
+    check("券的时长 = 面值 − 欠的分钟（最少留半张）",
+          st["play_minutes"] == max(per / 2.0, per - st["debt"]),
+          (st.get("play_minutes"), st.get("debt"), per))
+    hold = call("GET", "/api/holdings", query={"member_id": str(GIRL)}, actor=girl)
+    check("券包接口把「欠几张券」一起报出来（前端才有得写那一条）",
+          "ticket_debt" in hold, sorted(hold.keys()) if hold else hold)
+    # 库存不够的整张 → 券欠账（不是当场变成负库存）。
+    # 把券保底临时抬到手上之上，就能确定地走到「一张都扣不动」那一支，
+    # 不必去猜演示库里先攒了多少张。
+    set_setting("calib.floor_tickets", 100)
+    held1 = E.item_balance(GIRL, fun["id"])
+    call("POST", "/api/calibration", {"member_id": GIRL, "level": 3, "reason": "扣掉八张",
+                                      "effect_type": "ticket_min", "amount": per * 8}, actor=dad)
+    eff5 = json.loads(db.query_one(
+        "SELECT effect_json FROM calibration WHERE member_id=? ORDER BY id DESC LIMIT 1",
+        (GIRL,))["effect_json"])
+    check("库存顶不住保底时，整张全记成券欠账",
+          eff5["tickets"] == 0 and eff5["ticket_debt"] == 8, eff5)
+    check("一张都没真扣", E.item_balance(GIRL, fun["id"]) == held1,
+          (held1, E.item_balance(GIRL, fun["id"])))
+    check("券欠账落在账上（不是把张数写成负的）",
+          E.ticket_debt(GIRL) == 8 and E.item_balance(GIRL, fun["id"]) >= 0,
+          E.ticket_debt(GIRL))
+    set_setting("calib.floor_tickets", 2)
+    # 券欠账的抵扣口只有一个：开箱发券那一刻。
+    # 直接把「这一箱发下来多少张」当 gross 递给它，不用去赌箱子开出什么。
+    held2 = E.item_balance(GIRL, fun["id"])
+    E.grant_item(GIRL, fun["id"], 6, source="box", note="巡检：模拟一箱发出 6 张",
+                 operator_id=DAD)
+    got = E.apply_ticket_debt(GIRL, operator_id=DAD, gross=6)
+    exp6 = int(E.payable_tickets(held2 + 6, 8))
+    check("发券时先拿去还券欠账，数目按保底算",
+          got == exp6 and E.ticket_debt(GIRL) == 8 - exp6,
+          (got, exp6, E.ticket_debt(GIRL)))
+    check("还债也要当场告知（网页里那条，不推手机）",
+          any(n["kind"] == "debt_paid" and "券" in n["title"] for n in db.query(
+              "SELECT * FROM notification WHERE member_id=? ORDER BY id DESC LIMIT 6", (GIRL,))))
+
+    print("\n--- v44：发放时扣欠账怎么告知 ---")
+    check("这一条不推手机（它是网页里的状态变化，不是要他去做点什么）",
+          "debt_paid" in notify.NO_PUSH_KINDS and "ticket_fine" in notify.NO_PUSH_KINDS,
+          notify.NO_PUSH_KINDS)
+    check("没扣到、也没欠着，就不该打扰他",
+          E.tell_debt_paid(GIRL, "stardust", 0, 10, 0) is None)
+    E.tell_debt_paid(GIRL, "stardust", 0, 15, 30, gross=0, before=15, floor=15)
+    row = db.query_one("SELECT * FROM notification WHERE member_id=? ORDER BY id DESC LIMIT 1",
+                       (GIRL,))
+    check("「一分都扣不动」也要落一条 —— 扣不动是因为守了保底，不说他会以为系统坏了",
+          row["kind"] == "debt_paid" and "一分都扣不动" in row["body"], row["body"])
+    check("告知里写明「留多少这条底不参与罚款和还款」",
+          "不参与罚款和还款" in row["body"], row["body"])
+
+    print("\n--- v44：赛季 ---")
+    s = call("GET", "/api/season", actor=dad)
+    check("赛季读数有起止日、还剩几天、长度",
+          all(k in s for k in ("idx", "start_date", "end_date", "days_left", "length_days")),
+          sorted(s.keys()) if s else s)
+    check("默认一季 90 天", s["length_days"] == 90, s["length_days"])
+    check("现在的结束日 = 起始日 + 长度 − 1",
+          s["end_date"] == E.season_end(s["start_date"], s["length_days"]),
+          (s["start_date"], s["end_date"]))
+    r = call("POST", "/api/season", {"length_days": 30}, actor=dad)
+    check("改了长度，本季结束日当场重算（不用等下一季）",
+          r["end_date"] == E.season_end(r["start_date"], 30), r)
+    call("POST", "/api/season", {"length_days": 3}, actor=dad, expect_error=True)
+    call("GET", "/api/season", actor=girl)      # 孩子只读，随便看
+    call("POST", "/api/season", {"length_days": 60}, actor=girl, expect_error=True)
+    # 假期顺延：临时塞一段假进去，让结束日正好落在里面，它就该往后推 ——
+    # 不顺延的话，季末清算会落在一家人出门玩的那几天。
+    hday = E.fmt(E.parse_day(E.today()) + timedelta(days=40))
+    hid = db.execute("INSERT INTO holiday (name, start_date, end_date, created_at)"
+                     " VALUES (?,?,?,?)",
+                     ("巡检临时假", hday, E.fmt(E.parse_day(hday) + timedelta(days=6)),
+                      db.now()))
+    sx = E.season_end(E.fmt(E.parse_day(hday) - timedelta(days=89)), 90)
+    check("结束日撞上假期就顺延（季末清场不落在出门那几天）", sx > hday, (hday, sx))
+    db.execute("DELETE FROM holiday WHERE id=?", (hid,))
+    # 到日子之前不许清
+    call("POST", "/api/season", {"length_days": 90}, actor=dad)
+    early = E.close_season(operator_id=dad["id"])
+    check("还没到日子，清算不动手", not early["ok"], early)
+
+    # 真清算：把本季结束日挪到昨天，然后走一遍。
+    # 先确定地欠上一笔券和一点钟（不然前面的抵扣可能已经把欠账还光了，
+    # 「季末勾掉」那几条就验不到东西）。把券保底临时抬上去，就能确定地走到
+    # 「一张都扣不动、全额转欠账」那一支。
+    set_setting("calib.floor_tickets", 100)
+    call("POST", "/api/calibration", {"member_id": GIRL, "level": 3, "reason": "季末前欠一笔",
+                                      "effect_type": "ticket_min",
+                                      "amount": per * 2 + per / 2.0}, actor=dad)
+    set_setting("calib.floor_tickets", 2)
+    check("季末前先欠着券和分钟（后面那两条才有东西可勾）",
+          E.ticket_debt(GIRL) > 0 and E.minutes_debt(GIRL) > 0,
+          (E.ticket_debt(GIRL), E.minutes_debt(GIRL)))
+    # 挑一张她手上正好没有的消耗卡（有有效期、到期返还星尘的），发 1 张 ——
+    # 挑「手上没有」是为了拿到一个确定的 1，不去猜她原来攒了几张。
+    card = None
+    for c in db.query("SELECT * FROM item WHERE category='card'"
+                      " AND COALESCE(shelf_life_days,0)>0"
+                      " AND COALESCE(expire_refund,0)>0 ORDER BY id"):
+        if E.item_balance(GIRL, c["id"]) == 0:
+            card = c
+            break
+    # 身份卡 = 无有效期的那种（钻石卡），季末不清，用它验「留」这一半
+    idc = None
+    for c in db.query("SELECT * FROM item WHERE category='card'"
+                      " AND COALESCE(shelf_life_days,0)=0 ORDER BY id"):
+        if E.item_balance(GIRL, c["id"]) == 0:
+            idc = c
+            break
+    check("库里找得到「有有效期 + 到期返还」的卡（季末折星尘那条要用）", bool(card))
+    if card:
+        E.grant_item(GIRL, card["id"], 1, source="shop", note="巡检：季末要清掉的卡",
+                     operator_id=DAD)
+    if idc:
+        E.grant_item(GIRL, idc["id"], 1, source="shop", note="巡检：身份卡", operator_id=DAD)
+    box = E.issue_box(GIRL, 2, source="free", operator_id=DAD)
+    sd0 = E.stardust_balance(GIRL)
+    tk0 = E.item_balance(GIRL, fun["id"])
+    card0 = E.item_balance(GIRL, card["id"]) if card else 0
+    debt0 = E.debt_balance(GIRL)
+    tdebt0 = E.ticket_debt(GIRL)
+    mdebt0 = E.minutes_debt(GIRL)
+    check("清算前确实有得清（券 / 欠账）", tk0 > 0 and tdebt0 > 0,
+          (tk0, card0, tdebt0))
+    if card:
+        check("要清的那张卡清算前真有 1 张", card0 == 1, card0)
+    if idc:
+        check("要留下的身份卡清算前真有 1 张", E.item_balance(GIRL, idc["id"]) == 1,
+              E.item_balance(GIRL, idc["id"]))
+    db.execute("UPDATE season SET end_date=? WHERE settled_at IS NULL",
+               (E.fmt(E.parse_day(E.today()) - timedelta(days=1)),))
+    res = E.close_season(operator_id=dad["id"])
+    check("到日子了才清得动", res["ok"], res)
+    check("六种券清零（不退）", E.item_balance(GIRL, fun["id"]) == 0,
+          E.item_balance(GIRL, fun["id"]))
+    # 退多少以清算自己报出来的 refund 为准：手上带有效期的卡可能不止这一张
+    # （这一节的库是前面十几步攒下来的，按「只有一张卡」算期望值会自己骗自己）。
+    _rp = [x for x in res["report"] if x["member_id"] == GIRL][0]
+    check("清掉的卡按 expire_refund 折成星尘",
+          E.stardust_balance(GIRL) == round(sd0 + _rp["refund"], 2),
+          (sd0, _rp["refund"], _rp["cards"], E.stardust_balance(GIRL)))
+    check("折回来的星尘 = 卡数 × 那张卡的返还值",
+          _rp["refund"] == round(_rp["cards"] * float(card["expire_refund"] if card else 0), 2),
+          (_rp["cards"], _rp["refund"], card["expire_refund"] if card else 0))
+    if card:
+        check("有有效期的消耗卡清零", E.item_balance(GIRL, card["id"]) == 0,
+              E.item_balance(GIRL, card["id"]))
+    check("星尘欠款一笔勾掉", E.debt_balance(GIRL) == 0, (debt0, E.debt_balance(GIRL)))
+    check("券欠账勾掉", E.ticket_debt(GIRL) == 0, (tdebt0, E.ticket_debt(GIRL)))
+    check("分钟欠账勾掉", E.minutes_debt(GIRL) == 0, (mdebt0, E.minutes_debt(GIRL)))
+    check("碎片清零", E.fragment_balance(GIRL) == 0, E.fragment_balance(GIRL))
+    if idc:
+        check("身份卡留着（无有效期那几张不在清场范围里）",
+              E.item_balance(GIRL, idc["id"]) == 1, E.item_balance(GIRL, idc["id"]))
+    check("没开的宝箱留着，新赛季让他自己开",
+          db.query_one("SELECT opened_at FROM box_open WHERE id=?",
+                       (box["box_id"],))["opened_at"] is None)
+    check("新一季接着开", E.current_season()["idx"] == s["idx"] + 1,
+          E.current_season()["idx"])
+    check("新一季从旧一季结束日的第二天开始",
+          E.current_season()["start_date"] == E.fmt(E.parse_day(E.today())),
+          E.current_season()["start_date"])
+    sc = db.query_one("SELECT * FROM ledger WHERE member_id=? AND kind='season_close'"
+                      " ORDER BY id DESC LIMIT 1", (GIRL,))
+    check("清算记成一条 season_close 的账，day 落在新季第一天",
+          sc and sc["day"] == E.current_season()["start_date"], sc and sc["day"])
+    check("季末退的星尘不算进等级（不然一次退一百多会当场推一级）",
+          "season_close" in E.LEVEL_EXCLUDED_KINDS, E.LEVEL_EXCLUDED_KINDS)
+    check("到账的那条告知写的是「新赛季开始了」",
+          any(n["kind"] == "season" and "新赛季" in n["title"] for n in db.query(
+              "SELECT * FROM notification WHERE member_id=? ORDER BY id DESC LIMIT 8", (GIRL,))))
+
     print("\n--- 任务 ---")
     call("GET", "/api/tasks/templates", actor=dad)
     call("POST", "/api/tasks", {"assignee_id": GIRL, "title": "整理书架", "std": "三层都归位，家长只看结果",
@@ -620,7 +880,8 @@ def main():
     me = [x for x in got["items"] if x["id"] == wid][0]
     check("点亮后带上进度", me["status"] == "active" and me["progress"]["known"], me["progress"])
     check("门槛 99999 分够不着", not me["progress"]["ready"], me["progress"]["text"])
-    # 进度没满不许登记达成 —— 达成是事实，不是点一下就有
+    # v44：接口干脆不收 achieved 了 —— 条件够没够是引擎算的（check_wish_ready
+    # 算够了当场落），谁也不能按一下就让一条没够条件的心愿变成「已达成」
     call("POST", "/api/wishes/%d/status" % wid, {"status": "achieved"}, actor=girl, expect_error=True)
     # 已经生效的条件不许再改
     r = call("POST", "/api/wishes/%d/configure" % wid, {"cond_type": "fixed"}, actor=dad,
@@ -634,19 +895,33 @@ def main():
     call("POST", "/api/wishes", {"member_id": GIRL, "title": "没填门槛",
                                  "cond_type": "fixed", "cond": {}}, actor=dad, expect_error=True)
 
-    # 门槛设成够得着的，孩子自己就能登记达成
+    # 门槛设成够得着的。v44：它不再由谁点出来 —— 引擎算够了就落
     r3 = call("POST", "/api/wishes", {"member_id": GIRL, "title": "够得着的",
                                       "cond_type": "fixed", "cond": {"value": 1}}, actor=dad)
     w3 = r3["wish_id"]
     got = call("GET", "/api/wishes", query={"member_id": str(GIRL)}, actor=dad)
     me = [x for x in got["items"] if x["id"] == w3][0]
     check("门槛 1 分默认达成", me["progress"]["ready"], me["progress"]["text"])
-    call("POST", "/api/wishes/%d/status" % w3, {"status": "achieved"}, actor=girl)
+    E.check_wish_ready(GIRL)
+    check("条件够了引擎自己落成已达成",
+          db.query_one("SELECT status FROM wish WHERE id=?", (w3,))["status"] == "achieved")
+    # 达成这一刻它进家长那张兑现清单：清单等的是「家长去把事办了」
+    # （放在 delivered 之前查 —— 给了之后它该从这张单子上消失）。
+    check("兑现清单里能看见这条",
+          any(x["id"] == w3 for x in call("GET", "/api/wishes/to-fulfil", actor=dad)["items"]))
     # 不设否决权：达成之后谁也取消不了
     call("POST", "/api/wishes/%d/status" % w3, {"status": "cancelled"}, actor=dad, expect_error=True)
-    # 兑现是家长的事
-    call("POST", "/api/wishes/%d/status" % w3, {"status": "claimed"}, actor=girl, expect_error=True)
-    call("POST", "/api/wishes/%d/status" % w3, {"status": "claimed"}, actor=dad)
+    # v44：最后两步一人一半。先是家长说「已经给他了」
+    call("POST", "/api/wishes/%d/status" % w3, {"status": "delivered"},
+         actor=girl, expect_error=True)
+    call("POST", "/api/wishes/%d/status" % w3, {"status": "delivered"}, actor=dad)
+    check("给过之后它从兑现清单里撤下来",
+          not any(x["id"] == w3 for x in call("GET", "/api/wishes/to-fulfil", actor=dad)["items"]))
+    # 再是他点「我收到了」才算完 —— 大人替他点不了，这一步是他自己的
+    call("POST", "/api/wishes/%d/status" % w3, {"status": "claimed"}, actor=dad, expect_error=True)
+    call("POST", "/api/wishes/%d/status" % w3, {"status": "claimed"}, actor=girl)
+    check("他点过「我收到了」这条才算完",
+          db.query_one("SELECT status FROM wish WHERE id=?", (w3,))["status"] == "claimed")
     # 驳回挂起的
     call("POST", "/api/wishes/%d/status" % r2["wish_id"], {"status": "cancelled"}, actor=dad)
 

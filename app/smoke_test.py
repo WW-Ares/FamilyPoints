@@ -1713,8 +1713,9 @@ def main():
     check("直购箱买完就不是待开状态",
           not [x for x in E.pending_boxes(BOY) if x["box_id"] == buy.get("box_id")])
 
-    # 四、③：一直没开的箱，下个周期结算时系统顺手替他开掉
-    #     判定按 ts（任务奖励发的箱没有 cycle_id），不按 cycle
+    # 四、③：一直没开的箱，v44 起**不替他开** —— 留到他自己点，赛季末也不动它。
+    #     （v38 定的「结算时系统顺手替开」在 v44 整条撤了：开箱这个动作留给孩子，
+    #      没开的箱连季末清场都绕开。所以下面三条断言是反过来写的。）
     E.freeze_clock("2026-06-01 20:00:00")
     E.get_or_create_cycle(BOY, "2026-06-01")
     stale = E.issue_box(BOY, 2, source="free", operator_id=DAD)
@@ -1727,14 +1728,14 @@ def main():
     E.ensure_settled(BOY, day="2026-06-15")
     row = db.query_one("SELECT opened_at, random_json FROM box_open WHERE id=?",
                        (stale["box_id"],))
-    check("隔了一个周期还没开的箱，结算时被系统替开", bool(row["opened_at"]),
+    check("隔了一个周期还没开的箱，结算不替他开", row["opened_at"] is None,
           row["opened_at"])
-    check("替开的那箱也不是待处理状态了",
-          not [x for x in E.pending_boxes(BOY) if x["box_id"] == stale["box_id"]])
+    check("没开的箱一直挂着，等他自己点",
+          bool([x for x in E.pending_boxes(BOY) if x["box_id"] == stale["box_id"]]))
     ntf = db.query_one("SELECT title, body FROM notification WHERE member_id=?"
                        " AND kind='box_auto' ORDER BY id DESC", (BOY,))
-    check("系统自己动的手留了名字（打了通知）", bool(ntf), ntf and ntf["title"])
-    # 替开只认「早于本周期开始」的 ts：本周期刚发的箱不能在同一周里被开掉
+    check("没有「系统替你开了」这种通知", not ntf, ntf and ntf["title"])
+    # 本周期刚发的箱同样不动（这条在两种口径下都成立，留着看别把它改回去）
     fresh_box = E.issue_box(BOY, 2, source="free", operator_id=DAD)
     E.freeze_clock("2026-06-22 20:00:00")
     E.get_or_create_cycle(BOY, "2026-06-22")

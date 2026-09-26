@@ -472,6 +472,13 @@ def post_setting(ctx):
     ok, msg = db.set_setting(key, val, actor_id=me["id"])
     if not ok:
         raise ApiError(msg)
+    # 赛季长度改了，本季的结束日得跟着重算 —— 不然「改了长度」只对新一季生效，
+    # 家长当天看不到任何变化，会以为没改上（赛季屏上那句「本季到哪天」也不动）。
+    if key == "season.length_days":
+        import engine as E
+        # 走 retune_season，不在这里自己算结束日：算出来落在过去的话，
+        # 定时器下一轮就当场清场（券、卡、欠账一次清掉），家长只是改了个数字。
+        E.retune_season(val)
     return {"ok": True, "message": msg}
 
 

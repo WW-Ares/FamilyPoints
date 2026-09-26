@@ -12,6 +12,10 @@ function num(v) {
   if (!isFinite(n)) return '0';
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }
+/* 两处（口径演算与许愿池欠账汇总）都要把小数收敛到分，写成一处。
+   float 累加会出现 24.999999 这种尾巴，界面上很难看，也会让「两项都是 0」
+   这种判断失效。 */
+const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 
 const S = {
   me: null, isParent: false, members: [], target: null,
@@ -594,11 +598,50 @@ function pHash(v, push) {
   } catch (e) { /* file:// 之类下面没有 history，能跑就行 */ }
 }
 
+/* hash 切成两段，跟登录页那套（'#login/<成员号>'）同一个写法：
+   'settings/<组名>' 里的屏名只算斜杠前面那一段 —— 屏名是枚举，组名是数据，
+   不切开的话 pValid 认不出它，刷新一次就落到 home 去了。 */
+function pSplitHash(raw) {
+  const s = String(raw || '').replace(/^#/, '');
+  const cut = s.indexOf('/');
+  return cut < 0 ? { v: s, g: '' } : { v: s.slice(0, cut), g: s.slice(cut + 1) };
+}
+/* 设置里那一层分组也写进地址（'#settings/周期与假期'）。
+   原来它只活在内存里，地址一直是 '#settings'，于是手机右滑 = 浏览器退一格，
+   直接退回进来时那条（'#me'），整个设置页被跳过 —— 这就是「右滑回到我的」。
+   写进地址之后右滑就是「退一级」，顺带刷新还能落回原来那一组。 */
+function pSetHash(g, push) {
+  const h = g ? '#settings/' + g : '#settings';
+  if (location.hash === h) return;
+  try {
+    if (push === false) history.replaceState({ v: 'settings', g: g || '' }, '', h);
+    else history.pushState({ v: 'settings', g: g || '' }, '', h);
+  } catch (e) { /* 同上 */ }
+}
+
+/* 从某一组退回一级（设置页的返回箭头、底栏再点一次「设置」，两条路都要）。
+   地址用 replaceState 改成 '#settings'：不能 push，否则退回去的那一步会
+   变成「又进了一次设置」，右滑一次还在设置页里打转。代价是栈里出现两条
+   一样的 '#settings'，下一次右滑落在「地址没变」的那条上 —— 交给
+   pFromHash 里那句 P_SET_BACK 替他再退一格。 */
+function pSetBackToTop() {
+  P_SETGRP = '';
+  pSetHash('', false);
+  P_SET_BACK = true;
+  render();
+}
+
 /* 换屏的唯一入口。底栏走 pGo（同一格再点一次不堆历史），
    二级页入口走 pGo 也一样 —— 语义不同只在于进的是哪一屏。 */
 function pGo(v) {
   if (!pValid(v)) return;
-  if (v === S.view) { pHash(v, false); render(); return; }
+  if (v === S.view) {
+    // 「设置」两级共用一个屏名：已经在某组里还点「设置」，等于退回一级那几行
+    if (v === 'settings' && P_SETGRP) {
+      pSetBackToTop(); return;
+    }
+    pHash(v, false); render(); return;
+  }
   // 这一跳是不是「返回上级」：目标是当前屏记下的来路，就是往回走。
   const back = P_FROM[S.view] === v;
   viewPosSave(S.view);
@@ -657,7 +700,7 @@ function scrollTop0() {
   if (c) c.scrollTop = 0;
 }
 function pPick(fallback) {
-  const v = String(location.hash || '').replace(/^#/, '');
+  const v = pSplitHash(location.hash).v;
   if (pValid(v)) return v;
   // 旧屏名认一下：升级前停在「任务」「设置」上的人，刷新后不该看见空白页
   const map = { tasks: 'publish', setup: 'me', settings: 'me', kid: 'family' };
@@ -670,13 +713,26 @@ function pPick(fallback) {
    目标是来路就把位置还回去，不是（前进、或者从别处跳来）照旧回顶上。 */
 function pFromHash() {
   if (!S.isParent || !S.me) return;
-  const v = String(location.hash || '').replace(/^#/, '');
-  if (!pValid(v) || v === S.view) return;
+  const p = pSplitHash(location.hash);
+  const v = p.v;
+  if (!pValid(v)) return;
+  // 地址里那个组名认一下：手改地址、或者 GRP_TREE 改过名字之后，
+  // 留着一个不存在的组名会卡在「P_SETGRP 非空但画不出一组」上
+  const g = (v === 'settings' && GRP_TREE.some(x => x.n === p.g)) ? p.g : '';
+  if (v === S.view) {
+    // 同一屏里来回，只有设置的一级 ↔ 某一组这一种：地址说哪一层就摆哪一层。
+    // 「点返回箭头 / 右滑一次」都从这儿走，右滑退回一级而不是掉出设置页。
+    if (v === 'settings' && g !== P_SETGRP) { P_SETGRP = g; render(); return; }
+    // 地址跟内存都指向同一层 —— 界面本来就没得变。多半是退回一级时那句
+    // replaceState 留在栈里的重复条目，这一下右滑该算「再退一级」。
+    if (v === 'settings' && P_SET_BACK) { P_SET_BACK = false; history.back(); return; }
+    return;
+  }
   const back = P_FROM[S.view] === v;
   viewPosSave(S.view);
   // 往回走就把来路那一条丢掉，不往回写（理由见 pGo 那条注释）
   if (back) delete P_FROM[S.view];
-  if (v !== 'settings') P_SETGRP = '';
+  P_SETGRP = v === 'settings' ? g : '';
   S.view = v;
   viewPosRestore(v, back);
   renderTabs(); render();
@@ -792,6 +848,11 @@ async function boot() {
     if (S.isParent) {
       // hash 里有合法的屏就用它，刷新后还停在原来那一屏；旧屏名在 pPick 里换掉
       S.view = pPick(S.view);
+      // 设置那一屏连着组名一起还原：刷新前在看「周期与假期」，刷新后还在那儿
+      if (S.view === 'settings') {
+        const g = pSplitHash(location.hash).g;
+        P_SETGRP = GRP_TREE.some(x => x.n === g) ? g : '';
+      }
     } else {
       // 孩子端换皮以后屏名也换了（week→home、dims→report、boxes→chest …），
       // 定屏交给孩子端自己。
@@ -802,6 +863,9 @@ async function boot() {
     renderTabs();
     renderTop();
     await render();
+    // 孩子端：进来先看一眼有没有「发放时扣了欠账」要告知的。扣款发生在
+    // 「每期结束」那两个口子，孩子未必当场在场，所以下一次打开时补给他。
+    if (!S.isParent && typeof kDebtNotices === 'function') kDebtNotices();
   } catch (e) {
     // 启动就失败时不能只弹个 toast，否则页面停在「加载中…」，看着还是白屏
     err(e);
@@ -1230,24 +1294,6 @@ function renderTop() {
 
 /* 点「我的」页身份卡开的那个弹层。v19 起这里不再提供「切换成别人」——
    账号密码下，换成另一个人就是用他的账号重新登录，点一下就能变成孩子身份
-   等于密码白设了。 */
-function whoSheet() {
-  const me = S.me;
-  sheet('<h3>' + esc(me.name) + '</h3>' +
-    '<p class="muted">账号　' + esc(me.username || '（还没设账号）') + '　' +
-    (me.role === 'parent' ? '家长 · 只打分' : '孩子 · 玩游戏') +
-    (me.is_admin ? '　管理员' : '') + '</p>' +
-    '<button class="btn wide line" id="chpw">改密码</button>' +
-    '<button class="btn wide line" id="logout" style="margin-top:8px">退出登录</button>' +
-    '<div class="muted" style="margin-top:10px">要换成别人，先退出，再用他的账号进。</div>',
-    box => {
-      $('#chpw', box).addEventListener('click', () => { closeSheet(); changePwSheet(); });
-      $('#logout', box).addEventListener('click', async () => {
-        await api('POST', '/api/logout');
-        closeSheet(); S.me = null; S.data = {}; S.view = null; await boot();
-      });
-    });
-}
 
 /* ------------------------------------------------------------------ 家人账号 */
 /* 谁能对谁做什么，一句话：管理员对谁都行，家长只对自己的孩子，
@@ -1297,7 +1343,7 @@ function avatarSheet(m, after) {
         else await api('PATCH', '/api/members/' + target.id, { avatar: b.dataset.av });
         closeSheet(); toast('换好了');
         // 顶上和列表里的头像都是启动时抓的一份，不重拉一遍还是旧的那张。
-        // 这里不 boot()：那一下会把「家人账号」那一层也一起关掉。
+        // 所以这里只重拉成员表，不走 boot()。
         await refreshMembers();
         if (after) await after(); else await render();
       } catch (e) { err(e); }
@@ -1305,83 +1351,9 @@ function avatarSheet(m, after) {
   });
 }
 
-async function membersSheet() {
-  let d;
-  try { d = await api('GET', '/api/members'); } catch (e) { return err(e); }
-  const me = S.me;
-  const lists = d.members;
-  const notYet = lists.filter(m => !m.has_password);
-
-  let h = '<h3>家人账号</h3><p class="muted">账号就是名字。' +
-    '密码只有本人知道，忘了就让家长或管理员重置一个。</p>';
-
-  if (notYet.length) {
-    h += '<div class="notice warn">还有 ' + notYet.length + ' 个没设密码（' +
-      notYet.map(m => esc(m.name)).join('、') + '）。没设密码的人进不来。</div>';
-  }
-
-  /* 一行拆三层：名字 / 账号 / 按钮。
-     原来这四样挤在同一条横线上，按钮一多就把名字压成一字一行 —— 跟账号
-     长短无关，短名也一样坏。拆开之后账号再长也只是自己折行，压不到别人。 */
-  h += '<div class="card">' + lists.map(m =>
-    '<div class="item mem-row">' +
-    '<div class="mem-line">' + avatarHTML(m, 34) +
-    '<div class="txt"><div class="nm">' + esc(m.name) + ' ' + memberTag(m) +
-    (m.id === me.id ? ' <span class="tag blue">我自己</span>' : '') + '</div></div>' +
-    '<div class="mem-pw">' + (m.has_password ? '<span class="ds">密码已设</span>'
-      : '<span class="no-t">还没设密码</span>') + '</div></div>' +
-    '<div class="mem-line mem-line--acc"><span class="mem-key">账号</span>' +
-    '<span class="mem-acc">' + esc(m.username || '—') + '</span></div>' +
-    '<div class="wact">' +
-    (canResetPassword(me, m) && m.id !== me.id
-      ? '<button class="btn sm' + (m.has_password ? ' line' : '') +
-        '" data-mpw="' + m.id + '">' + (m.has_password ? '重置密码' : '设密码') + '</button>' : '') +
-    (me.is_admin
-      ? '<button class="btn sm ghost" data-medit="' + m.id + '">改名</button>' : '') +
-    (me.is_admin || m.id === me.id || (me.role === 'parent' && m.role === 'child')
-      ? '<button class="btn sm ghost" data-mav="' + m.id + '">换头像</button>' : '') +
-    (me.is_admin && m.id !== me.id && m.active !== 0
-      ? '<button class="btn sm ghost" data-mdel="' + m.id + '">停用</button>' : '') +
-    '</div></div>').join('') + '</div>';
-
-  if (me.is_admin) {
-    h += '<div class="hr"></div>' +
-      '<div class="muted">开通一个新人。密码给完就能用，' +
-      '旧记录一律不动。</div>' +
-      '<button class="btn wide" id="mAdd" style="margin-top:10px">添加家人</button>';
-  } else {
-    h += '<div class="hr"></div><div class="muted">开通新账号是管理员的事。' +
-      '现在管理员是 ' + esc((lists.filter(x => x.is_admin)[0] || {}).name || '（未指定）') + '。</div>';
-  }
-
-  sheet(h, box => {
-    $$('[data-mpw]', box).forEach(b => b.addEventListener('click', () => {
-      const m = lists.filter(x => x.id === +b.dataset.mpw)[0];
-      closeSheet(); memberPwSheet(m, me);
-    }));
-    $$('[data-medit]', box).forEach(b => b.addEventListener('click', () => {
-      const m = lists.filter(x => x.id === +b.dataset.medit)[0];
-      closeSheet(); memberEditSheet(m, me);
-    }));
-    $$('[data-mav]', box).forEach(b => b.addEventListener('click', () => {
-      const m = lists.filter(x => x.id === +b.dataset.mav)[0];
-      closeSheet(); avatarSheet(m);
-    }));
-    $$('[data-mdel]', box).forEach(b => b.addEventListener('click', async () => {
-      const m = lists.filter(x => x.id === +b.dataset.mdel)[0];
-      try {
-        await api('DELETE', '/api/members/' + m.id);
-        closeSheet(); toast(m.name + ' 已停用，记录都留着'); await membersSheet();
-      } catch (e) { err(e); }
-    }));
-    const add = $('#mAdd', box);
-    if (add) add.addEventListener('click', () => { closeSheet(); memberAddSheet(); });
-  });
-}
-
 /* 换了名字 / 头像 / 口令之后只把成员表重拉一遍。
    以前这里一律 boot()（整机重启），那一下会把弹层栈整个塌掉：
-   从「设置 → 家人账号 → 改某某」保存完直接回到「我的」，还得从头点进去。 */
+   从「我的 → 家庭和账号 → 改名」保存完直接回到「我的」，还得从头点进去。 */
 async function refreshMembers() {
   try {
     const b = await api('GET', '/api/bootstrap');
@@ -1390,9 +1362,9 @@ async function refreshMembers() {
   } catch (e) { /* 拉不动就沿用旧的，别为了刷新把这一屏弄没了 */ }
 }
 
-/* after 是「干完回到哪儿」：从「家庭和账号」进来就回那一屏（render），
-   从老的弹层里进来就退回弹层（membersSheet）。省掉这一参数的话，改完密码会
-   被一张弹层盖住刚改完的那一行。 */
+/* after 是「干完回到哪儿」：从「家庭和账号」进来就回那一屏（render）。
+   不传的话也落回 render —— 改完密码得看见刚改完的那一行，
+   不能被一张弹层盖住。 */
 function memberPwSheet(m, me, after) {
   const reset = !!m.has_password;
   sheet('<h3>' + (reset ? '重置 ' : '给 ') + esc(m.name) + (reset ? ' 的密码' : ' 设密码') + '</h3>' +
@@ -1413,10 +1385,13 @@ function memberPwSheet(m, me, after) {
         if (a !== b) return err({ message: '两次输的密码不一样' });
         try {
           const r = await api('POST', '/api/members/' + m.id + '/password', { password: a });
+          // 存成功要把这一层收掉。原来收不掉，改完密码那一层还挂在屏幕上，
+          // 得手动点一下外面才消失 —— 家长会以为没存上、再按一次。
+          closeSheet();
           toast(r.note || '设好了');
           await refreshMembers();
           if (after) await after();
-          else await membersSheet();   // 退回「家人账号」那一层，不是塌回「我的」
+          else await render();   // 回到「家庭和账号」那一屏
         } catch (e) { err(e); }
       });
     });
@@ -1435,10 +1410,11 @@ function memberEditSheet(m, me, after) {
         try {
           await api('PATCH', '/api/members/' + m.id,
             { name: $('#nm', box).value, username: $('#un', box).value });
+          closeSheet();          // 跟改密码那条一样：存成功就把这一层收掉
           toast('存好了');
           await refreshMembers();
           if (after) await after();
-          else await membersSheet();   // 退回「家人账号」那一层，不是塌回「我的」
+          else await render();   // 回到「家庭和账号」那一屏
         } catch (e) { err(e); }
       });
       const ma = $('#mAdmin', box);
@@ -1472,7 +1448,7 @@ function memberAddSheet(after) {
           closeSheet(); toast(r.note || '开通了');
           await refreshMembers();
           if (after) await after();
-          else await membersSheet();
+          else await render();
         } catch (e) { err(e); }
       });
     });
@@ -1550,47 +1526,8 @@ async function render() {
   }
 }
 
-/* ------------------------------------------------------------------ 星球等级 */
-function levelName(lv) {
-  if (!lv) return '';
-  return 'LV ' + lv.level + '　' + lv.title;
-}
 
-// 孩子端顶部的英雄面板：名字、星尘、星球等级、升级进度
-function heroHTML(lv, opt) {
-  opt = opt || {};
-  const me = S.me;
-  let h = '<div class="hero"><div class="hero-top">' +
-    '<div class="hero-av">' + avatarHTML(me, 44) + '</div>' +
-    '<div class="hero-id"><span class="eyebrow" style="color:rgba(255,255,255,.62)">' +
-    esc(opt.kicker || '我的星球') + '</span><h2>' + esc(me.name) + '</h2>' +
-    '<div class="sub">' + esc(opt.sub || '') + '</div></div>' +
-    (opt.stardust == null ? '' : '<div class="hero-bal"><b>' + num(opt.stardust) +
-      '</b><span>星尘</span></div>') +
-    '</div>';
-  if (lv) {
-    h += '<div class="lv-line"><span class="lv-chip">LV <strong>' + lv.level + '</strong></span>' +
-      '<span class="lv-title">' + esc(lv.title) + '</span>' +
-      '<span class="lv-xp">' + num(lv.total) + ' / ' +
-      num(lv.next ? lv.next.threshold : lv.threshold) + '</span></div>' +
-      '<div class="xp-track"><i style="width:' + lv.percent + '%"></i></div>' +
-      '<div class="hero-note">' + (lv.next
-        ? '再攒 ' + num(lv.need) + ' 星尘升到「' + esc(lv.next.title) + '」。花掉的星尘不算，等级只升不降。'
-        : '已经是最高一档了，往上只有你自己。') + '</div>';
-  }
-  if (opt.stats && opt.stats.length) {
-    h += '<div class="hero-stats">' + opt.stats.map(s =>
-      '<div><span>' + esc(s[0]) + '</span><strong>' + esc(s[1]) + '</strong></div>').join('') + '</div>';
-  }
-  return h + '</div>';
-}
 
-function ladderHTML(tiers, cur) {
-  return '<div class="ladder">' + tiers.map(t => {
-    const on = cur && t.level === cur.level;
-    return '<div class="' + (on ? 'on' : '') + '"><b>' + esc(t.title) + '</b>' + t.threshold + '</div>';
-  }).join('') + '</div>';
-}
 
 /* 七档箱子横过来一条。宝箱栏和「这周」栏共用这一处 —— 同一组门槛在两个页面
    各画一遍，改一处漏一处的时候两边显示的档位就会对不上。
@@ -1647,10 +1584,13 @@ function stepsHTML(step, labels) {
 
 function feedRow(x, opt) {
   const gk = x.kind === 'task' ? 'task' : (x.kind === 'wish' ? 'wish' : 'task');
+  // 心愿「够了」那一句两头各说各的：孩子那边他能做的只有等，家长那边球在他手上。
+  const stText = (x.kind === 'wish' && x.state_key === 'ready' && !opt.kid)
+    ? '够了，该你去办了' : x.state_text;
   let h = '<div class="item task-row">' + glyph(x.icon, gk, 30) + '<div class="txt">' +
     '<div class="nm">' + (opt.who && x.who ? '<span class="fwho">' + esc(x.who) + '</span>' : '') +
     esc(x.title) + ' <span class="tag ' + (FEED_TAG[x.state_key] || '') + '">' +
-    esc(x.state_text) + '</span></div>' +
+    esc(stText) + '</span></div>' +
     // 一条动态里混着任务、心愿、校准三种东西，先报是哪一种再看细节
     '<div class="ds">' + esc(x.kind_text || '') +
     (x.detail ? '　' + esc(x.detail) : '') + '</div>';
@@ -1670,39 +1610,12 @@ function feedRow(x, opt) {
       h += '<button class="btn sm" data-tdone="' + x.task_id + '">做完了</button>';
     }
   }
-  if (opt.kid && x.wish_id && x.state_key === 'ready') {
-    h += '<button class="btn sm" data-wdone="' + x.wish_id + '">我做到了</button>';
-  }
+  // 心愿原来也在这儿挂一颗「我做到了」（data-wdone）。v44 撤了：系统算得出来
+  // 的条件，够了就自己落成「已达成」，不用他再报一次；靠人判的那条，按钮长在
+  // 他自己那一行上（心愿屋里的 wishSubRow），不在这儿再给一颗。
   return h + '</div>';
 }
 
-function feedHTML(d, opt) {
-  opt = opt || {};
-  const items = (d && d.items) || [];
-  const recent = (d && d.recent) || [];
-  if (!items.length && !recent.length) {
-    return '<div class="sec"><div class="sec-h"><h2>动态</h2></div>' +
-      '<div class="card pad"><div class="empty">眼下没有在推进的事</div></div></div>';
-  }
-  let h = '<div class="sec"><div class="sec-h"><h2>动态</h2><span class="sub">' +
-    (items.length ? '手上还有 ' + items.length + ' 件没完' : '手头都清干净了') + '</span></div>';
-  if (items.length) {
-    h += '<div class="card">' + items.map(x => feedRow(x, opt)).join('');
-    if (d.total > items.length) {
-      h += '<div class="pad muted">还有 ' + (d.total - items.length) + ' 件没列出来</div>';
-    }
-    h += '</div>';
-  }
-  if (recent.length) {
-    h += '<div class="card" style="margin-top:10px"><div class="fband">最近发生</div>' +
-      recent.map(r => '<div class="item"><div class="txt">' +
-        '<div class="nm" style="font-weight:550;font-size:13.5px">' +
-        (opt.who && r.who ? esc(r.who) + ' ' : '') + esc(r.text) + '</div>' +
-        '<div class="ds">' + esc(String(r.ts || '').slice(5, 16)) + '</div></div></div>').join('') +
-      '</div>';
-  }
-  return h + '</div>';
-}
 
 /* 任务大厅的三个动作：领、交、放。
    「这周」和大厅页共用这一处，免得同一套规则写两遍、改一处漏一处。 */
@@ -1744,22 +1657,6 @@ function bindTaskActions() {
         });
       });
   }));
-  // 首页动态里那条「够了，可以兑现」的心愿，按钮是 data-wdone，
-  // 绑定只写在 bindWishActions 里一处 —— 两个函数都给同一个按钮挂监听的话，
-  // 点一下会跑两遍（心愿登记两次、弹层叠两层）。
-}
-
-/* 心愿的三个动作用同一套文案：孩子端（许愿屋）和家长端（心愿单）都走它。 */
-function askWishDone(id, after) {
-  askSheet({
-    title: '这条心愿达成了',
-    hint: '确认是这一条心愿，点完进已达成且不能改回去',
-    ok: '确认达成',
-  }, async () => {
-    await api('POST', '/api/wishes/' + id + '/status', { status: 'achieved' });
-    closeSheet(); toast('记下了，跟爸爸妈妈说一声');
-    if (after) await after(); else await render();
-  });
 }
 
 /* ================================================================== 孩子端 · 许愿屋 */
@@ -1969,9 +1866,6 @@ function bindWishActions() {
       } catch (e) { err(e); }
     });
   }));
-  $$('#view button[data-wdone]').forEach(b => b.addEventListener('click', async () => {
-    askWishDone(b.dataset.wdone);
-  }));
 }
 
 /* 历史心愿默认收起。它不是每天要看的东西，但也不能删掉 ——
@@ -1985,7 +1879,12 @@ let WISH_HIST_OPEN = false;
 function wishHistRow(x) {
   let cls = 'tag', label = '已结束';
   if (x.status === 'achieved') { cls = 'tag ok'; label = '已达成'; }
-  else if (x.status === 'claimed') { cls = 'tag ok'; label = '已兑现'; }
+  // v44：claimed 从「家长点了一下」变成「他自己点过『我收到了』」，
+  // 标签跟着这句真实发生的事改 —— 「已兑现」说的是家长那头，不是落点。
+  else if (x.status === 'claimed') { cls = 'tag ok'; label = '已收到'; }
+  // v44：万一哪天过滤放宽、delivered 落到这一栏，别退化成「已结束」——
+  // 它是「给过了、等他点」，跟前三种结束方式都不是一回事。
+  else if (x.status === 'delivered') { cls = 'tag'; label = '已经给他了'; }
   else if (x.status === 'cancelled' && x.closed_from) {
     // 老库里结束的心愿没留下「谁点的」，那种退化成「已结束」，不猜名字
     const by = x.closed_by ? memberOf(x.closed_by) : null;
@@ -2032,24 +1931,6 @@ function wishNewSheet() {
    老接口只给 card_rarity 的时候退回单张的写法。
    v25：商店那一份（t.purchased）不写概率。买来的箱子本来就不出随机件
    —— 后端把它的 random_rate 直接给 0 了，这里再明说一句：
-   「不含随机件」比省略不说清楚，省得孩子拿宝箱栏那张概率表来对。 */
-function boxContentText(t) {
-  const p = ['保底 ' + num(t.tickets) + ' 张券'];
-  if (t.stardust) p.push(num(t.stardust) + ' 星尘');
-  const cards = t.cards || [];
-  if (cards.length) {
-    p.push('必出 ' + cards.map(c => (RAR[c.rarity] || '') + '卡 ×' + (c.count || 1)).join('、'));
-  } else if (t.card_rarity) {
-    p.push('必出 1 张' + (RAR[t.card_rarity] || '') + '卡');
-  }
-  if (t.purchased) {
-    p.push('不含随机件');
-    return p.join('　');
-  }
-  if (t.random_rate) p.push(Math.round(t.random_rate * 100) + '% 出随机件');
-  if (t.diamond_rate) p.push(Math.round(t.diamond_rate * 100) + '% 出钻石级');
-  return p.join('　');
-}
 
 function confirmBuyBox(tier, price) {
   sheet('<h3>直购宝箱</h3><p class="muted">花 ' + price + ' 星尘买第 ' + tier +
@@ -2396,27 +2277,7 @@ function gateReason(st) {
   return '现在能用，最多 ' + st.max_qty_now + ' 张　最后一轮要在 ' + st.curfew + ' 前结束';
 }
 
-function tkStatusText(s) {
-  return { pending: '等爸爸妈妈点一下', approved: '可以用啦', self: '已用掉',
-    rejected: '没同意', expired: '等太久，作废了' }[s] || s;
-}
 
-/* 一条申请「现在到哪一步了」的那句话。孩子提交之后最想知道的就这三件：
-   批了没、为什么没批、还能玩多久。以前这行只写「→ 21:30」，看不出在不在玩。 */
-function tkStatusNote(x) {
-  if (x.status === 'pending') {
-    const el = miniLeft(x.expire_at);
-    return '还在等爸爸妈妈点一下' + (el ? '，' + el : '');
-  }
-  if (x.status === 'rejected') return '';            // 理由单独一行，更醒目
-  if (x.status === 'expired') return '等太久了，这条自己作废了，想玩可以重新提';
-  if (x.running) return '正在玩，' + tkLeftText(tkLeftMs(x.end_at)) + '结束';
-  if (x.start_at) {
-    return '玩过了：' + String(x.start_at).slice(11, 16) + ' → ' +
-      String(x.end_at || '').slice(11, 16);
-  }
-  return '';
-}
 
 /* ------------------------------------------------------------------ 倒计时 */
 /* 秒级倒计时只改那几个数字，不重画整页 —— 重画会把滚动位置抹掉，
@@ -2716,42 +2577,6 @@ document.addEventListener('visibilitychange', function () {
 /* 孩子首页的券状态卡（v29）。
    以前它躺在「我的 → 我的券」里：提交了不知道审没审、批了不知道还剩多久，
    都得自己翻进去看。券是**当下正在发生**的事，它该跟动态一起出现在第一屏，
-   而不是跟库存一起待在角落里。等审核的那条给作废倒计时，批了的那条给秒级进度条。 */
-function ticketBannerHTML(tk) {
-  const items = (tk && tk.items) || [];
-  const run = items.filter(x => x.running);
-  const pend = items.filter(x => x.status === 'pending');
-  const rej = items.filter(x => x.status === 'rejected');
-  let h = '';
-  if (run.length) {
-    h += '<div class="sec"><div class="sec-h"><h2>正在玩</h2>' +
-      '<span class="sub">到点自己结束</span></div>' +
-      run.map(x => '<div class="card pad tk-run" data-tkend="' + esc(x.end_at) +
-        '" data-tktotal="' + num(x.total_minutes || 0) + '">' +
-        '<div class="row between"><span class="tag ok">' + esc(x.item) + ' ×' + num(x.qty) +
-        '</span><b class="tk-big" data-tkleft>' +
-        esc(tkLeftText(tkLeftMs(x.end_at))) + '</b></div>' +
-        '<div class="bar gold" style="margin-top:9px"><i data-tkbar style="width:0%"></i></div>' +
-        '<div class="muted" style="margin-top:7px">' +
-        esc(String(x.start_at).slice(11, 16)) + ' → ' + esc(String(x.end_at).slice(11, 16)) +
-        (x.by ? '　' + esc(x.by) + '同意的' : '') +
-        (x.note ? '　' + esc(x.note) : '') + '</div></div>').join('') + '</div>';
-  }
-  if (pend.length) {
-    h += '<div class="sec"><div class="card pad tk-pend">' +
-      pend.map(x => '<div class="row between"><span><b>' + esc(x.item) + ' ×' + num(x.qty) +
-        '</b>　等爸爸妈妈同意</span><span class="muted">' + esc(miniLeft(x.expire_at)) +
-        '</span></div>' + (x.note ? '<div class="ds muted">' + esc(x.note) + '</div>' : '')
-      ).join('') + '</div></div>';
-  }
-  if (rej.length) {
-    h += '<div class="sec"><div class="card pad tk-judge">' + rej.map(x =>
-      '<div><b>' + esc(x.item) + '</b> 没同意</div>' +
-      (x.reject_note ? '<div class="ds tk-no">' + esc(x.reject_note) + '</div>' : '')
-    ).join('') + '</div></div>';
-  }
-  return h;
-}
 
 /* 「正在玩」。家长要在第一屏就能看到：孩子说「我就玩一会儿」，
    到底是不是真的在用、还剩几分钟到点。带秒级倒计时，不用自己按刷新。
@@ -2816,9 +2641,6 @@ function miniLeft(expireAt) {
   return '还剩 ' + m + ' 分钟';
 }
 
-function tkTagClass(s) {
-  return s === 'approved' || s === 'self' ? 'gold' : (s === 'rejected' ? '' : '');
-}
 
 /* 提交之后那三拍：券飞出去 → 落到「爸爸妈妈」那一端 → 「送出去了」落地。
    以前点完提交只有一句 toast，弹层立刻关掉，孩子只看到页面闪了一下，
@@ -2859,9 +2681,19 @@ function ticketSheet(code, name, balance, state, icon) {
   const cap = isFun ? Math.max(1, Math.min(balance, state.max_qty_now)) : Math.min(balance, 3);
   const opts = [];
   for (let i = 1; i <= cap; i++) opts.push(i);
+  /* v44：一张券实际能玩多久 = 面值 − 分钟欠账（最少留半张）。有这个数就得在
+     提交之前说清 —— 欠着的时候孩子以为拿到的还是整张，玩到一半发现短了，
+     那一下比少给更伤人。没有欠账时 play_minutes 就等于面值，读起来不变。 */
+  const playMin = +((state && state.play_minutes) || (state && state.minutes) || 0);
+  const full = +((state && state.minutes) || 0);
+  const shortBy = (state && state.debt_minutes > 0 && full > playMin)
+    ? Math.round((full - playMin) * 100) / 100 : 0;
   sheet('<h3>用「' + esc(name) + '」</h3>' +
     '<p class="muted">' + (isFun
-      ? '一张 ' + num(state.minutes) + ' 分钟。一轮里可以一张一张接着续，' +
+      ? '一张 ' + num(playMin) + ' 分钟。' +
+        (shortBy > 0 ? '（还欠 ' + num(state.debt_minutes) + ' 分钟，这一张先扣掉 ' +
+          num(shortBy) + ' 分钟，剩下的继续挂着）' : '') +
+        '一轮里可以一张一张接着续，' +
         '用满这一轮、或者隔 ' + num(state.renew_within_minutes || 10) +
         ' 分钟没续，才要休息。提交后要爸爸妈妈点一下才算数。'
       : '提交后要爸爸妈妈点一下才算数。') + '</p>' +
@@ -2889,7 +2721,8 @@ function ticketSheet(code, name, balance, state, icon) {
           // 提交之后不再是一句 toast 一闪而过。留三拍：券飞出去、落到
           // 「爸爸妈妈」那一端、纸片落地。孩子要的是「我那一下到底送出去没有」。
           const self = r.mode !== 'pending';
-          const mins = isFun && state.minutes ? ' · ' + num(qty * state.minutes) + ' 分钟' : '';
+          // 报的是实际时长（面值 − 零头），不是面值 —— 欠着的时候这两个数不一样。
+          const mins = isFun && playMin ? ' · ' + num(qty * playMin) + ' 分钟' : '';
           kDeliver({
             icon: icon, kind: 'ticket', self: self,
             k: self ? '已经用上了' : '送出去了',
@@ -3218,9 +3051,11 @@ async function pTodoData() {
     pg('/api/calibration?member_id=' + kidId(), { items: [] }),
     // 答应了、还没办的券。它跟「待兑现的卡」是一回事，合并见下面 fulfil。
     pg('/api/tickets/fulfill', { items: [] }),
+    // 心愿的条件到了、还没给他。同一张兑现清单，第三类（v44）
+    pg('/api/wishes/to-fulfil', { items: [] }),
   ]);
   const tasks = r[0], ot = r[1], hlp = r[2], tk = r[3], rdm = r[4];
-  const pendW = r[5], cash = r[6], subs = r[7], calib = r[8], fl = r[9];
+  const pendW = r[5], cash = r[6], subs = r[7], calib = r[8], fl = r[9], wfl = r[10];
   const items = [];
 
   // 券核销：时效最强（申请有 TTL，过期自动作废），排最上面
@@ -3324,9 +3159,10 @@ async function pTodoData() {
   //
   // ① 要人办的那几种券（陪伴 / 独处 / 好友）：批了只是家长**答应**了，
   //    还得真的腾出时间去做，办完才叫生效；
-  // ② 已经扣掉库存、效果要靠人去办的卡（陪伴卡、选择卡这些）。
+  // ② 已经扣掉库存、效果要靠人去办的卡（陪伴卡、选择卡这些）；
+  // ③ v44：心愿的条件到了，还欠他一个「去办」—— 买回来、约上时间、带他去。
   //
-  // 以前这两样散在「等你点头」和一栏「待兑现的卡」里，家长得两头找；
+  // 以前这几样散在「等你点头」和一栏「待兑现的卡」里，家长得两头找；
   // 对孩子来说它们是同一件事 —— 那边已经发生，这边还欠着。
   // 等得久的排前面：等了三天的那件，比今天刚答应的更该被看见。
   const fulfil = [];
@@ -3350,12 +3186,29 @@ async function pTodoData() {
       kind: 'rd',
     });
   });
+  // 心愿这一类没有「这次没办」这条退路：条件达成是既成事实，撤不掉
+  // （不设否决权那条红线），所以只给一颗「已经给他了」。
+  wfl.items.forEach(x => {
+    fulfil.push({
+      src: 'wi', id: x.id, who: x.who, item: x.title,
+      ico: 'i-wish', tone: 'var(--orange)',
+      title: x.title + ' · ' + x.who,
+      l1: '条件　' + (x.cond_text || ''),
+      l2: String(x.achieved_at || '').slice(0, 10) + ' 达成。办好后点「已经给他了」，' +
+        '他那边才知道 —— 他点过「我收到了」这条才算完',
+      kind: 'wi',
+    });
+  });
   fulfil.forEach(x => {
     items.push({
       key: 'fulfil', ico: x.ico, tone: x.tone, id: x.id,
       title: x.title, l1: x.l1, l2: x.l2,
-      btn: { t: x.kind === 'tk' ? 'fl-ok' : 'rd-ok', id: x.id, label: '办好了' },
-      alt: { t: x.kind === 'tk' ? 'fl-no' : 'rd-no', id: x.id, label: '这次没办' },
+      btn: {
+        t: x.kind === 'wi' ? 'wi-ok' : (x.kind === 'tk' ? 'fl-ok' : 'rd-ok'),
+        id: x.id, label: x.kind === 'wi' ? '已经给他了' : '办好了',
+      },
+      alt: x.kind === 'wi' ? null
+        : { t: x.kind === 'tk' ? 'fl-no' : 'rd-no', id: x.id, label: '这次没办' },
     });
   });
   // 设置改动待确认
@@ -3376,7 +3229,7 @@ async function pTodoData() {
    手写一句「券 1 · 任务 2」的话，它迟早会跟旁边的数字说的是两件事。 */
 const TODO_LABEL = {
   tk: '券', fix: '修复', claim: '心愿', task: '任务', wish: '心愿',
-  ot: '加时', cash: '零花钱', help: '求助', fulfil: '兑现卡', set: '设置',
+  ot: '加时', cash: '零花钱', help: '求助', fulfil: '兑现', set: '设置',
 };
 function pTodoBreakdown(TD) {
   const cnt = {};
@@ -3658,6 +3511,20 @@ function bindTodoActions(TD) {
       // 「办好了」要写一句办的是什么，「这次没办」也要写。
       if (t === 'fl-no') return tkFulfillSheet(id, false, TD.fulfil.filter(y => y.id === id)[0]);
       if (t === 'fl-ok') return tkFulfillSheet(id, true, TD.fulfil.filter(y => y.id === id)[0]);
+      // 心愿这一条：条件早到了，事情也办完了，这一步只是「跟他说一声」。
+      // 所以不像券那样还要问「你办了啥」—— 东西是线下给他的，没什么可填。
+      if (t === 'wi-ok') {
+        const x = TD.fulfil.filter(y => y.id === id && y.kind === 'wi')[0] || {};
+        return askSheet({
+          title: '已经给他了 · ' + (x.item || ''),
+          hint: '他那边会收到一句「爸爸妈妈说已经给你了」，等他点一下「我收到了」，' +
+            '这条心愿才算完。他不点，它就一直挂在他那边。',
+          ok: '记下，告诉他',
+        }, async () => {
+          await api('POST', '/api/wishes/' + id + '/status', { status: 'delivered' });
+          closeSheet(); await done('记下了，等他说收到');
+        });
+      }
       if (t === 'set-look') return openQA('settings');
     } catch (e) { err(e); }
   }));
@@ -3834,7 +3701,7 @@ async function renderAdminReview(v) {
   const fAll = TD.fulfil;
   h += '<div class="stack"><div class="sec-head"><span class="sec-title">兑现清单</span>' +
     '<span class="sec-count">' +
-    (fAll.length ? '答应了还没办的 · ' + fAll.length + ' 件' : '一件不欠') +
+    (fAll.length ? '答应了、还没给他的 · ' + fAll.length + ' 件' : '一件不欠') +
     '</span></div>';
   if (!fAll.length) {
     h += '<div class="card"><div class="empty">答应他的事都办完了</div></div>';
@@ -3848,13 +3715,17 @@ async function renderAdminReview(v) {
         (x.l2 ? '<span class="caption">' + esc(x.l2) + '</span>' : '') +
         '</div><div class="act-row">' +
         '<button type="button" class="btn btn--primary btn--sm" data-td="' +
-        (x.kind === 'tk' ? 'fl-ok' : 'rd-ok') + '" data-id="' + x.id + '">办好了</button>' +
-        '<button type="button" class="btn btn--ghost btn--sm" data-td="' +
-        (x.kind === 'tk' ? 'fl-no' : 'rd-no') + '" data-id="' + x.id + '">这次没办</button>' +
+        (x.kind === 'wi' ? 'wi-ok' : (x.kind === 'tk' ? 'fl-ok' : 'rd-ok')) +
+        '" data-id="' + x.id + '">' +
+        (x.kind === 'wi' ? '已经给他了' : '办好了') + '</button>' +
+        (x.kind === 'wi' ? '' :
+          '<button type="button" class="btn btn--ghost btn--sm" data-td="' +
+          (x.kind === 'tk' ? 'fl-no' : 'rd-no') + '" data-id="' + x.id + '">这次没办</button>') +
         '</div></div></div>';
     });
-    h += '<div class="notice">「办好了」要写一句办的是什么（例如「周六下午陪你搭乐高」），' +
-      '这句会出现在他那边的存档里。划掉的卡不退回 —— 但他能看到你点过。</div>';
+    h += '<div class="notice">券和卡：「办好了」要写一句办的是什么（例如「周六下午陪你搭乐高」），' +
+      '这句会出现在他那边的存档里。划掉的卡不退回 —— 但他能看到你点过。' +
+      '心愿那一条不一样：办完点「已经给他了」，他那边点过「我收到了」才算完。</div>';
   }
   h += '</div>';
 
@@ -3873,28 +3744,37 @@ async function renderAdminReview(v) {
         '</div></div></div>').join('') + '</div>';
   }
 
-  // 心愿单。库里进行中的状态是 active（achieved|claimed|cancelled 是结束态），
-  // 这里只列 active，结束的留在记录里。
+  // 心愿单（v44）。这一栏只报进度，一颗按钮都不给：
+  //   · 系统算得出来的条件，够了就由 check_wish_ready 当场落成「已达成」，
+  //     它自然从这儿消失、出现在上面那张兑现清单里 —— 以前每行挂一颗
+  //     「达成」，条件没到按下去挨的是红条，那颗按钮就是误导的来源；
+  //   · 靠人判的那种等他把「我做到了」交上来，球才回到家长这边
+  //     （那一条在「等你点头」里，不在这儿再给一次）。
+  // 撤心愿收进区块头那一颗：撤是低频动作，每行复制一遍的话，三行叠着
+  // 最右边就出现三颗一样的按钮，家长扫列表的落点正好压在它上面。
   const wActive = (wishes.items || []).filter(w => w.status === 'active');
-  // 行内只留「达成」，撤心愿收进区块头那一颗。撤是低频动作，
-  // 跟每一行复制一遍的话，三行叠着最右边就出现三颗一样的「取消」，
-  // 家长扫列表的落点正好压在它上面。
-  h += '<div class="stack"><div class="sec-head"><span class="sec-title">进行中的心愿</span>' +
+  h += '<div class="stack"><div class="sec-head"><span class="sec-title">还在攒的心愿</span>' +
     '<span style="display:flex;align-items:center;gap:8px;margin-left:auto">' +
     '<span class="sec-count">' + esc(mid ? memberName(mid) : '还没有孩子账号') +
     '　最多 ' + num(wishes.limit || 0) + ' 个</span>' +
     '<button class="btn btn--ghost btn--sm" id="wManage">撤心愿</button></span></div>' +
     '<div class="card">' +
-    (wActive.length ? wActive.map(w =>
-      '<div class="row">' + pic('i-wish', 20) +
-      '<div class="row-body"><span class="row-title">' + esc(w.title) + '</span>' +
-      '<span class="row-sub">' + esc(w.reward_desc || '') +
-      (w.price_note ? '　' + esc(w.price_note) : '') +
-      (w.selfpay_stardust ? '　已付 ' + num(w.selfpay_stardust) + ' 星尘' : '') + '</span></div>' +
-      '<div class="act-row"><button class="btn btn--primary btn--sm" data-wok="' + w.id +
-      '">达成</button></div>' +
-      '</div>').join('')
-      : '<div class="empty">没有进行中的心愿</div>') + '</div></div>';
+    (wActive.length ? wActive.map(w => {
+      const p = w.progress || {};
+      const where = p.manual
+        ? '这件事系统算不了，等他点「我做到了」，你点头才算够格'
+        : (p.has_pending ? '他交上来了，在「等你点头」里' : (p.text || ''));
+      return '<div class="row">' + pic('i-wish', 20) +
+        '<div class="row-body"><span class="row-title">' + esc(w.title) + '</span>' +
+        '<span class="row-sub">' + esc(w.reward_desc || '') +
+        (w.price_note ? '　' + esc(w.price_note) : '') +
+        (w.selfpay_stardust ? '　已付 ' + num(w.selfpay_stardust) + ' 星尘' : '') + '</span>' +
+        (p.percent != null ? '<div class="bar" style="margin-top:4px"><i class="ghost" style="width:' +
+          Math.min(100, p.percent) + '%"></i></div>' : '') +
+        (where ? '<span class="row-sub">' + esc(where) + '</span>' : '') + '</div>' +
+        '</div>';
+    }).join('')
+      : '<div class="empty">没有在攒的心愿</div>') + '</div></div>';
 
   // 校准记录：留档，不催办。它压在最下面，因为它是「已经处理过的事」。
   const calibs = (TD.calib.items || []);
@@ -3907,26 +3787,17 @@ async function renderAdminReview(v) {
       '<span class="row-sub">' + esc(String(c.created_at || c.ts || '').slice(0, 16)) +
       (c.task_title ? '　修复任务：' + esc(c.task_title) + '（' + esc(c.task_status) + '）' : '') +
       '</span></div>' +
-      '<span class="pill pill--gray">' + esc((c.effect && c.effect.type) || '记录') + '</span>' +
+      '<span class="pill pill--gray">' + esc(calibTag(c)) + '</span>' +
       '</div>').join('')
       : '<div class="empty">还没有校准记录</div>') + '</div></div>';
 
   v.innerHTML = h;
 
   bindTodoActions(TD);
-  $$('#view button[data-wok]').forEach(b => b.addEventListener('click', async () => {
-    const w = (wishes.items || []).filter(x => x.id === +b.dataset.wok)[0] || {};
-    askSheet({
-      title: '心愿《' + (w.title || '') + '》',
-      hint: '这条心愿进「已达成」，等下一步兑现。',
-      ok: '达成，记下来',
-    }, async () => {
-      try {
-        await api('POST', '/api/wishes/' + b.dataset.wok + '/status', { status: 'achieved' });
-        closeSheet(); toast('记下了，不设否决权'); await render();
-      } catch (e) { err(e); }
-    });
-  }));
+  // 原来这里挂着每行那颗「达成」（data-wok）。撤掉了：条件够了是系统算出来的
+  // 事实，不该由谁按一下按钮才成立；家长在这条链路上的动作只有两个 ——
+  // 条件到了去办（兑现清单里的「已经给他了」）、他交了作业式的说法时点头
+  //（「等你点头」里的那条）。
   // 撤心愿的入口收在区块头那一颗，点开的是心愿总台（wishSheet），
   // 那边每条进行中的心愿都挂着一颗「撤掉这个心愿」。同一个动作只有一套文案。
   const wm = $('#wManage');
@@ -4172,6 +4043,10 @@ const TASK_STATE = { open: '等人领', pending: '待做', claimed: '在做', su
    「完成标准」不是可选项。空着发出去的活，最后一定变成
    「你到底做没做」的争论 —— 所以它跟标题并列摆在同一张卡里。 */
 let P_PUBSEG = 'new';          // 'new' 写任务 / 'mine' 我发出的
+/* 「写校准」那一格要用到的现成数：每个孩子手上的星尘、娱乐券，加上设置里的
+   默认罚金 / 汇率 / 三个保底数。画这一屏时一次取好，别在每次敲数字的时候
+   现发请求 —— 现算那一行是跟着输入框逐字变的。 */
+let P_CALIB_CTX = { kids: [], sett: null, tk: {} };
 
 /* 奖励的四挡，第三个数是选中时quantity框里的默认值。 */
 const REWARD_OPTS = [['stardust', '星尘', 5], ['energy', '周能量', 1],
@@ -4207,6 +4082,32 @@ const CALIB_HINT = {
    这个字段只写不读：报告不看、统计不看、界面上也不显示。所以也不该做成一个
    选了却什么都不改变的旋钮。按家长选的处理方式自动定档，家长一道题都不用多答。 */
 const CALIB_LEVEL = { task: 2, fine: 3, ticket_min: 3, none: 1 };
+
+/* 「最近的校准」那颗灰标签写什么。
+   原来读的是 `c.effect.type`，可存进去的 effect 里**从来没有 type 这个键**
+   （罚款存的是 stardust/cash/debt/kept，扣时间存的是 want/whole/tickets……），
+   于是每一条都恒显示「记录」—— 罚了 10 星尘和只记一笔长得一模一样。
+   现在按 effect_type 分着报，把真正扣掉/欠下的数说出来。 */
+function calibTag(c) {
+  const e = c.effect || {};
+  switch (c.effect_type) {
+    case 'fine':
+      return '罚 ' + num(e.stardust || 0) + ' 星尘';
+    case 'ticket_min': {
+      const p = [];
+      if (+e.tickets > 0) p.push('扣 ' + num(e.tickets) + ' 张券');
+      if (+e.ticket_debt > 0) p.push('欠 ' + num(e.ticket_debt) + ' 张');
+      if (+e.minutes > 0) p.push('扣 ' + num(e.minutes) + ' 分钟');
+      return p.length ? p.join(' · ') : ('扣 ' + num(e.want || 0) + ' 分钟');
+    }
+    case 'task':
+      return '修复任务';
+    case 'device':
+      return '设备降级';
+    default:
+      return '记录';
+  }
+}
 
 async function renderAdminPublish(v) {
   const seg = P_PUBSEG;
@@ -4277,7 +4178,18 @@ async function renderAdminPublish(v) {
     /* 版式照「写任务」那一版对齐：两张卡，每行都是「标签在左、控件在右」。
        原来是一张卡装四行、小字说明还挂在卡外面当第一段，跟下面那张卡的标题
        挤在一起，读起来像这一页的开场白 —— 可它讲的是「哪件事」该怎么写。
-       现在拆两张：第一张是「这件事是谁的、是哪件事」，第二张才是「怎么处理」。 */
+       v44 多了「罚多少 / 扣多少」这一行：罚款原来金额写死在设置里（家长想罚
+       20 元没有入口），扣时间原来只写一条分钟账、一半概率看不出扣了没有。
+       现在数额当场填 —— 默认那颗 chip 的数从设置现取，自定义那颗点开才长出
+       输入框；底下那行现算和那句预告跟着输入逐字变，扣得动还是扣不动，
+       在按下去之前就说清楚。 */
+    const ov = await pg('/api/kids/overview', { items: [] });
+    const sett = await pg('/api/settings', null);
+    P_CALIB_CTX = { kids: ov.items || [], sett: sett, tk: {} };
+    const fy = +pCfg(sett, 'calib.fine_amount', 5) || 5;
+    const fper = +pCfg(sett, 'calib.fine_per_yuan', 2) || 0;
+    const perMin = +pCfg(sett, 'ticket.entertainment_minutes', 30) || 30;
+
     h += '<div class="card card--lg pc">' +
       '<div class="prow"><span class="plab">谁的事</span><div class="chips">' +
       KIDS().map((m, i) =>
@@ -4296,6 +4208,21 @@ async function renderAdminPublish(v) {
       '<button type="button" class="chip" data-ce="ticket_min">扣娱乐时间</button>' +
       '<button type="button" class="chip" data-ce="none">只记下来</button></div></div>' +
       '<p class="caption" id="cHint">' + esc(CALIB_HINT.task) + '</p>' +
+      // 数额这一行只在「罚款 / 扣娱乐时间」时出现。挂修复任务和只记下来都不涉及
+      // 数额，摆一行空的数额控件等于多问一道题。
+      '<div class="prow" id="cAmtRow" hidden><span class="plab" id="cAmtLab">罚多少</span>' +
+      '<div class="pbody">' +
+      '<div class="chips">' +
+      '<button type="button" class="chip on" id="cAmtDef">' + num(fy) + ' 元 · ' +
+      num(fy * fper) + ' 星尘</button>' +
+      '<button type="button" class="chip" id="cAmtCus">自定义</button></div>' +
+      '<div class="pcalcline" id="cAmtInputRow" hidden>' +
+      '<input id="cAmt" class="pin" inputmode="decimal" autocomplete="off" ' +
+      'aria-label="自定义数额">' +
+      '<span class="unit" id="cAmtUnit">元</span></div>' +
+      '<p class="calc" id="cCalc">= <b>' + num(fy * fper) + '</b> 星尘 ' +
+      '<i>（每 1 元 ' + num(fper) + ' 星尘）</i></p></div></div>' +
+      '<p class="callout-line" id="cFloor" hidden></p>' +
       // 修复类型原来是个下拉。手机上的下拉要点开、再滚、再点，而这里总共只有
       // 四五个选项；摊成按钮一眼看完，还能顺手给自己留一条。
       // 「自己写一条」不是一个选项而是一个开关：点了才长出那一行输入框，
@@ -4309,8 +4236,8 @@ async function renderAdminPublish(v) {
       '</div>';
 
     h += '<button class="btn btn--primary btn--block" id="cGo">记下来</button>' +
-      '<p class="footnote">金额、扣几分钟、负库存下限都在设置「校准与钱」那一组里，' +
-      '四条红线改不了。</p>';
+      '<p class="footnote">数额在这一屏填（默认一张券 ' + num(perMin) + ' 分钟）。' +
+      '罚款与还款都不会把他扣空，留多少在设置「校准与钱」里改；四条红线改不了。</p>';
     v.innerHTML = h;
     bindCalibForm();
   } else {
@@ -4403,24 +4330,141 @@ function bindPublishForm() {
 }
 
 /* 发布胶囊第三格「写校准」的表单。原来是一层弹窗，现在摊平在这一屏。
-   level 不再写死 3，按选的处理方式从 CALIB_LEVEL 取，理由写在那个常数上。 */
+   level 不再写死 3，按选的处理方式从 CALIB_LEVEL 取，理由写在那个常数上。
+
+   v44 这一屏多了两件事：
+   ① 数额当场填（罚款按元，扣时间按分钟），默认值从设置取、也能自定义；
+   ② 底下一行现算 + 一句预告 —— 罚款那条把保底公式在客户端重算一遍，
+      在按下去之前就告诉家长「这次扣得动多少、剩下多少记欠款」。两边
+      同一套公式（`engine.payable_stardust` / `payable_tickets`），改一头
+      要改另一头。
+   默认那两颗 chip 只是「数额取设置里的默认值」，提交时传 0，真正的默认
+   由引擎那一头算 —— 免得同一个默认值在两处各写一遍。 */
 function bindCalibForm() {
+  const CTX = P_CALIB_CTX || { kids: [], sett: null, tk: {} };
+  const cfg = (k, fb) => pCfg(CTX.sett, k, fb);
+  const kidOf = id => CTX.kids.filter(x => x.member_id === id)[0] || {};
+  const funQty = id => {
+    const tl = (kidOf(id).holdings || {}).ticket_list || [];
+    const t = tl.filter(x => x.code === 'ticket_fun')[0];
+    return t ? +t.qty || 0 : 0;
+  };
   let eff = 'task';
   let kid = (KIDS()[0] || {}).id || 0;
   let tpl = (CALIB_TPL[0] || [])[0] || 'apology';
+  let amtMode = 'default';          // 'default' 用设置里的默认值 / 'custom' 用输入框
   const hint = $('#cHint'), tplBox = $('#cTplBox'), go = $('#cGo');
+  const amtRow = $('#cAmtRow'), amtLab = $('#cAmtLab'), amtDef = $('#cAmtDef');
+  const amtCus = $('#cAmtCus'), amtInp = $('#cAmtInputRow'), amtEl = $('#cAmt');
+  const amtUnit = $('#cAmtUnit'), calcEl = $('#cCalc'), floorEl = $('#cFloor');
   const chipsIn = sel => $$('#view ' + sel);
-  $$('#view .chip[data-ckid]').forEach(c => c.addEventListener('click', () => {
+  const fineYuan = () => +cfg('calib.fine_amount', 5) || 5;
+  const finePer = () => +cfg('calib.fine_per_yuan', 2) || 0;
+  const keepSd = () => Math.max(0, +cfg('calib.floor_stardust', 15) || 0);
+  const keepTk = () => Math.max(0, +cfg('calib.floor_tickets', 2) || 0);
+  const pct = () => Math.max(0, Math.min(100, +cfg('calib.reserve_pct', 25) || 0)) / 100;
+
+  /* 一张券今天值多少分钟，得问后端 —— 周末翻倍 / 假期那两档前端算不出来。
+     「券包状态」这个接口顺带把今日面值也给了，一个请求拿两样。 */
+  async function tkOf(id) {
+    if (!CTX.tk[id]) {
+      try { CTX.tk[id] = (await pg('/api/tickets/state?member_id=' + id, null)) || {}; }
+      catch (e) { CTX.tk[id] = {}; }
+    }
+    return CTX.tk[id];
+  }
+  const perTicket = id => +((CTX.tk[id] || {}).minutes) ||
+    (+cfg('ticket.entertainment_minutes', 30) || 30);
+  const typed = () => String((amtEl || {}).value || '').replace(/[^\d.]/g, '');
+
+  /* 现算那一行 + 预告那一句 + 底部按钮，三样都跟着「谁的事 / 怎么处理 / 数额」
+     变。写成一处，是为了不让它们各自算各自的 —— 那样迟早对不上。 */
+  async function draw() {
+    const isFine = eff === 'fine', isMin = eff === 'ticket_min';
+    if (amtRow) amtRow.hidden = !(isFine || isMin);
+    if (tplBox) tplBox.hidden = eff !== 'task';
+    if (go) go.textContent = '记下来';
+    if (!isFine && !isMin) { if (floorEl) floorEl.hidden = true; return; }
+    await tkOf(kid);
+    const per = perTicket(kid);
+    if (amtLab) amtLab.textContent = isFine ? '罚多少' : '扣多少';
+    if (amtUnit) amtUnit.textContent = isFine ? '元' : '分钟';
+    if (amtEl) amtEl.setAttribute('inputmode', isFine ? 'decimal' : 'numeric');
+    if (amtDef) {
+      amtDef.textContent = isFine
+        ? num(fineYuan()) + ' 元 · ' + num(round2(fineYuan() * finePer())) + ' 星尘'
+        : '半张券 · ' + num(round2(per / 2)) + ' 分钟';
+    }
+    if (amtCus) amtCus.classList.toggle('on', amtMode === 'custom');
+    if (amtDef) amtDef.classList.toggle('on', amtMode !== 'custom');
+    if (amtInp) amtInp.hidden = amtMode !== 'custom';
+
+    let floor = '';
+    if (isFine) {
+      const f = finePer();
+      const yuan = amtMode === 'custom' ? (parseFloat(typed()) || 0) : fineYuan();
+      const sd = round2(yuan * f);
+      const hand = +kidOf(kid).stardust || 0;
+      const k = keepSd(), ratio = pct();
+      const capR = round2(hand * (1 - ratio));
+      const capF = round2(Math.max(0, hand - k));
+      const take = Math.max(0, Math.min(sd, capR, capF));
+      const rest = round2(sd - take);
+      if (calcEl) calcEl.innerHTML = '= <b>' + num(sd) + '</b> 星尘 ' +
+        '<i>（每 1 元 ' + num(f) + ' 星尘）</i>';
+      if (go) go.textContent = '罚 ' + num(yuan) + ' 元 · 并入许愿池';
+      if (sd <= 0) floor = '先填一个罚多少。';
+      else if (hand <= k) floor = '他手上只有 ' + num(hand) + ' 星尘，还没到保底的 ' +
+        num(k) + ' —— 这次一分都扣不动，' + num(sd) + ' 星尘全记成欠款，等他这期结算先还。';
+      else if (take >= sd) floor = '他有 ' + num(hand) + ' 星尘，这次扣 ' + num(sd) +
+        '，扣得动。手上低于 ' + num(k) + ' 星尘 时一分不扣。';
+      else floor = '他有 ' + num(hand) + ' 星尘，按 ' + num(ratio * 100) + '% 最多扣 ' +
+        num(capR) + '，但要给他留 ' + num(k) + '，所以这次扣 ' + num(take) +
+        '，剩下 ' + num(rest) + ' 记成欠款。';
+    } else {
+      const want = amtMode === 'custom' ? (parseInt(typed(), 10) || 0) : round2(per / 2);
+      const whole = per > 0 ? Math.floor(want / per) : 0;
+      const frac = round2(want - whole * per);
+      const held = funQty(kid);
+      const reserve = Math.ceil(Math.max(keepTk(), held * pct()) - 1e-9);
+      const can = Math.max(0, Math.min(whole, held - reserve));
+      const debt = whole - can;
+      if (calcEl) calcEl.innerHTML = '= <b>' + num(whole) + '</b> 张券' +
+        (frac > 0 ? ' + <b>' + num(frac) + '</b> 分钟' : '') +
+        ' <i>（今天一张 ' + num(per) + ' 分钟）</i>';
+      if (go) go.textContent = '扣 ' + num(want) + ' 分钟娱乐时间';
+      if (want <= 0) floor = '先填一个扣多少分钟。';
+      else if (held <= reserve) floor = '他手上 ' + num(held) + ' 张券，还没到保底的 ' +
+        num(reserve) + ' 张 —— 这次一张都扣不动，' + num(whole) +
+        ' 张全记成券欠账，下次发券时先扣。';
+      else floor = '他有 ' + num(held) + ' 张券。留着 ' + num(reserve) + ' 张给他，这次扣 ' +
+        num(can) + ' 张' + (frac > 0 ? '，另外 ' + num(frac) + ' 分钟挂到下一张券上（那张会短 ' +
+          num(frac) + ' 分钟）' : '') +
+        (debt > 0 ? '，还有 ' + num(debt) + ' 张一时扣不动、记成券欠账' : '') + '。';
+    }
+    if (floorEl) { floorEl.hidden = !floor; floorEl.textContent = floor; }
+  }
+
+  const chipsInCk = chipsIn('.chip[data-ckid]');
+  chipsInCk.forEach(c => c.addEventListener('click', () => {
     kid = +c.dataset.ckid;
-    $$('#view .chip[data-ckid]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    chipsInCk.forEach(x => x.classList.remove('on')); c.classList.add('on');
+    draw();
   }));
   chipsIn('.chip[data-ce]').forEach(c => c.addEventListener('click', () => {
     eff = c.dataset.ce;
     chipsIn('.chip[data-ce]').forEach(x => x.classList.remove('on')); c.classList.add('on');
+    amtMode = 'default';                 // 换处理方式就把数额退回默认，别把上一格的数带过来
+    if (amtEl) amtEl.value = '';
     if (hint) hint.textContent = CALIB_HINT[eff] || '';
-    if (tplBox) tplBox.hidden = eff !== 'task';
-    if (go) go.textContent = eff === 'fine' ? '罚款并入许愿池' : '记下来';
+    draw();
   }));
+  if (amtDef) amtDef.addEventListener('click', () => { amtMode = 'default'; draw(); });
+  if (amtCus) amtCus.addEventListener('click', () => {
+    amtMode = 'custom'; draw();
+    if (amtEl) amtEl.focus();
+  });
+  if (amtEl) amtEl.addEventListener('input', draw);
   /* 修复类型改成按钮之后，多了「自己写一条」这个出口：四项预设盖不住所有情况
      （今天是抹了桌子，明天可能是给妹妹道个歉），与其让家长挑个近似的
      然后心里嘀咕，不如让他写。输入框点出来才长出来 —— 空框常年摆着，
@@ -4444,11 +4488,24 @@ function bindCalibForm() {
       std = (($('#cTplCustom') || {}).value || '').trim();
       if (!std) return err({ message: '写上让他做什么，空着没法确认他做没做' });
     }
+    // 数额：默认那颗传 0，由引擎按设置里的默认值算（同一个默认值不写两遍）；
+    // 自定义那颗把填的数传下去，空着或 0 一律拦在这里 —— 传 0 会被引擎当成
+    // 「没填、用默认」，家长明明敲了个数却按默认扣，那是更难查的错。
+    let amount = 0;
+    if (eff === 'fine' || eff === 'ticket_min') {
+      if (amtMode === 'custom') {
+        const n = parseFloat(typed()) || 0;
+        if (!(n > 0)) return err({
+          message: eff === 'fine' ? '填一个罚多少元，空着记不下来' : '填一个扣多少分钟，空着记不下来' });
+        amount = n;
+      }
+    }
     try {
       const body = {
         member_id: kid, level: CALIB_LEVEL[eff] || 1, reason: reason,
         effect_type: eff, template: tpl,
       };
+      if (amount > 0) body.amount = amount;
       if (std) body.std = std;
       const r = await api('POST', '/api/calibration', body);
       toast(r.task_id ? '记下了，修复任务已进他的清单' : '记下了');
@@ -4456,6 +4513,7 @@ function bindCalibForm() {
       await render();
     } catch (e) { err(e); }
   });
+  draw();
 }
 
 /* ---------------------------------------------------------------- 发出的活 */
@@ -5365,7 +5423,6 @@ async function renderAdminMe(v) {
   $('#pLogout').addEventListener('click', () => logoutNow());
   $$('#view [data-act]').forEach(el => el.addEventListener('click', () => {
     const k = el.dataset.act;
-    if (k === 'members') return membersSheet();
     if (k === 'chpw') return changePwSheet();
     if (k === 'ops') return opsSheet();
     if (k === 'mine') {
@@ -5401,12 +5458,6 @@ function pRuleRow(title, sub, target, anchor) {
     '<div class="row-body"><span class="row-title">' + esc(title) + '</span>' +
     '<span class="row-sub">' + esc(sub) + '</span></div>' +
     (target ? '<span class="chev">›</span>' : '') + '</div>';
-}
-function pRuleGroup(name, rows) {
-  return '<div class="stack--sm" style="display:flex;flex-direction:column;gap:8px">' +
-    '<span class="sec-title">' + esc(name) + '</span>' +
-    '<div class="card card--tight" style="padding:6px">' +
-    rows.map(r => pRuleRow(r[0], r[1], r[2], r[3])).join('') + '</div></div>';
 }
 
 /* 一张页卡 = 一页规则。卡下面那排是该页**真实**的小节名，各带锚点。
@@ -6001,8 +6052,8 @@ async function renderFamily(v) {
   if (pb) pb.addEventListener('click', () => wishSheet());
 }
 
-/* 成员那一行的账号按钮。权限跟 membersSheet 里那套完全一致（管理员对谁都行、
-   家长只对自己的孩子、孩子只改自己），只是落点从弹层换到了这一屏。 */
+/* 成员那一行的账号按钮。权限判定走 canResetPassword（管理员对谁都行、
+   家长只对自己的孩子、孩子只改自己），跟后端那三道闸门一一对上。 */
 function pMemberBtns(m, me) {
   let b = '';
   if (canResetPassword(me, m) && m.id !== me.id) {
@@ -6083,25 +6134,46 @@ async function renderParentWish(v) {
     });
 
     const p = pool.pool;
+    // 还没立目标时，把「先记着、没处投」的那几笔摆出来。以前这里只有四个字
+    // 「还没有全家目标」，家长忘打卡罚了钱、校准罚了钱，界面一个字都不说，
+    // 看着像罚丢了。现在如实报出来，并说清「设了目标一起投」。
+    const pendLogs = (pool.logs || []).filter(x => !x.counted && +x.stardust > 0);
+    const sumKind = k => pendLogs.filter(x => x.kind === k)
+      .reduce((a, x) => a + (+x.stardust || 0), 0);
+    const pendSd = round2(pendLogs.reduce((a, x) => a + (+x.stardust || 0), 0));
+    const penSd = round2(sumKind('penalty')), fineSd = round2(sumKind('fine'));
+    let pendLine = '';
+    if (pendSd > 0) {
+      const parts = [];
+      if (penSd > 0) parts.push('忘打卡 ' + num(penSd));
+      if (fineSd > 0) parts.push('校准罚款 ' + num(fineSd));
+      pendLine = '<div class="callout-line">已经攒下 <b>' + num(pendSd) + ' 星尘</b> —— ' +
+        parts.join(' + ') + '。设了目标那一刻，这笔钱一起投进去，不用你再补一次。</div>';
+    }
     h += '<div class="card"><div class="sec-head"><span class="card-title">全家许愿池</span>' +
       '<span class="sec-count">' + esc(p ? p.title : '还没有目标') + '</span></div>' +
       (p ? '<div class="bar bar--orange" style="margin-top:10px"><i style="width:' +
         Math.min(100, Math.round(p.percent || 0)) + '%"></i></div>' +
         '<span class="caption--warm" style="display:block;margin-top:8px">已攒 ' +
         num(p.collected_stardust) + ' / ' + num(p.target_stardust) + ' 星尘</span>'
-        : '<div class="empty">还没有全家目标</div>') + '</div>';
+        : (pendLine || '<div class="empty">还没有全家目标</div>')) + '</div>';
 
     const pendMine = (pend.items || []).filter(x => x.member_id === kid);
     h += '<div class="stack"><div class="sec-head"><span class="sec-title">心愿</span>' +
       '<span class="sec-count">' + mine.length + ' 条</span></div>';
     if (!mine.length) h += '<div class="card"><div class="empty">还没有许下的愿</div></div>';
     mine.forEach(x => {
+      // v44：后两步必须认得 —— 只认 wished/achieved 的话，家长给过了、
+      // 孩子也点过「我收到了」的那条，在这页上还写着「进行中」。
       const st = x.status === 'wished' ? '等你定条件'
-        : (x.status === 'achieved' ? '已达成' : '进行中');
+        : x.status === 'achieved' ? '已达成，等你去满足'
+        : x.status === 'delivered' ? '已经给他了，等他确认'
+        : x.status === 'claimed' ? '已收到' : '进行中';
       h += '<div class="card" style="cursor:pointer" data-wish="' + x.id + '">' +
         '<div class="sec-head">' + pic('i-wish', 20, '', 'var(--orange)') +
         '<span class="card-title" style="flex:1;min-width:0">' + esc(x.title) + '</span>' +
-        '<span class="pill ' + (x.status === 'achieved' ? 'pill--gray' : 'pill--purple') + '">' +
+        '<span class="pill ' + (x.status === 'achieved' || x.status === 'claimed'
+          ? 'pill--gray' : 'pill--purple') + '">' +
         esc(st) + '</span></div>' +
         '<span class="caption--warm" style="display:block;margin-top:6px">' +
         esc(wishCondText(x) || '条件还没定') + '</span>' +
@@ -6151,10 +6223,14 @@ async function renderParentWish(v) {
 
   let h = pHead({
     title: memberName(w.member_id) + '的心愿', small: true, back: 'wish',
+    // v44：delivered 是「家长给过了、等孩子点确认」，claimed 才是完结。
+    // 这两条落进 else 的话，点开一条已经给过的心愿，顶上写着「还在攒」。
     sub: (setAt ? setAt + ' 点亮' : '还没点亮') + ' · ' +
-      (w.status === 'achieved' ? '已达成' : '还在攒'),
-    right: '<span class="pill pill--purple">' +
-      (w.status === 'achieved' ? '已达成' : '进行中') + '</span>',
+      (w.status === 'achieved' ? '已达成' : w.status === 'delivered' ? '已经给他了'
+        : w.status === 'claimed' ? '他收到了' : '还在攒'),
+    right: '<span class="pill ' + (w.status === 'claimed' ? 'pill--gray' : 'pill--purple') + '">' +
+      (w.status === 'achieved' ? '已达成' : w.status === 'delivered' ? '等他确认'
+        : w.status === 'claimed' ? '已收到' : '进行中') + '</span>',
   });
 
   // 条件原话：点亮即锁死。这里是整条心愿唯一不可改的一句话
@@ -6243,6 +6319,7 @@ function openQA(k) {
   if (k === 'explore') return exploreSheet();
   if (k === 'wish') return wishSheet();
   if (k === 'holiday') return holidaySheet();
+  if (k === 'season') return seasonSheet();
   // 设置不再是弹层：13 组 90 项压在一层弹窗里翻不完，改成独立页，还能返回。
   if (k === 'settings') return pGo('settings');
   if (k === 'push') return pushSheet();
@@ -6473,10 +6550,11 @@ async function wishSheet() {
   const pend = wishes.items.filter(x => x.status === 'wished');
   const active = wishes.items.filter(x => x.status === 'active');
   const achieved = wishes.items.filter(x => x.status === 'achieved');
+  const given = wishes.items.filter(x => x.status === 'delivered');
 
   let h = '<h3>心愿单 · ' + esc(who) + '</h3>' +
-    '<p class="muted">三个动作：他写下想要什么，你定怎么才算够格，够了兑现。' +
-    '正在算的最多 ' + wishes.limit + ' 个。</p>';
+    '<p class="muted">四步：他写下想要什么、你定怎么才算够格、条件到了你去办、' +
+    '他点过「我收到了」才算完。正在算的最多 ' + wishes.limit + ' 个。</p>';
 
   // 待定那一栏必须放在最上面。它是唯一一条「不处理就一直卡着」的：
   // 孩子那边看到的是一句「等爸爸妈妈定条件」，家长不点它就永远是那句。
@@ -6518,17 +6596,33 @@ async function wishSheet() {
         '</div></div>').join('') + '</div>';
   }
 
+  // 条件到了，球在家长这边：去把事情办了。这一栏只报状态 —— 动作在审核页
+  // 那张兑现清单里（跟券、卡同一条口子），这儿再给一颗按钮，家长会以为
+  // 得点两次。
   if (achieved.length) {
-    h += '<div class="card" style="margin-top:10px"><div class="pad wband"><b>他说做到了</b>' +
-      '<span class="muted">条件满了，等你兑现</span></div>' +
+    h += '<div class="card" style="margin-top:10px"><div class="pad wband"><b>等你去满足</b>' +
+      '<span class="muted">条件到了 · 在审核页的兑现清单里办</span></div>' +
       achieved.map(x => '<div class="item">' + glyph(x.icon, 'wish', 30) +
         '<div class="txt"><div class="nm">' + esc(x.title) +
         ' <span class="tag ok">已达成</span></div>' +
         '<div class="ds">条件　' + esc(wishCondText(x)) + '</div>' +
-        '<div class="ds muted">' + esc(String(x.achieved_at || '').slice(0, 10)) + ' 达成</div>' +
-        '<div class="wact"><button class="btn sm" data-wpay="' + x.id +
-        '">兑现了</button></div>' +
-        '</div></div>').join('') + '</div>';
+        '<div class="ds muted">' + esc(String(x.achieved_at || '').slice(0, 10)) +
+        ' 达成。办了以后在审核页点「已经给他了」，他那边才知道' +
+        '</div></div></div>').join('') + '</div>';
+  }
+
+  // v44：东西给他了，等他点「我收到了」。这一下只有他本人能点（接口那边
+  // 不认大人），所以这栏只让家长看得见球在谁手上，一颗按钮都不给。
+  if (given.length) {
+    h += '<div class="card" style="margin-top:10px"><div class="pad wband"><b>等他确认</b>' +
+      '<span class="muted">他点一下「我收到了」才算完</span></div>' +
+      given.map(x => '<div class="item">' + glyph(x.icon, 'wish', 30) +
+        '<div class="txt"><div class="nm">' + esc(x.title) +
+        ' <span class="tag blue">已给他</span></div>' +
+        '<div class="ds muted">' + esc(String(x.delivered_at || '').slice(0, 10)) +
+        ' 你说给他了。他点过「我收到了」这条才进历史；他一直不点，' +
+        '它就一直挂在这儿。' +
+        '</div></div></div>').join('') + '</div>';
   }
 
   // 历史：结束的都在这儿。家长得看得见「这条被驳回过、那条他自己放弃了」，
@@ -6613,19 +6707,9 @@ async function wishSheet() {
         } catch (e) { err(e); }
       }, () => wishSheet());
     }));
-    $$('[data-wpay]', box).forEach(b => b.addEventListener('click', async () => {
-      const x = (wishes.items || []).filter(y => y.id === +b.dataset.wpay)[0] || {};
-      askSheet({
-        title: '兑现《' + (x.title || '') + '》',
-        hint: '心愿进历史且不能改回去，这一步之前先把东西给他。',
-        ok: '确认已兑现',
-      }, async () => {
-        try {
-          await api('POST', '/api/wishes/' + b.dataset.wpay + '/status', { status: 'claimed' });
-          closeSheet(); toast('记下了'); await wishSheet();
-        } catch (e) { err(e); }
-      }, () => wishSheet());
-    }));
+    // 原来这儿挂着一条 data-wpay（点一下「兑现了」，心愿直接进历史）。撤了：
+    // 现在这一步拆成两半 —— 家长「已经给他了」在审核页那张兑现清单里点，
+    // 他「收到了」在他自己的心愿屋点。两头各一次，少了哪一头都不算完。
 
     bindCondForm(box, async (ctype, cond, note, icon) => {
       const title = ($('#wt', box) || {}).value ? $('#wt', box).value.trim() : '';
@@ -6715,6 +6799,34 @@ async function holidaySheet() {
           closeSheet();
           toast(r.delayed && r.delayed.length ? '加上了，顺延了 ' + r.delayed.length + ' 张卡' : '加上了');
           await render();
+        } catch (e) { err(e); }
+      });
+    });
+}
+
+/* 赛季（v44）。欠款与道具原来每个周期末免一次，现在改成跨周期滚动累积、
+   只在赛季末清一次 —— 那是个家长和孩子都得知道的节点，得有地方看。
+   这一层只读行情 + 一个改长度的入口；改长度走 POST /api/season，
+   它会顺手把本季结束日重算（撞上寒暑假一并顺延）。 */
+async function seasonSheet() {
+  const s = await api('GET', '/api/season');
+  const left = Math.max(0, +s.days_left || 0);
+  sheet('<h3>赛季</h3><p class="muted">第 ' + num(s.idx) + ' 季　' +
+    esc(s.start_date) + ' → ' + esc(s.end_date) + '　还剩 ' + num(left) + ' 天。<br>' +
+    '季末会把欠账和道具清一清：欠的星尘和券都勾掉，消耗卡按现在的到期规则折成星尘，' +
+    '六种券清零。星尘、等级、身份卡都留着；最后那只没开的宝箱也留给他，新赛季自己开。' +
+    '结束日撞上寒暑假会自动顺延。</p>' +
+    '<div class="field"><label>一季多长（天）</label>' +
+    '<input id="sd" inputmode="numeric" value="' + num(s.length_days) + '"></div>' +
+    '<button class="btn wide" id="go">改长度</button>' +
+    '<p class="muted" style="margin:10px 0 0">改的是这一季的长度，结束日当场重算。' +
+    '在设置里也有一项「赛季长度」，改哪边都是同一个数。</p>', box => {
+      $('#go', box).addEventListener('click', async () => {
+        const n = parseInt($('#sd', box).value, 10);
+        if (!(n >= 7)) return err({ message: '填一个天数，至少 7 天' });
+        try {
+          await api('POST', '/api/season', { length_days: n });
+          closeSheet(); toast('赛季长度改成 ' + n + ' 天了'); await render();
         } catch (e) { err(e); }
       });
     });
@@ -6811,7 +6923,8 @@ const GRP_TREE = [
   { n: '奖励与道具', sub: '娱乐券、加时、卡到期、七档门槛、等级表',
     grps: ['券与道具', '宝箱', '星球等级'] },
   { n: '校准与钱', sub: '后果怎么落地、罚款与扣分钟、星尘兑零花钱、许愿池',
-    grps: ['校准与修复', '汇率与基金'] },
+    grps: ['校准与修复', '汇率与基金'],
+    qa: ['i-hourglass', '赛季', '这一季到哪天、还剩几天、长度可改', 'season'] },
   { n: '红线与运维', sub: '四条改不得的规则、快照保留、双人确认',
     grps: ['四条红线', '运维与权限'] },
   { n: '通知与推送', sub: '提醒时间、Bark、免打扰', grps: ['通知', '通知与推送'],
@@ -6819,6 +6932,10 @@ const GRP_TREE = [
   { n: '界面与显示', sub: '两套配色、允许谁自己切', grps: ['界面与显示'] },
 ];
 let P_SETGRP = '';   // 空 = 一级（列七组）；非空 = 正在看这一组
+// 刚从某一组退回一级（点返回箭头、或底栏再点「设置」）：那一次用的是
+// replaceState，栈里因此留下两条一模一样的 '#settings'。下一次右滑会落在
+// 「地址没变」的那一条上，界面不动 —— 记一笔，命中时替他再退一格。
+let P_SET_BACK = false;
 
 async function renderAdminSettings(v) {
   const d = await api('GET', '/api/settings');
@@ -6830,8 +6947,9 @@ async function renderAdminSettings(v) {
   };
   const node = P_SETGRP ? GRP_TREE.filter(x => x.n === P_SETGRP)[0] : null;
 
-  // 二级页的返回不走 pGo：两级共用同一个 S.view，这里只是把分组状态清掉重画。
-  // 走 pGo('settings') 会因为目标就是当前屏而被判成「重画」，状态留在原地。
+  // 二级页的返回走浏览器后退（下面的 pSetBack），跟手机右滑同一条路：
+  // 两级共用同一个 S.view，自己清状态的话，历史栈里那条分组记录留在原地，
+  // 用户点一次返回、再右滑一次，会原地弹回刚退掉的那一组。
   let h = node
     ? '<div class="page-head"><div style="display:flex;align-items:center;gap:10px;min-width:0">' +
       '<button class="back-btn" type="button" id="pSetBack">' + pic('i-back', 18) + '</button>' +
@@ -6896,9 +7014,13 @@ async function renderAdminSettings(v) {
   if (ib) ib.addEventListener('click', iconSheet);
   $$('#view [data-back]').forEach(b2 => b2.addEventListener('click', () => pGo(b2.dataset.back)));
   const bk = $('#pSetBack', v);
-  if (bk) bk.addEventListener('click', () => { P_SETGRP = ''; render(); });
+  // 返回箭头跟右滑落到同一处：地址退回 '#settings'，再清掉内存里的组名重画。
+  // replaceState 改写的就是「分组」那一条，历史栈不会留个尾巴多退一次。
+  // 不用 history.back() 是因为从外部链接直接落在某一组时，没有上一条可退，
+  // 点了没反应；而右滑那条路上没有历史可退，浏览器自己也不会弹事件。
+  if (bk) bk.addEventListener('click', () => { pSetBackToTop(); });
   $$('#view [data-setgrp]').forEach(el => el.addEventListener('click', () => {
-    P_SETGRP = el.dataset.setgrp; render();
+    P_SETGRP = el.dataset.setgrp; P_SET_BACK = false; pSetHash(P_SETGRP); render();
   }));
   $$('#view [data-grpqa]').forEach(el => el.addEventListener('click', () => {
     openQA(el.dataset.grpqa);

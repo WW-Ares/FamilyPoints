@@ -368,8 +368,30 @@ def resolve_wish_claim(ctx):
     return r
 
 
+@route("GET", "/api/wishes/to-fulfil")
+def list_wish_to_fulfil(ctx):
+    """条件到了、还没给他的那几条。审核页那张兑现清单里「心愿」这一类。
+
+    跟 /api/wishes/pending（挂着等他定条件）、/api/wishes/submissions
+    （他交了、等你点头）是三件事，等的不是同一个人：这一条等的是家长
+    真的去把事情办了 —— 买回来、约上时间、带他去。
+    """
+    ctx.as_parent()
+    items = E.wish_to_fulfil()
+    return {"items": items, "count": len(items)}
+
+
 @route("POST", "/api/wishes/:id/status")
 def wish_status(ctx):
+    """心愿最后两步，一人一半。
+
+    v44 之前这里只有「家长点一下兑现了」—— 点完直接进历史，孩子那头从头
+    到尾没被问过一句。现在拆成两半：家长说「已经给他了」（delivered）、
+    孩子说「我收到了」（claimed）。后一半没做，这条心愿就不算完。
+
+    「达成」不在这里了：条件够不够是系统算的（check_wish_ready 算够了
+    当场落 achieved），不该由谁按一下按钮决定 —— 那颗按钮撤掉。
+    """
     me = ctx.as_member()
     wid = ctx.id_path()
     w = db.query_one("SELECT * FROM wish WHERE id=?", (wid,))
@@ -378,24 +400,28 @@ def wish_status(ctx):
     if me["role"] != "parent" and w["member_id"] != me["id"]:
         raise ApiError("这不是你的心愿", 403)
     status = ctx.need("status")
-    if status not in ("achieved", "claimed", "cancelled"):
+    if status not in ("delivered", "claimed", "cancelled"):
         raise ApiError("状态不对")
-    # 不设否决权：一旦达成不许反悔
-    if status == "cancelled" and w["status"] == "achieved":
-        raise ApiError("已经达成的心愿不能取消，这一条是不设否决权的红线")
-    if status == "claimed" and me["role"] != "parent":
-        raise ApiError("兑现由爸爸妈妈来")
-    if status == "achieved":
-        # 达成是事实，不是恩准：条件是家长定的、进度是系统算的，
-        # 算满了就是算满了。家长可以代孩子登记，孩子自己也能登记 ——
-        # 要求家长点头把「不设否决权」变成一句空话，那不是这套规则想要的。
-        if w["status"] not in ("active",):
-            raise ApiError("这条心愿现在不该登记达成")
-        p = E.wish_progress(E.wish_view(w))
-        if not p.get("ready"):
-            raise ApiError("还没到（%s）。条件满了才作数" % p.get("text", "条件没满足"))
-    if status == "cancelled" and w["status"] not in ("wished", "active"):
-        raise ApiError("这条心愿已经结束了")
+    if status == "delivered":
+        # 这一句说的是「我把东西给他了」，只有家长做得来
+        if me["role"] != "parent":
+            raise ApiError("这一步由爸爸妈妈来")
+        if w["status"] != "achieved":
+            raise ApiError("这条心愿现在还轮不到这一步")
+    if status == "claimed":
+        # 收尾这一下必须是他本人。大人替他点，「他确认过了」就成了一句假话，
+        # 而这条链路存在的全部意义就是那一下确认 —— 所以刻意不留代点口子。
+        # 他不点就一直挂在那儿，这是定下来的口径，不做兜底。
+        if int(me["id"]) != int(w["member_id"]):
+            raise ApiError("这一下得他自己点")
+        if w["status"] != "delivered":
+            raise ApiError("还没人跟他说「给你了」，先等爸爸妈妈那一句")
+    if status == "cancelled":
+        # 不设否决权：一旦达成不许反悔
+        if w["status"] in ("achieved", "delivered"):
+            raise ApiError("已经达成的心愿不能取消，这一条是不设否决权的红线")
+        if w["status"] not in ("wished", "active"):
+            raise ApiError("这条心愿已经结束了")
     return E.update_wish_status(wid, status, operator_id=me["id"])
 
 
@@ -412,10 +438,17 @@ def get_pool(ctx):
         entries = db.to_dicts(db.query(
             "SELECT e.*, m.name FROM wish_pool_entry e LEFT JOIN member m ON m.id=e.member_id"
             " WHERE e.pool_id=? ORDER BY e.id DESC LIMIT 50", (p["id"],)))
-        # 系统注入的那几笔（全家忘打卡）单独列出来。它们没有 member_id，
+        # 系统注入的那几笔（全家忘打卡 + 校准罚款）单独列出来。它们没有 member_id，
         # 混在投币列表里会显示成「不知道谁投的」，那是两件事。
         logs = db.to_dicts(db.query(
             "SELECT * FROM wish_pool_log WHERE pool_id=? ORDER BY id DESC LIMIT 20", (p["id"],)))
+    else:
+        # 还没立目标时，把「先记着、没处投」的那几笔摆出来 —— 界面得说清
+        # 这笔钱没丢（忘打卡罚的 + 校准罚的），家长心里那本账才对得上。
+        # 以前这里直接回空数组，家长端空态只有四个字「还没有全家目标」。
+        logs = db.to_dicts(db.query(
+            "SELECT * FROM wish_pool_log WHERE counted=0 AND COALESCE(stardust,0)>0"
+            " ORDER BY id DESC LIMIT 20"))
     return {"pool": p, "entries": entries, "logs": logs,
             "templates": E.pool_templates()}
 
@@ -765,7 +798,33 @@ def notifications(ctx):
 
 @route("POST", "/api/notifications/read")
 def read_notifications(ctx):
+    """标记已读。给 id 就只标那一条（弹层里点「知道了」用），不给就一把全标。"""
     ctx.as_member()
-    db.execute("UPDATE notification SET read_at=? WHERE (member_id=? OR member_id IS NULL)"
-               " AND read_at IS NULL", (db.now(), ctx.member["id"]))
+    nid = ctx.i("id", 0)
+    if nid:
+        db.execute("UPDATE notification SET read_at=? WHERE id=?"
+                   " AND (member_id=? OR member_id IS NULL) AND read_at IS NULL",
+                   (db.now(), nid, ctx.member["id"]))
+    else:
+        db.execute("UPDATE notification SET read_at=? WHERE (member_id=? OR member_id IS NULL)"
+                   " AND read_at IS NULL", (db.now(), ctx.member["id"]))
     return {"ok": True}
+
+
+@route("GET", "/api/season")
+def get_season(ctx):
+    ctx.as_member()
+    return E.season_snapshot()
+
+
+@route("POST", "/api/season")
+def set_season(ctx):
+    """家长改赛季长度。改完重算本季结束日（假期顺延一并算上）。"""
+    me = ctx.as_parent()
+    days = ctx.i("length_days", 0)
+    if days:
+        if days < 7:
+            raise ApiError("赛季太短了，至少 7 天")
+        db.set_setting("season.length_days", days, actor_id=me["id"])
+        return E.retune_season(days)
+    return E.season_snapshot()

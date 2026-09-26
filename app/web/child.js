@@ -117,17 +117,6 @@ function kDots(state) {
   }
   return h + '</span>';
 }
-/* 本周能量折成七格：每格一档（7 分），正在攒的那一格画半格 */
-function kSlots(energy, tiers, plain) {
-  const per = tiers && tiers.length ? tiers[0].threshold : 7;
-  let h = '<div class="chest-slots' + (plain ? ' on-plain' : '') + '">';
-  for (let i = 0; i < 7; i++) {
-    const low = i * per, mid = low + per / 2;
-    const cls = energy >= low + per ? 'is-full' : (energy >= mid ? 'is-half' : '');
-    h += '<i' + (cls ? ' class="' + cls + '"' : '') + '></i>';
-  }
-  return h + '</div>';
-}
 const K_TASK_STATE = { claimed: '在做', submitted: '等确认', pending: '待做' };
 const WD_NAME = ['日', '一', '二', '三', '四', '五', '六'];
 /* 「2026-09-19」在 iOS Safari 里被当成 UTC 午夜，直接 new Date(day).getDay()
@@ -1353,7 +1342,10 @@ function kOpenResult(r) {
     h += '<button class="btn wide kop-go" id="kOk">收下</button>';
     sheet(h, box => {
       // 关掉之后要重画一遍宝箱页：那只箱子已经开过了，提醒条不能还挂着。
-      $('#kOk', box).addEventListener('click', async () => { closeSheet(); await render(); });
+      // 再查一次有没有「发放扣了欠账」要告知 —— 扣的就是这一箱发下来的券。
+      $('#kOk', box).addEventListener('click', async () => {
+        closeSheet(); await render(); kDebtNotices();
+      });
     }, { center: true });
     return;
   }
@@ -1402,7 +1394,7 @@ function kOpenResult(r) {
           '<button class="btn wide kop-go" id="kOk">收下</button>',
           b => {
             $('#kOk', b).addEventListener('click', async () => {
-              closeSheet(); await render();
+              closeSheet(); await render(); kDebtNotices();
             });
           }, { center: true });
       } catch (e) { err(e); go.disabled = false; sync(); }
@@ -1423,6 +1415,41 @@ function kOpenHead(r, head) {
 /* 「今天用过什么」翻到哪一天了。空 = 今天。 */
 let TK_DAY = '';
 
+/* 发放时扣欠账的告知（v44）。星尘欠款与券欠账在「每期结束」那两个口子自动抵
+   扣（结算发星尘时 / 开箱发券时），扣这一下他会少拿到东西，所以每一次都要
+   当场说清「这次到账多少 / 扣了多少 / 还剩多少」。
+
+   记录落在 notification（kind='debt_paid'，只落网页、不推手机），这里把它弹成
+   一层，点过「知道了」写 read_at 收走 —— 同一条明天不会再冒出来。连着好几条
+   就一条一条弹，不堆成一面。
+   `seen` 兜住同一屏里被调两次（开箱那条路上 render 与 kOk 各喊一次）。 */
+let K_DEBT_SHOWING = false;
+async function kDebtNotices() {
+  if (K_DEBT_SHOWING || S.isParent) return;
+  let items = [];
+  try {
+    const d = await api('GET', '/api/notifications');
+    items = (d.items || []).filter(n => n.kind === 'debt_paid');
+  } catch (e) { return; }
+  if (!items.length) return;
+  K_DEBT_SHOWING = true;
+  try {
+    for (const n of items) {
+      await new Promise(resolve => {
+        sheet('<h3>' + esc(n.title) + '</h3>' +
+          '<p class="muted" style="line-height:1.75">' + esc(n.body || '') + '</p>' +
+          '<button class="btn wide" id="kNoteOk">知道了</button>', box => {
+          $('#kNoteOk', box).addEventListener('click', async () => {
+            closeSheet();
+            try { await api('POST', '/api/notifications/read', { id: n.id }); } catch (e) { }
+            resolve();
+          });
+        });
+      });
+    }
+  } finally { K_DEBT_SHOWING = false; }
+}
+
 async function kScreenCoupon() {
   const mid = S.me.id;
   // 往前翻看的是同一份流水：券和卡都按那一天查，画法一模一样。
@@ -1433,6 +1460,8 @@ async function kScreenCoupon() {
   const tks = await kg('/api/tickets/mine?member_id=' + mid + dayQ);
   const shop = await kg('/api/shop?member_id=' + mid);
   const cash = await kg('/api/cash?member_id=' + mid);
+  // 未读通知。券包页只用其中一类：当场被扣掉整张券的那条（v44）。
+  const nts = (await kg('/api/notifications')) || { items: [] };
 
   const owned = {};
   (hold.tickets || []).forEach(t => { owned[t.code] = t; });
@@ -1586,14 +1615,32 @@ async function kScreenCoupon() {
   // 翻成存档态，点过「知道了」才收进「今天用过什么」。结束该有一次收尾。
   finished.forEach(x => { h += kAckHTML(x); });
 
+  // 三条欠账提示。口径都是 v44 的：
+  //   零头（分钟）—— 不说清扣哪儿就没意义，现在点明「下一张券只能玩多少分钟」；
+  //   整张的券欠账 —— 是状态，欠着就该一直在，不给「知道了」；
+  //   星尘欠款 —— 同上。
   if (debt > 0) {
     h += '<div class="tip">' + ic('i-clock', 15, '#D18A3C') +
-      '欠 ' + num(debt) + ' 分钟 · 下次发的券先拿一部分去还</div>';
+      '欠 ' + num(debt) + ' 分钟 · 下一张券只能玩 ' +
+      num(st && st.play_minutes || 0) + ' 分钟</div>';
+  }
+  if (+hold.ticket_debt > 0) {
+    h += '<div class="tip">' + ic('i-info', 15, '#D18A3C') +
+      '还欠 ' + num(hold.ticket_debt) + ' 张券 · 下次发到券先拿去还</div>';
   }
   if (hold.debt > 0) {
     h += '<div class="tip">' + ic('i-info', 15, '#D18A3C') +
       '还欠 ' + num(hold.debt) + ' 星尘，下次结算时先扣</div>';
   }
+  // 「上次的惩罚扣掉了 N 张券」：这是件已经发生完的事，说完就收走。带一颗
+  // 「知道了」，「记忆」就落在通知的 read_at 上 —— 同一条点过不再出现，
+  // 只有新扣一笔才有新的一条。整张的券欠账那条不给「知道了」：它没还完。
+  (nts.items || []).filter(n => n.kind === 'ticket_fine').forEach(n => {
+    h += '<div class="tip">' + ic('i-info', 15, '#D18A3C') +
+      '<span class="grow">' + esc(n.title) +
+      (n.body ? ' · ' + esc(n.body) : '') + '</span>' +
+      '<button class="btn btn--ghost" data-noteack="' + n.id + '">知道了</button></div>';
+  });
 
   // 今天的额度快照
   if (st) {
@@ -2143,8 +2190,12 @@ async function kScreenWish() {
 
   const pend = w.items.filter(x => x.status === 'wished');
   const active = w.items.filter(x => x.status === 'active');
-  const hist = w.items.filter(x => x.status === 'achieved' || x.status === 'claimed'
-    || x.status === 'cancelled');
+  // v44：条件到了（achieved）和「已经给你了」（delivered）都不再算结束 ——
+  // 它们是这条链路中间的两站，在他这头看就是「等谁动一下」。只有他点过
+  // 「我收到了」（claimed）和撤掉的（cancelled）才进历史。
+  const ready = w.items.filter(x => x.status === 'achieved');
+  const given = w.items.filter(x => x.status === 'delivered');
+  const hist = w.items.filter(x => x.status === 'claimed' || x.status === 'cancelled');
 
   let h = '<div class="appbar">' +
     '<button class="appbar-back" type="button" data-go="' + kBack('wish') + '">' + ic('i-back', 16, 'var(--ink)') + '</button>' +
@@ -2166,7 +2217,7 @@ async function kScreenWish() {
   h += '<div class="sect-head"><span class="sect-title">' +
     ic('i-wishstar', 16, 'var(--pink-deep)') + '我的心愿</span>' +
     '<span class="sect-note">进行中 ' + num(active.length) + ' / ' + num(w.limit) + '</span></div>';
-  if (!pend.length && !active.length && !hist.length) {
+  if (!pend.length && !active.length && !ready.length && !given.length && !hist.length) {
     h += '<div class="card"><div class="empty">还没有心愿。<br>' +
       '点上面那个按钮，把想要的写下来。</div></div>';
   }
@@ -2194,14 +2245,57 @@ async function kScreenWish() {
       ((p2.subs || []).length
         ? '<div class="wsubs">' + p2.subs.map(s2 => wishSubRow(x, s2)).join('') + '</div>'
         : wishSelfRow(x, p2)) +
+      // v44：条件够了就写一句，不给按钮。「我做到了」原来是颗按钮 ——
+      // 可分数、星尘、任务数这些系统自己算得出来，要他按一下才成立，
+      // 等于让一件已经发生的事等他签字。他这一页能按的那颗只剩
+      // 「你自己写的那句话」下面那一行（wishSubRow 里的提交）。
       (p2.done || (p2.ready && whole)
         ? '<div class="hb" style="margin-top:10px">' +
-          '<span class="ok-t" style="font-size:10.5px">够了，可以随时兑现</span>' +
-          '<button class="btn btn--sm" data-wdone="' + x.id + '">我做到了</button></div>'
+          '<span class="ok-t" style="font-size:10.5px">够了，等爸爸妈妈给你</span></div>'
         : '') +
       wishNotesHTML(x) +
       '</div>';
   });
+
+  // v44：条件到了，球在爸爸妈妈那边。只报一句，不给按钮 —— 这时候他能做的
+  // 只有等，摆一颗按钮出来等于让他按一个不会发生的事。
+  if (ready.length) {
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-wishstar', 16, 'var(--pink-deep)') + '等爸爸妈妈给你</span>' +
+      '<span class="sect-note">' + num(ready.length) + ' 条</span></div>';
+    ready.forEach(x => {
+      h += '<div class="card card--tight">' +
+        '<div class="h g10">' +
+        '<span class="icon-box" style="flex:0 0 34px;width:34px;height:34px;' +
+        'background:var(--pink-bg)">' + glyph(x.icon, 'wish', 18) + '</span>' +
+        '<div class="grow v g3"><div class="row-title">' + esc(x.title) + '</div>' +
+        '<div class="row-sub">' + esc(wishCondText(x)) + '</div></div></div>' +
+        '<div class="hb" style="margin-top:10px">' +
+        '<span class="ok-t" style="font-size:10.5px">条件够了，等爸爸妈妈给你</span></div>' +
+        '</div>';
+    });
+  }
+
+  // v44：爸爸妈妈说已经给你了。整条链路的最后一环就在这一栏里那颗按钮上 ——
+  // 他点过「我收到了」，这条心愿才算完，所以它是这一页最该被看见的一块。
+  if (given.length) {
+    h += '<div class="sect-head"><span class="sect-title">' +
+      ic('i-wishstar', 16, 'var(--pink-deep)') + '等你说收到</span>' +
+      '<span class="sect-note">' + num(given.length) + ' 条</span></div>';
+    given.forEach(x => {
+      h += '<div class="card card--tight">' +
+        '<div class="h g10">' +
+        '<span class="icon-box" style="flex:0 0 34px;width:34px;height:34px;' +
+        'background:var(--pink-bg)">' + glyph(x.icon, 'wish', 18) + '</span>' +
+        '<div class="grow v g3"><div class="row-title">' + esc(x.title) + '</div>' +
+        '<div class="row-sub">爸爸妈妈说已经给你了' +
+        (x.delivered_at ? ' · ' + esc(String(x.delivered_at).slice(0, 10)) : '') +
+        '</div></div></div>' +
+        '<div class="hb" style="margin-top:10px">' +
+        '<button class="btn btn--sm" data-wgot="' + x.id + '">我收到了</button></div>' +
+        '</div>';
+    });
+  }
 
   if (pend.length) {
     h += '<div class="sect-head"><span class="sect-title">' +
@@ -2226,8 +2320,17 @@ async function kScreenWish() {
     (p ? '<span class="num" style="font-size:15px;color:var(--purple-deep)">' +
       num(p.collected_stardust) + ' / ' + num(p.target_stardust) + '</span>' : '') + '</div>';
   if (!p) {
+    // 还没立目标时，先把「攒着没处投」的那几笔报出来 —— 那些是忘打卡和校准
+    // 罚下来的星尘，孩子看不到这个数，会以为罚的钱不知去向。一分都没有的
+    // 时候照旧只留原来那句话，不摆一个「已攒 0」占位置。
+    const pendSd = Math.round((((pool && pool.logs) || [])
+      .filter(x => !x.counted && +x.stardust > 0)
+      .reduce((a, x) => a + (+x.stardust || 0), 0)) * 100) / 100;
     h += '<div class="t-2" style="font-size:11px;line-height:1.6;margin-top:8px">' +
-      '爸爸妈妈还没定全家的目标。定好了，你投的星尘也会算在里面。</div>';
+      '爸爸妈妈还没定全家的目标。' +
+      (pendSd > 0
+        ? '攒下的 ' + num(pendSd) + ' 星尘先记着，定好了就一起投进去。'
+        : '定好了，你投的星尘也会算在里面。') + '</div>';
   } else {
     h += '<div style="font-size:13px;font-weight:700;margin:10px 0">' + esc(p.title) + '</div>' +
       '<div class="bar bar--purple"><i style="width:' +
@@ -3050,6 +3153,20 @@ CHILD.bind = function () {
       } catch (e) { err(e); }
     });
   }));
+  // v44：心愿的最后一环。他点一下「我收到了」，这条心愿才算完 ——
+  // 接口那边只认他本人（大人代点不了），所以这颗按钮是他独有的一步。
+  $$('#view [data-wgot]').forEach(b => b.addEventListener('click', async () => {
+    askSheet({
+      title: '收到啦？',
+      hint: '点完这条心愿就进历史，改不回来了。还没拿到就别点，跟爸爸妈妈说一声。',
+      ok: '收到了',
+    }, async () => {
+      try {
+        await api('POST', '/api/wishes/' + b.dataset.wgot + '/status', { status: 'claimed' });
+        closeSheet(); toast('好，这条算完啦'); await render();
+      } catch (e) { err(e); }
+    });
+  }));
   // 付星尘那一个按钮不在这里绑：bindWishActions 里已经绑过并带上了确认，
   // 两边都挂监听的话点一下会跑两遍（弹层叠两层、接口发两次）。
   // 宝箱页 hero 卡上那只箱子。待开的那只不管动画播多久，都在这里点开；
@@ -3109,6 +3226,15 @@ CHILD.bind = function () {
     b.disabled = true;
     try {
       await api('POST', '/api/tickets/ack', { request_id: +b.dataset.tkack });
+      await render();
+    } catch (e) { b.disabled = false; err(e); }
+  }));
+  // 「知道了」：券包页那条「上次的惩罚扣掉了 N 张券」。点掉写 read_at，
+  // 不点也不催 —— 这一下是给自己看的收尾，不是交给谁的任务。
+  $$('#view button[data-noteack]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      await api('POST', '/api/notifications/read', { id: +b.dataset.noteack });
       await render();
     } catch (e) { b.disabled = false; err(e); }
   }));

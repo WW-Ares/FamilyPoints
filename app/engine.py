@@ -6,8 +6,10 @@
 所有余额都由流水求和得出，不存冗余余额字段。
 """
 import json
+import math
 import random
 import re
+import traceback
 from datetime import datetime, time, timedelta
 
 import db
@@ -95,6 +97,8 @@ KINDS = {
     # 家长问「券哪来的」，账本给的答案是「手动调整」，等于没答）。
     "level_up": "升级奖励",
     "box_reroll": "宝箱重抽",
+    # v44：赛季末清算这一条（清欠账、卡折星尘、券与碎片清零）。
+    "season_close": "赛季清算",
 }
 
 
@@ -368,14 +372,6 @@ def minutes_debt(member_id, day=None):
 def minutes_credit(member_id, day=None):
     """今天还剩多少余出来的分钟。欠着的时候是 0 —— 余出来的先拿去还账。"""
     return round(max(0.0, minutes_balance(member_id, day)), 2)
-
-
-def minutes_debt_today(member_id, day=None):
-    """今天已经扣掉多少分钟（用来卡单日 −30 的上限）。"""
-    day = day or today()
-    return round(-min(0.0, db.query_one(
-        "SELECT COALESCE(SUM(delta_minutes),0) v FROM ledger"
-        " WHERE member_id=? AND voided=0 AND day=? AND delta_minutes<0", (member_id, day))["v"]), 2)
 
 
 def item_balance(member_id, item_id):
@@ -657,32 +653,9 @@ def curfew_text(day):
     return _hm_text(curfew_of(day))
 
 
-def _study_dim(day):
-    for d in dimensions(day_mode(day)):
-        if d["code"] == "study":
-            return d
-    return {"name": "智识", "code": "study"}
-
-
-def study_done(member_id, day):
-    """当天「学习任务已完成」没有。
-
-    判定源就是家长每天打的那个智识分（假期自动改名「计划执行」）。
-    规则书里两边共用同一个定义，就是为了避免出现
-    「打卡说完成了、核销说没完成」这种各说各话。
-    没打分也算没过 —— 没有记录就没法证明做完了，顺便也提醒家长去打分。
-    """
-    r = db.query_one(
-        "SELECT COALESCE(SUM(se.value),0) v, COUNT(*) n FROM score_entry se"
-        " JOIN dimension dm ON dm.id=se.dimension_id"
-        " WHERE se.member_id=? AND se.day=? AND dm.code='study' AND se.voided=0",
-        (member_id, day))
-    if not r or not r["n"]:
-        return False, "今天还没打分"
-    if float(r["v"]) <= 0:
-        return False, "今天的「%s」没做到" % _study_dim(day)["name"]
-    return True, ""
-
+# （v1.16 删掉了 study_done 与 _study_dim：它们是「娱乐券要先查学习做完没」
+#  那条规矩的实现，规矩本身在 v23 就撤了（seed_data 里 ticket.prereq 已退役），
+#  实现留到今天一直没人调。）
 
 def _ticket_window_minutes():
     """一轮之内，两张券之间允许的空档。超过它就算这一轮断了。
@@ -854,8 +827,10 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
         ready = _ts_min(st["round_end"]) + cooldown
     cool_left = max(0, ready - now_min) if ready is not None else 0
 
-    # 欠账（校准扣掉的分钟）先从今天的额度里扣，扣不动的那部分继续挂着，
-    # 到周期结算再按「固定分达标就清零」处理。这是「券允许负库存」那一条的落点。
+    # 欠账（校准扣掉的分钟）v44 改口径：不再从「今天还能玩多久」里减，
+    # 只作用在这张券的时长上（见下面的 play_minutes）。再减一次等于双重扣，
+    # 而且零头会被整除的余数吞掉 —— 那正是「扣 15 分钟一半概率看不出来」
+    # 的老毛病。
     debt = minutes_debt(member_id, day)
     # 今天额外拿到过的分钟额度（加时卡、箱子开出的加时 60 分钟）。
     # 欠着的时候这一项是 0：多出来的时间先拿去还账，不能既免罚又多玩。
@@ -870,8 +845,16 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
     delay = _ticket_delay_seconds()
     base = _ts_min(st["round_end"]) if st["round_end"] else now_min
     start_probe = max(now_min + delay / 60.0, base)
-    room = max(0, curfew - start_probe - debt + bonus)
+    room = max(0, curfew - start_probe + bonus)
     by_curfew = int(room // per) if per else cap_new
+
+    # 这张券实际能玩多少分钟 = 面值 − 分钟欠账，最少留半张。
+    # 欠得多时不是扣成 0 分钟（那样他坐下了、券没了、一分钟没玩到），
+    # 而是先扣到半张，超出的欠账继续挂着、跨到再下一张。
+    if per > 0 and debt > 0:
+        play_minutes = round(max(per / 2.0, per - debt), 2)
+    else:
+        play_minutes = per
 
     # 免等卡免的是「一轮结束后的休息」，不是前置。免掉之后立刻能开新一轮。
     skip = bool(card_flag(member_id, "skip_cooldown", day))
@@ -919,7 +902,10 @@ def ticket_use_state(member_id, item=None, day=None, at=None, submit_at=None,
         "cooldown_left": cool_left, "skip_cooldown": skip,
         "ready_at": _hm_text(ready) if ready is not None else None,
         "last_end": st["last_end"], "overtime_extra": extra, "by_curfew": by_curfew,
-        "debt_minutes": debt, "bonus_minutes": bonus,
+        # 分钟欠账两个名字都给：debt_minutes 是老名（家长端券弹层用），
+        # debt 是 v44 券包页三条 tip 与巡检用的短名 —— 两个指同一个数，
+        # 少一个，那一屏的「欠 N 分钟」就安静地消失。
+        "debt": debt, "debt_minutes": debt, "bonus_minutes": bonus, "play_minutes": play_minutes,
         "max_qty_now": max_qty,
         "flags": card_flags(member_id, day), "armed": armed_cards(member_id),
         "can_now": bool(cool_left == 0 and max_qty > 0),
@@ -1058,6 +1044,23 @@ def _settle_ticket_request(request_id, operator_id=None):
                       operator_id=operator_id or r["member_id"])
     if rc < 0:
         return {"ok": False, "msg": "券不够了，核销没成"}
+
+    # v44：这张券被分钟欠账扣短了，扣掉的那一段从欠账里销掉 —— 券也是一种
+    # 还债方式。不销的话欠账会永远挂着（周期结算那套「达标清零」已经撤掉）。
+    if it and it["code"] == FUN_CODE and r["minutes"]:
+        try:
+            per_then = float((json.loads(r["gate"] or "{}").get("state") or {})
+                             .get("minutes") or 0)
+        except (TypeError, ValueError):
+            per_then = 0.0
+        qty_now = float(r["qty"] or 1) or 1.0
+        play_then = float(r["minutes"]) / qty_now
+        paid = round(min(minutes_debt(r["member_id"]),
+                         qty_now * max(0.0, per_then - play_then)), 2)
+        if paid > 0:
+            add_ledger(r["member_id"], "fine", minutes=paid,
+                       note="用券时抵掉欠账 %g 分钟" % paid,
+                       operator_id=operator_id or r["member_id"])
     # 什么时候开始跑：先按「现在 + 准备时间」。家长点头那一刻孩子不一定
     # 已经坐好了，那一下不该开始扣时间。
     #
@@ -1128,7 +1131,13 @@ def request_ticket(member_id, item_id, qty=1, note=""):
 
     # 要人办的那几种（陪伴 / 选择 / 豁免 / 独处 / 好友）不记屏幕时长：存 0。
     # 存 0 之后它们自然不进「正在玩」、不叠准备时间，批下来直接进「等安排」。
-    minutes = 0.0 if is_chore_ticket(item["code"]) else qty * float(g["state"]["minutes"] or 0)
+    #
+    # v44：娱乐券按「实际能玩的时长」固化，而不是面值 —— 有分钟欠账时这张券
+    # 会被扣短（play_minutes = 面值 − 欠账，最少留半张）。跟面值同一个原则：
+    # 申请那一刻定死，批准时不重算（不追溯已发奖励）。
+    minutes = (0.0 if is_chore_ticket(item["code"])
+               else qty * float(g["state"].get("play_minutes")
+                                or g["state"]["minutes"] or 0))
 
     if not db.cfg("ticket.need_approval", True):
         rid = db.execute(
@@ -2502,7 +2511,10 @@ def _feed_wishes(member_id=None):
             # 只写条件名，不写门槛数字：数字在下面那条进度里，
             # 两行都写「3」的时候，看的人会以为自己数错了
             detail = "条件　" + _WISH_COND_LABEL.get(r["cond_type"], r["cond_type"] or "还没定")
-            state, rank = ("够了，可以兑现" if ready else "进行中"), (0 if ready else 2)
+            # v44：这句说的是球在谁手上。孩子那边是「等爸爸妈妈给你」，
+            # 家长那边由 feedRow 覆写成「该你去办了」—— 同一个状态，
+            # 两头各自该看见的那句话不一样。
+            state, rank = ("够了，等爸爸妈妈给你" if ready else "进行中"), (0 if ready else 2)
         out.append({
             "kind": "wish", "kind_text": "心愿",
             "wish_id": r["id"], "member_id": r["member_id"],
@@ -2666,7 +2678,7 @@ _KIND_GROUP = {
     "carryover": "given", "cash_bonus": "given", "holiday_delay": "given",
     "explore": "judge", "daily_score": "judge", "fine": "judge",
     "adjust": "judge", "correction": "judge", "test": "judge",
-    "expire_refund": "system",
+    "expire_refund": "system", "season_close": "system",
 }
 
 
@@ -3283,7 +3295,7 @@ def level_table():
 # 等级看的是累计获得（lifetime_stardust），而每次升级会补发券和卡。
 # 纸质账搬进来的存量是这个孩子在系统外面攒的，让他一进来就跳几级、
 # 连带补出一批升级奖励，等于白送；所以这一条要排除掉。
-LEVEL_EXCLUDED_KINDS = ("carryover",)
+LEVEL_EXCLUDED_KINDS = ("carryover", "season_close")
 
 
 def lifetime_stardust(member_id):
@@ -3483,53 +3495,38 @@ def settle_cycle(cycle_id, operator_id=None, force=False):
         gross = round(gross * 2, 2)
         doubled = True
 
-    offset = min(max(0.0, debt_balance(c["member_id"])), gross)
-    net = round(gross - offset, 2)
-    if offset > 0:
-        add_ledger(c["member_id"], "fine", cycle_id=cycle_id, debt=-offset, operator_id=operator_id,
-                   note="周期结算：星尘欠款优先抵扣")
-    # 滚过一个周期还没还完的，免掉。无限往下滚会变成长期负债，
-    # 孩子算一下就知道「反正欠着也一样」，这条线就废了（第 08 章）。
-    left_debt = round(max(0.0, debt_balance(c["member_id"])), 2)
-    forgiven = 0.0
-    if left_debt > 0:
-        forgiven = left_debt
-        add_ledger(c["member_id"], "fine", cycle_id=cycle_id, debt=-forgiven,
-                   operator_id=operator_id,
-                   note="周期结算：欠款已滚过一个周期，免掉 %g 星尘" % forgiven)
-
-    # 券的负库存走同一个结算口、同一套条件（第 05、08 章，唯一口径）：
-    # 本周固定分达标就清零；没达标则最多保留 30 分钟滚到下个周期，再往下不累加。
-    threshold = float(db.cfg("cycle.debt_clear_score", 28)) * (c["threshold_ratio"] or 1.0)
-    cleared_minutes = kept_minutes = 0.0
-    debt_min = minutes_debt(c["member_id"])
-    if debt_min > 0:
-        keep_cap = float(db.cfg("cycle.debt_keep_minutes", 30))
-        if float(c["fixed_score"] or 0) + 1e-9 >= threshold:
-            keep = 0.0
-        else:
-            keep = min(debt_min, keep_cap)
-        cut = round(debt_min - keep, 2)
-        if cut > 0:
-            add_ledger(c["member_id"], "fine", cycle_id=cycle_id, minutes=cut, operator_id=operator_id,
-                       note="周期结算：本周达标，欠的 %g 分钟清零" % cut if keep == 0
-                       else "周期结算：欠的 %g 分钟里免掉 %g，只保留 %g 滚到下个周期"
-                            % (debt_min, cut, keep))
-            cleared_minutes = cut
-        kept_minutes = keep
-    if net > 0:
-        add_ledger(c["member_id"], "daily_score", cycle_id=cycle_id, stardust=net,
+    bal_before = stardust_balance(c["member_id"])
+    due = max(0.0, debt_balance(c["member_id"]))
+    # 保底：只扣他手上扣得动的那部分（比例 + 地板，见 payable_stardust）。
+    # 「他手上」= 结算前余额 + 这次发的 —— 攒着的也算，否则大额罚单永远收不回。
+    take = payable_stardust(bal_before + gross, due)
+    if gross > 0:
+        add_ledger(c["member_id"], "daily_score", cycle_id=cycle_id, stardust=gross,
                    operator_id=operator_id,
                    note="周期结算：固定分 %g 分入账%s" % (c["fixed_score"] or 0,
                                                 "（双倍周）" if doubled else ""),
-                   meta={"double_week": doubled, "offset": offset})
+                   meta={"double_week": doubled})
+    if take > 0:
+        # 拆两条账：上面那条是发放，这条是还款。合成一条的话，孩子端流水
+        # 会读成「这周只发了 3.25」，看不出到底发生了什么。
+        add_ledger(c["member_id"], "fine", cycle_id=cycle_id, stardust=-take, debt=-take,
+                   operator_id=operator_id,
+                   note="周期结算：先还欠款 %g 星尘" % take, meta={"repay": True})
+        tell_debt_paid(c["member_id"], "stardust", take, stardust_balance(c["member_id"]),
+                       round(max(0.0, due - take), 2), gross=gross, before=bal_before,
+                       floor=_floor_stardust())
+    elif due > 0:
+        # 一分都扣不动（手上贴着保底）也要说一声 —— 不然孩子看到这周发了星尘、
+        # 欠款一动不动，只会以为系统没在算。
+        tell_debt_paid(c["member_id"], "stardust", 0, stardust_balance(c["member_id"]),
+                       due, gross=gross, before=bal_before, floor=_floor_stardust())
+    net = round(gross - take, 2)
 
-    # v38 的③：上个周期发下去、一直没点的箱子，这次结算顺手替他开掉。
-    # 摆在发本周期这只箱子之前 —— auto_open_stale 按 ts 过滤（ts 早于正在
-    # 结算这个周期的 start_date 才算陈箱），本周期刚发的那只不会被误伤。
-    # 任务奖励发的箱子没绑周期，所以判据只能是时间。
-    auto_opened = auto_open_stale(c["member_id"], before_day=c["start_date"],
-                                  operator_id=operator_id)
+    # v44：欠款与券欠账的冲刷改成「赛季末才清一次」，这里不再免、不再清。
+    # 原来的「滚过一个周期还没还完的免掉」太勤 —— 一张大额罚单一期就免掉大半。
+    # 现在跨周期滚动累积，交给 close_season()。
+    forgiven = 0.0
+    cleared_minutes = kept_minutes = 0.0
 
     tier = None if demo_only else tier_for_energy(c["energy"], c["threshold_ratio"],
                                                  c["fixed_score"])
@@ -3540,17 +3537,223 @@ def settle_cycle(cycle_id, operator_id=None, force=False):
                " WHERE id=?",
                (now(), tier["tier"] if tier else 0, net, cycle_id))
     push_notify(c["member_id"], "settle", "本周结算完成",
-                "本周 %g 分，星尘 +%g%s" % (c["energy"], net,
+                "本周 %g 分，星尘 +%g%s" % (c["energy"], gross,
                                           ("，" + tier["name"] + "已到你的宝箱页，点开看看")
                                           if box else ""))
     levels = apply_level_rewards(c["member_id"], operator_id=operator_id)
     # 周期一换，「连续达标 N 周」「本周期固定分」这两类心愿的进度就重算了，
     # 刚够的话在这里报出来。
     check_wish_ready(c["member_id"])
-    return {"ok": True, "cycle": cycle_snapshot(cycle_id), "stardust": net, "offset": offset,
-            "forgiven": forgiven, "cleared_minutes": cleared_minutes, "kept_minutes": kept_minutes,
-            "doubled": doubled, "box": box, "auto_opened": auto_opened, "level_up": levels,
+    return {"ok": True, "cycle": cycle_snapshot(cycle_id), "stardust": gross, "net": net,
+            "repaid": take, "forgiven": forgiven, "cleared_minutes": cleared_minutes,
+            "kept_minutes": kept_minutes,
+            "doubled": doubled, "box": box, "auto_opened": 0, "level_up": levels,
             "warn": warn}
+
+
+# ---------------------------------------------------------------------------
+# 赛季（v44）
+# ---------------------------------------------------------------------------
+# 欠款原来在每个周期末免一次（周期默认 7 天），太勤 —— 一张大额罚单一期就
+# 免掉大半。现在改成跨周期滚动累积，只在赛季末清一次。
+#
+# 一季默认 90 天（跟历史上卡有效期的「一个赛季」对齐），到点自动推下一季；
+# 家长可以改长度；结束日撞上寒暑假就顺延（复用假期保护窗那两个参数）。
+#
+# 季末清场只动「欠账与道具」：清欠款 / 清消耗卡（按 expire_refund 折星尘）/
+# 清六种券 / 清碎片；星尘余额、等级（派生）、三张身份卡一律不动；没开的宝箱
+# 留着，让他在新赛季自己点开。
+def season_end(start_day, length=None):
+    """一季的结束日。撞上寒暑假就顺延，理由跟卡有效期那条一样。
+
+    不顺延的话，季末清算会正好落在一家人出门玩的那几天：该清的没清、
+    该开箱的时间也耗在路上。判据原样沿用假期保护窗（holiday 表 +
+    那两个窗口参数）。
+    """
+    length = max(1, int(length if length is not None else db.cfg("season.length_days", 90)))
+    end = parse_day(start_day) + timedelta(days=length - 1)
+    before = int(db.cfg("holiday.delay_window_before", 14))
+    after = int(db.cfg("holiday.delay_window_after", 7))
+    for hd in db.query("SELECT * FROM holiday WHERE end_date>=?", (fmt(end),)):
+        win_start = parse_day(hd["start_date"]) - timedelta(days=before)
+        if win_start <= end <= parse_day(hd["end_date"]):
+            end = parse_day(hd["end_date"]) + timedelta(days=after)
+            break
+    return fmt(end)
+
+
+def current_season():
+    """现在这一季。空表、或者上一季已结但没推下一季时补一个。"""
+    s = db.query_one("SELECT * FROM season WHERE settled_at IS NULL ORDER BY id DESC LIMIT 1")
+    if s:
+        return s
+    prev = db.query_one("SELECT * FROM season ORDER BY id DESC LIMIT 1")
+    length = max(1, int(db.cfg("season.length_days", 90)))
+    if prev:
+        start = fmt(parse_day(prev["end_date"]) + timedelta(days=1))
+        idx = int(prev["idx"]) + 1
+    else:
+        start = today()
+        idx = 1
+    sid = db.execute(
+        "INSERT INTO season (idx, theme, start_date, end_date, created_at) VALUES (?,?,?,?,?)",
+        (idx, "", start, season_end(start, length), now()))
+    return db.query_one("SELECT * FROM season WHERE id=?", (sid,))
+
+
+def season_snapshot():
+    """本季的读数，给前后端共用。"""
+    s = current_season()
+    return {"idx": s["idx"], "start_date": s["start_date"], "end_date": s["end_date"],
+            "theme": s["theme"] or "", "length_days": int(db.cfg("season.length_days", 90)),
+            "days_left": max(0, (parse_day(s["end_date"]) - parse_day(today())).days)}
+
+
+def season_due(day=None):
+    """今天是不是已经过了本季结束日 —— 定时器据此触发清算。"""
+    return (day or today()) > current_season()["end_date"]
+
+
+def retune_season(length=None):
+    """改了赛季长度之后，把本季的结束日重算一遍。
+
+    只改结束日，不动起点：这一季已经走过的日子是既成事实，重算起点等于
+    把「第几季」也改了。
+
+    算出来的结束日落在今天之前时不能照写（把长度改短必然这样）：定时器
+    每 5 分钟问一次「到日子没有」，写完下一轮就当场清算，孩子的券和卡
+    瞬间清零，而家长那边只是在设置页里改了一个数字。所以给一天缓冲 ——
+    结束日至少是明天，那一档「明天赛季结束」的提醒还来得及发得出去，
+    留一夜让他把想用的券用掉。
+    """
+    length = max(1, int(length if length is not None else db.cfg("season.length_days", 90)))
+    s = current_season()
+    end = season_end(s["start_date"], length)
+    floor_day = fmt(parse_day(today()) + timedelta(days=1))
+    if end < floor_day:
+        end = floor_day
+    db.execute("UPDATE season SET end_date=? WHERE id=?", (end, s["id"]))
+    return season_snapshot()
+
+
+def _wipe_item(member_id, item_id, qty, ledger_id, note="赛季末清场"):
+    """把某种道具清零，挂在指定流水下（不走 consume_item，免得每条都单独留一账）。"""
+    left = float(qty)
+    for h in db.query("SELECT * FROM holding WHERE member_id=? AND item_id=? AND qty>0"
+                      " ORDER BY COALESCE(expires_at,'9999-12-31'), acquired_at",
+                      (member_id, item_id)):
+        if left <= 0:
+            break
+        take = min(h["qty"], left)
+        db.execute("UPDATE holding SET qty=qty-? WHERE id=?", (take, h["id"]))
+        left -= take
+    add_ledger_item(ledger_id, member_id, item_id, -float(qty), note)
+
+
+def close_season(operator_id=None):
+    """赛季末清算：清欠账与道具，留星尘、等级、身份卡，没开的箱子留给他自己开。
+
+    定稿口径（2026-09-26）：
+      清 —— 星尘欠款、券欠账、分钟欠账、20 种消耗卡（按 expire_refund 退星尘）、
+            六种券、碎片
+      留 —— 星尘余额、等级（派生）、三张身份卡（无有效期的钻石卡）、没开的宝箱
+
+    清算记成一条 kind='season_close' 的账，day 落在**新季第一天** —— 天然就是
+    新一季日志的第一条，不用额外排序。退的星尘挂这条上，并把它排除出等级
+    （见 LEVEL_EXCLUDED_KINDS）：不然一次退一百多星尘会当场把孩子推一级、
+    再补发一批券和卡，季末清场反而变多，很怪。
+    """
+    s = current_season()
+    if s["settled_at"]:
+        return {"ok": False, "msg": "这一季已经结过了"}
+    if today() < s["end_date"]:
+        return {"ok": False, "msg": "这一季还没到日子（到 %s）" % s["end_date"]}
+    new_start = fmt(parse_day(s["end_date"]) + timedelta(days=1))
+    length = max(1, int(db.cfg("season.length_days", 90)))
+    report = []
+    failed = []
+    for m in db.query("SELECT * FROM member WHERE role='child' AND active=1 ORDER BY sort"):
+        # 单个孩子清场失败，不能把整季卡在这儿：settled_at 一直没写的话，
+        # 定时器 5 分钟后重跑一遍，已经清过的孩子会被清第二次（再写一条
+        # season_close 账）。所以失败的那个单记下来，季照封、下一季照推。
+        try:
+            report.append(_close_season_member(m, s, new_start, operator_id))
+        except Exception:
+            traceback.print_exc()
+            failed.append({"member_id": m["id"], "who": m["name"]})
+    db.execute("UPDATE season SET settled_at=? WHERE id=?", (now(), s["id"]))
+    next_end = season_end(new_start, length)
+    db.execute("INSERT INTO season (idx, theme, start_date, end_date, created_at)"
+               " VALUES (?,?,?,?,?)",
+               (int(s["idx"]) + 1, "", new_start, next_end, now()))
+    # 孩子那条写得平：只报留了什么、不报清了多少（摆一堆「清零」在他面前没必要）。
+    for r in report:
+        push_notify(r["member_id"], "season", "新赛季开始了",
+                    "第 %d 季收尾了。星尘、等级、身份卡都留着；没开的宝箱也给你留着，"
+                    "新赛季自己开。" % s["idx"])
+    push_notify(None, "season", "第 %d 季结束" % s["idx"],
+                "第 %d 季收尾了，第 %d 季从 %s 开始。清单在孩子们的日志里。"
+                % (s["idx"], int(s["idx"]) + 1, new_start))
+    if failed:
+        # 清场漏了人这件事不能闷着：家长那本账会差一块，而他已经收过
+        # 「清算完成」这句话了。
+        push_notify(None, "season", "有 %d 个孩子的季末清场没走完" % len(failed),
+                    "、".join(f["who"] for f in failed) + " 这一季没清干净，"
+                    "欠账与道具留到了新赛季。看一眼日志再决定要不要手动补。")
+    return {"ok": True, "season": s["idx"], "next_from": new_start,
+            "report": report, "failed": failed}
+
+
+def _close_season_member(m, s, new_start, operator_id=None):
+    """一个孩子的季末清场。close_season 的一步，单独拎出来是为了让它能失败 ——
+    一个孩子卡住不该拖着整季不封账。"""
+    mid = m["id"]
+    auto_pick_stale(mid, operator_id=operator_id)      # 开箱开一半的自选件先收尾
+    due = round(max(0.0, debt_balance(mid)), 2)
+    due_t = ticket_debt(mid)
+    due_m = minutes_debt(mid)
+    frag = round(max(0.0, fragment_balance(mid)), 2)
+    # 先把要清的券与卡点一遍（只读），再写一条汇总账
+    wipe = []          # (item_id, qty, refund_each)
+    for it in db.query("SELECT * FROM item WHERE category='card'"
+                       " AND COALESCE(shelf_life_days,0)>0 ORDER BY id"):
+        held = item_balance(mid, it["id"])
+        if held > 0:
+            wipe.append((it["id"], held, float(it["expire_refund"] or 0), "card"))
+    cards_n = int(sum(h for _i, h, _r, k in wipe if k == "card"))
+    refund = round(sum(h * r for _i, h, r, k in wipe if k == "card"), 2)
+    for it in db.query("SELECT * FROM item WHERE category='ticket' ORDER BY id"):
+        held = item_balance(mid, it["id"])
+        if held > 0:
+            wipe.append((it["id"], held, 0.0, "ticket"))
+    tickets_n = int(sum(h for _i, h, _r, k in wipe if k == "ticket"))
+    parts = []
+    if tickets_n:
+        parts.append("券 %d 张清零" % tickets_n)
+    if cards_n:
+        parts.append("卡 %d 张折 %g 星尘" % (cards_n, refund))
+    if due > 0:
+        parts.append("欠的 %g 星尘一笔勾掉" % due)
+    if due_t:
+        parts.append("券欠账 %d 张勾掉" % int(due_t))
+    if due_m:
+        parts.append("时间欠账 %g 分钟勾掉" % due_m)
+    if frag:
+        parts.append("碎片 %g 清零" % frag)
+    note = "第 %d 季结束 —— %s。" % (s["idx"], "；".join(parts) if parts else "没什么要清的")
+    sid = add_ledger(mid, "season_close", day=new_start, stardust=refund, debt=-due,
+                     ticket=due_t, minutes=due_m, fragment=-frag, note=note,
+                     operator_id=operator_id,
+                     meta={"season": s["idx"], "cards": cards_n, "tickets": tickets_n,
+                           "refund": refund, "debt": due, "ticket_debt": due_t,
+                           "minutes_debt": due_m, "fragment": frag})
+    for item_id, held, _r, _k in wipe:
+        _wipe_item(mid, item_id, held, sid)
+    return {"member_id": mid, "who": m["name"], "cards": cards_n,
+            "tickets": tickets_n, "refund": refund, "debt": due,
+            "ticket_debt": due_t, "minutes_debt": due_m, "fragment": frag}
+
+
 
 
 def ensure_settled(member_id, day=None):
@@ -3860,6 +4063,12 @@ def open_box(member_id, box_id, *, picks=None, operator_id=None, auto=False):
                    note="%s 保底：娱乐券 ×%g" % (t["name"], t["tickets"]))
         given.append({"type": "ticket", "name": "娱乐券", "qty": t["tickets"],
                       "icon": fun["icon"] or "rw_ticket_fun"})
+        # v44：券到手了，先把券欠账扣掉（守保底）。什么时候开箱、什么时候扣 ——
+        # 平时攒的券不动，只有「每期结束那一波」的这一箱会还账。
+        repay_t = apply_ticket_debt(member_id, operator_id=operator_id, gross=t["tickets"])
+        if repay_t:
+            given.append({"type": "debt", "name": "还券欠账", "qty": -repay_t,
+                          "icon": "rw_ticket_fun"})
 
     if t["stardust"]:
         add_ledger(member_id, kind, cycle_id=cycle_id, stardust=t["stardust"],
@@ -4056,29 +4265,19 @@ def pending_boxes(member_id):
     return out
 
 
-def auto_open_stale(member_id, before_day=None, operator_id=None):
-    """把一直没开的箱子替孩子开掉。
+def auto_pick_stale(member_id, operator_id=None):
+    """把「开了一半、自选件还没挑完」的箱子收尾。只在季末清场前跑一次。
 
-    搭在 settle_cycle 上跑（下个周期结算时顺手来一遍），不另起一个定时任务 ——
-    跟着「结算」这个已经存在的节拍走，就不会多出一个没人盯着、悄悄失效的调度。
-    任务奖励发的箱子没有绑周期，所以这里按 ts 查，不按 cycle_id 查。
+    v44 之前这条挂在 auto_open_stale 上（每期结算顺手跑），那张规则同时还
+    负责「上期没点的箱子替他开掉」。现在「没开的箱子留到新赛季自己开」是
+    定下来的口径，替开那半条整条删了；只剩自选没挑完这半，挪到季末 ——
+    不清的话，那几张自选件会一直悬着、跨季也拿不到。
 
-    before_day 是正在结算那个周期的 start_date：ts 早于它的箱子，说明隔了至少
-    一个完整周期没动，这次结算顺手开掉；本周期新发的箱子不会被误伤。
-
-    两类都收：还没点开的，和点开了、自选没挑完的。系统替孩子开的照发不回收，
-    并且留下一条通知（「系统自己动手的事都要留下自己的名字」）。
+    只碰自选，不碰整只箱子；系统代挑按「优先给图鉴里还没有的」。
     """
-    before = (before_day or today()) + " 00:00:00"
     out = []
-    for b in db.query("SELECT * FROM box_open WHERE member_id=? AND opened_at IS NULL"
-                      " AND ts<? ORDER BY id", (member_id, before)):
-        r = open_box(member_id, b["id"], auto=True, operator_id=operator_id)
-        if r.get("ok"):
-            out.append({"box_id": b["id"], "tier": b["tier"], "state": "unopened",
-                        "name": r.get("name", ""), "given": r.get("given", [])})
     for b in db.query("SELECT * FROM box_open WHERE member_id=? AND opened_at IS NOT NULL"
-                      " AND opened_at<? ORDER BY id", (member_id, before)):
+                      " ORDER BY id", (member_id,)):
         rnd = json.loads(b["random_json"] or "{}")
         if not (rnd.get("pick_required") and not rnd.get("picked")):
             continue
@@ -4087,8 +4286,8 @@ def auto_open_stale(member_id, before_day=None, operator_id=None):
             out.append({"box_id": b["id"], "tier": b["tier"], "state": "unpicked",
                         "name": r.get("name", ""), "given": r.get("given", [])})
     if out:
-        push_notify(member_id, "box_auto", "替你开了 %d 只箱子" % len(out),
-                    "一直没开的宝箱，系统按「优先给你还没有的」替你开了，东西已经到手上。")
+        push_notify(member_id, "box_auto", "替你收尾了 %d 只箱子" % len(out),
+                    "开箱时没挑完的自选件，系统按「优先给你还没有的」替你挑好了。")
     return out
 
 
@@ -4174,11 +4373,11 @@ def buy_card(member_id, code, operator_id=None):
         return {"ok": False, "msg": "没有这张卡"}
     if not it["purchasable"] or not it["price"]:
         return {"ok": False, "msg": "%s 永不售卖，只能从宝箱里开出来" % it["name"]}
+    # 卡一张都不卖（v24 定案，db.py 里整类把 purchasable 置 0），所以走到这里
+    # 的只有「哪天有人把它改回可买」这种情形。原来那句每周限购读的是
+    # card.weekly_limit —— 那个键已经退役了，留着等于给一个永不生效的数字
+    # 留了块碑，一并撤掉。真要重新开卖，限购跟着新的口径另写。
     cyc = current_cycle(member_id)
-    limit = int(db.cfg("card.weekly_limit", 1))
-    got = _weekly_bought(member_id, it["id"], "shop_card", cyc["id"])
-    if got + 1 > limit:
-        return {"ok": False, "msg": "%s 每周限购 %d 张，本周已买 %g 张" % (it["name"], limit, got)}
     if it["max_hold"] and item_balance(member_id, it["id"]) >= it["max_hold"]:
         return {"ok": False, "msg": "%s 已经持有 %d 张了。买来的卡不拆碎片，先把旧的用掉"
                                    % (it["name"], it["max_hold"])}
@@ -4396,6 +4595,156 @@ def pending_cash_count():
 
 
 # ---------------------------------------------------------------------------
+# 保底：罚款与还款都不许把他打空（v44）
+# ---------------------------------------------------------------------------
+# 依据跟《工资支付暂行规定》第十六条是同一个结构：一条比例上限 + 一条绝对值
+# 地板，取更保护他的那个结果。比例管「一次别扣太多」（防大额罚单打空），
+# 地板管「别扣到零」（防小额被抠干净）。两条都不管他自己花钱 —— 去商店买券
+# 买卡、兑零花钱花到 0 也行，那是他自己选的。
+#
+# 「他手上」= 余额 + 这次到账。攒着的那部分也算进来，否则他攒的星尘永远不被
+# 用来还债，而赛季末那条「还不完就清掉」会把欠款一笔勾掉，大额罚单基本收不
+# 回来。代价是结算要拆两条账（发放一条、还款一条），不然孩子端流水读成
+# 「这周只发了 49、星尘反而少了」。
+def _reserve_ratio():
+    return max(0.0, min(100.0, float(db.cfg("calib.reserve_pct", 25) or 0))) / 100.0
+
+
+def _floor_stardust():
+    return max(0.0, float(db.cfg("calib.floor_stardust", 15) or 0))
+
+
+def _floor_tickets():
+    return max(0.0, float(db.cfg("calib.floor_tickets", 2) or 0))
+
+
+def payable_stardust(onhand, due, keep=None):
+    """他手上这些星尘里，这一次最多能扣多少（守比例与地板）。
+
+    三个数取最小：① 该扣的 ② 手上的 ×(1−比例) ③ 手上的 − 地板。
+    「刚好 / 刚好差一点」不用另写规则，这条公式自动算出来 —— 余额贴着地板
+    时会连续地少扣，不会出现「要么全扣、要么不扣」的突变。
+    """
+    onhand = max(0.0, float(onhand or 0))
+    due = max(0.0, float(due or 0))
+    keep = _floor_stardust() if keep is None else max(0.0, float(keep))
+    return round(max(0.0, min(due, onhand * (1.0 - _reserve_ratio()),
+                             max(0.0, onhand - keep))), 2)
+
+
+def payable_tickets(onhand, due, keep=None):
+    """券这一侧同一条口径，只是要整数：留 max(地板, 四分之一)，一律往多留。"""
+    onhand = max(0.0, float(onhand or 0))
+    due = max(0.0, float(due or 0))
+    keep = _floor_tickets() if keep is None else max(0.0, float(keep))
+    reserve = max(keep, onhand * _reserve_ratio())
+    reserve = float(math.ceil(reserve - 1e-9))     # 往多留，别把他那张整数券扣没
+    return round(max(0.0, min(due, max(0.0, onhand - reserve))), 2)
+
+
+def ticket_debt(member_id):
+    """整张券的欠账（正数=欠几张）。存在 delta_ticket 的负数里，不清券库存。"""
+    return round(-min(0.0, db.query_one(
+        "SELECT COALESCE(SUM(delta_ticket),0) v FROM ledger WHERE member_id=? AND voided=0",
+        (member_id,))["v"]), 2)
+
+
+def tell_debt_paid(member_id, kind, amount, after_balance, left_debt,
+                   gross=0.0, before=0.0, floor=0.0):
+    """记一条「发放时扣了欠账」的站内通知。只落库，不推手机。
+
+    网页端拿它弹一层，写清「这次到账多少 / 扣了多少 / 还剩多少」。
+    v44 定的三条：
+      ① 每次扣欠账都要当场告知；
+      ② 这个告知不推手机（NO_PUSH_KINDS）—— 它是网页里的一个状态变化，
+         不是「要他去做点什么」；
+      ③ 「一分都扣不动」也要说。扣不动是因为守了保底，孩子只看到到账上
+         一分没动、又看不到欠款，会以为系统坏了。所以 amount 可以是 0。
+
+    gross = 这次发下来多少、before = 发之前账上还有多少。两个用来把
+    「刚到你手上的 49，和账上原来的 134 凑一起」这句话说准。
+    """
+    if amount <= 0 and left_debt <= 0:
+        return None
+    if kind == "stardust":
+        hand = round(before + gross, 2)
+        ratio = _reserve_ratio()
+        # 地板咬到的时候（手上 <= 地板 ÷ 比例）扣掉的是「一点点」，标题照实说。
+        floor_bites = floor > 0 and ratio > 0 and hand <= floor / ratio
+        if amount <= 0:
+            title = "这次的欠款，一分都没动"
+        elif amount < left_debt + amount and floor_bites:
+            title = "这次只扣了一点点"
+        else:
+            title = "这次的星尘，先还了上次的欠款"
+        if amount <= 0:
+            body = ("刚到你手上的 %g 星尘，加上账上的 %g 一共 %g 星尘，还没到保底的 %g —— "
+                    "一分都扣不动。" % (gross, before, hand, floor))
+        elif before > 0:
+            body = ("刚到你手上的 %g 星尘，和账上原来的 %g 凑一起，扣掉 %g 还了欠款。"
+                    % (gross, before, amount))
+        else:
+            body = "刚到你手上的 %g 星尘，扣掉 %g 还了上次的欠款。" % (gross, amount)
+        body += "你现在有 %g 星尘。" % after_balance
+        body += ("还欠 %g，下次到账接着扣，赛季末清一次。" % left_debt
+                 if left_debt > 0 else "欠款已经还清了。")
+        if floor > 0:
+            body += "扣多少都给你留至少 %g 星尘，这条底不参与罚款和还款。" % floor
+    else:
+        title = ("这次发的券，先还了上次的欠账" if amount > 0 else "券欠账这次先没动")
+        if amount <= 0:
+            body = ("铜箱这批先到你手上 %g 张娱乐券，手上 %g 张还没到保底的 %g 张 —— "
+                    "这次一张都没扣。" % (gross, after_balance, floor))
+        else:
+            body = ("刚发到你手上的 %g 张娱乐券，扣掉 %g 张还了上次扣时间欠下的。"
+                    % (gross, amount))
+        body += "你手上现在有 %g 张。" % after_balance
+        body += ("还欠 %g 张，下期开到券接着扣。" % left_debt
+                 if left_debt > 0 else "欠的券还清了。")
+        if floor > 0:
+            body += "手上不会低于 %g 张券，这条底不参与罚款和还款。" % floor
+    return db.execute(
+        "INSERT INTO notification (member_id, kind, title, body, ts) VALUES (?,?,?,?,?)",
+        (member_id, "debt_paid", title, body, now()))
+
+
+def apply_ticket_debt(member_id, operator_id=None, gross=0):
+    """把券欠账从刚收到的券里扣掉，守保底。返回这次扣掉几张。
+
+    券的发放口只有 grant_item 一处（宝箱 / 商店 / 任务 / 升级全过它），但按
+    v44 的口径，扣款只在「每期结束那一波」发生 —— 所以这个函数只从 open_box
+    里调（开箱发券时），任务奖励、探索、帮忙、升级奖励都不动。
+    gross 是这一箱发下来的券数，只用来把告知那句话写准。
+    """
+    due = ticket_debt(member_id)
+    if due <= 0:
+        return 0
+    fun = item_by_code(FUN_CODE)
+    if not fun:
+        return 0
+    held = item_balance(member_id, fun["id"])
+    held_before = round(held - gross, 2)      # 这一箱发下来之前他手上还有几张
+    # 保底按「发下来之后手上会有多少」算，不是按发之前 —— 刚开出来的这几张
+    # 本来就在他手上，拿它去还账不算「动到保底以外」。
+    can = int(payable_tickets(held, due))
+    if can <= 0:
+        # 一张都扣不动也要告知（手上 <= 保底）。否则孩子看到开出一叠券、
+        # 欠账一动不动，只会以为系统没在算。
+        tell_debt_paid(member_id, "ticket", 0, held, due, gross=gross,
+                       before=held_before, floor=_floor_tickets())
+        return 0
+    if consume_item(member_id, fun["id"], can, note="还券欠账 %d 张" % can,
+                    kind="fine", operator_id=operator_id) != 0:
+        return 0
+    add_ledger(member_id, "fine", ticket=can, note="还券欠账 %d 张" % can,
+               operator_id=operator_id, meta={"ticket_repay": True})
+    tell_debt_paid(member_id, "ticket", can, item_balance(member_id, fun["id"]),
+                   round(max(0.0, due - can), 2), gross=gross,
+                   before=held_before, floor=_floor_tickets())
+    return can
+
+
+# ---------------------------------------------------------------------------
 # 校准（三层）
 # ---------------------------------------------------------------------------
 def add_calibration(member_id, level, reason, *, dimension_code=None, effect_type="none",
@@ -4412,43 +4761,80 @@ def add_calibration(member_id, level, reason, *, dimension_code=None, effect_typ
     effect = {}
     task_id = None
     if effect_type == "fine":
-        # 单次金额上限：孩子与家长同额，不叠加、不翻倍（第 08 章）。
-        # 传大了要截断，否则「自愿双倍自罚」会被接口当成默认行为。
-        top = float(db.cfg("calib.fine_amount", 5))
-        cash = min(float(amount or top), top)
-        per = top or 5.0
-        sd = round(cash / per * float(db.cfg("calib.fine_to_stardust", 10)), 2)
+        # v44：不设上限。金额由家长当场填（默认取设置里的「默认罚款金额」），
+        # 汇率改由「每 1 元 = N 星尘」单独管，不再跟默认罚金绑在一起 ——
+        # 以前改默认罚金会顺带改汇率，家长多半不知道自己动了汇率。
+        cash = float(amount or db.cfg("calib.fine_amount", 5) or 0)
+        if cash <= 0:
+            cash = float(db.cfg("calib.fine_amount", 5) or 0) or 5.0
+        per = float(db.cfg("calib.fine_per_yuan", 2) or 0)
+        sd = round(cash * per, 2)
         bal = stardust_balance(member_id)
-        take = min(bal, sd)
+        # 当场扣、守保底：扣不动的转欠款（不出现负星尘）。
+        take = payable_stardust(bal, sd)
         rest = round(sd - take, 2)
         if take > 0:
             add_ledger(member_id, "fine", stardust=-take, note="契约校准罚款 %g 元" % cash,
                        operator_id=operator_id, meta={"reason": reason})
         if rest > 0:
-            add_ledger(member_id, "fine", debt=rest, note="余额不足，记欠款 %g 星尘" % rest,
+            add_ledger(member_id, "fine", debt=rest,
+                       note="余额不够（留底 %g），记欠款 %g 星尘" % (_floor_stardust(), rest),
                        operator_id=operator_id, meta={"reason": reason})
         pool = active_pool()
         if pool:
             db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
                        " note, ts) VALUES (?,?,'fine',?,?,?,?)",
                        (pool["id"], member_id, sd, cash, "罚款入池：" + reason, now()))
-        effect = {"stardust": sd, "cash": cash, "debt": rest}
+        else:
+            # 没设目标也照记一笔「还欠着」，等立了池子一并投进去（_flush_pending_penalty）。
+            # 以前这里是 `if pool:` 一句跳过 —— 罚的钱直接消失，界面一个字不说。
+            db.execute(
+                "INSERT INTO wish_pool_log (pool_id, kind, day, member_id, stardust, cash,"
+                " counted, note, ts) VALUES (NULL,'fine',?,?,?,?,0,?,?)",
+                (today(), member_id, sd, cash,
+                 "校准罚款 %g 元。当天还没有许愿池目标，先记着" % cash, now()))
+        effect = {"stardust": sd, "cash": cash, "debt": rest, "kept": take}
     elif effect_type == "ticket_min":
-        # 两道强度上限（第 08 章，唯一口径）：
-        #   单日最多 −30 分钟，超出的不再累加；
-        #   券包最低记到 −60 分钟，再往下不累加，避免「反正已经欠很多了」的放弃心态。
-        want = float(amount or db.cfg("calib.ticket_min", 15))
-        # 这两个设置存的是负数（-30 / -60），读进来取绝对值当上限用
-        daily_cap = abs(float(db.cfg("calib.daily_ticket_min", 30)))
-        floor = abs(float(db.cfg("calib.debt_floor_min", 60)))
-        minutes = max(0.0, min(want, daily_cap - minutes_debt_today(member_id)))
-        minutes = max(0.0, min(minutes, floor - minutes_debt(member_id)))
-        effect = {"minutes": minutes, "want": want, "capped": minutes < want,
-                  "note": ("已到强度上限，这次不再往下扣" if minutes < want else "")}
-        if minutes > 0:
-            add_ledger(member_id, "fine", day=today(), minutes=-minutes,
-                       note="校准扣减 %g 分钟" % minutes,
+        # v44：改成「满一张当场扣券库、零头挂账」。
+        # 以前只写一条分钟账、不动券的张数，于是扣 15 分钟先去填「整除丢掉的
+        # 余数」，一半概率看不出来、一半概率砍掉一整张。现在券是实打实的库存，
+        # 整张能真扣、零头挂在券的时长上（下次兑换时那张券时长 = 面值 − 零头）。
+        fun = item_by_code(FUN_CODE)
+        per = ticket_minutes(fun, today()) if fun else float(
+            db.cfg("ticket.entertainment_minutes", 30) or 30)
+        want = float(amount or 0)
+        if want <= 0:
+            want = round(per / 2.0, 2)          # 默认半张券，跟当天面值走
+        whole = int(want // per) if per > 0 else 0
+        frac = round(want - whole * per, 2)
+        held = item_balance(member_id, fun["id"]) if fun else 0
+        can = payable_tickets(held, whole)      # 守保底：最多扣到剩 N 张
+        consumed = int(can)
+        if consumed > 0:
+            consume_item(member_id, fun["id"], consumed,
+                         note="校准扣减 %d 张娱乐券" % consumed, kind="fine",
+                         operator_id=operator_id)
+        debt_tickets = int(whole - consumed)    # 库存不够的整张 → 券欠账
+        if debt_tickets > 0:
+            add_ledger(member_id, "fine", ticket=-debt_tickets,
+                       note="券不够（留底 %g 张），记券欠账 %d 张"
+                       % (_floor_tickets(), debt_tickets),
                        operator_id=operator_id, meta={"reason": reason})
+        if frac > 0:
+            add_ledger(member_id, "fine", day=today(), minutes=-frac,
+                       note="校准扣减 %g 分钟" % frac,
+                       operator_id=operator_id, meta={"reason": reason})
+        # 当场扣掉整张券这件事要让孩子知道 —— 券包里的数少了，他下次打开
+        # 总得有个说法。走 notification（kind='ticket_fine'），券包页顶部挂一条
+        # 带「知道了」的提示，点掉才算完（只落网页，不推手机：这是件已经
+        # 发生完的事，不是「要他去做点什么」）。落库的这条记录本身就是
+        # 「带记忆」的存档：read_at 一写，同一条不再重复弹，新扣一笔才有新的。
+        if consumed > 0:
+            push_notify(member_id, "ticket_fine", "上次的惩罚扣掉了 %d 张券" % consumed,
+                        "券包里的娱乐券少了 %d 张。" % consumed)
+        effect = {"want": want, "per": per, "whole": whole, "tickets": consumed,
+                  "ticket_debt": debt_tickets, "minutes": frac,
+                  "note": ("有 %d 张券一时扣不动，先记着" % debt_tickets if debt_tickets else "")}
     elif effect_type == "task" and auto_task:
         # 后果自选卡：校准照走，但修复方式由孩子自己写。规则里这条写着
         # 「爸爸妈妈不能替你指定」，所以这里连 template 都不代挑，
@@ -4473,32 +4859,46 @@ def add_calibration(member_id, level, reason, *, dimension_code=None, effect_typ
     if task_id:
         db.execute("UPDATE task SET calibration_id=? WHERE id=?", (cid, task_id))
 
-    # 反升级：同一维度 30 天内达到阈值，提示技能缺口（不加罚）
+    # 反升级（v44 改频率口径）：不看是哪件事，只看次数 —— 一周 2 次 / 一月 5 次。
+    # 「发布·写校准」表单没有维度选择器，原来按「同一维度 30 天 ≥5 次」判，
+    # 从这儿发起的永远触发不到。改成总次数之后，不用给表单加维度也能用。
+    # 只算有后果的（罚款 / 扣时间 / 挂修复任务），「只记下来」那种不计数。
     hint = None
-    th = int(db.cfg("anti_escalation.threshold", 5))
-    if dim_id:
-        n = db.query_one(
-            "SELECT COUNT(*) c FROM calibration WHERE member_id=? AND dimension_id=?"
-            " AND ts >= ?", (member_id, dim_id,
-                             fmt(parse_day(today()) - timedelta(days=30))))["c"]
-        if n >= th:
-            # 同一条提示 90 天内只弹一次，第二次触发换一句话。
-            # 不加这一条，卫生这种高频维度会每周弹同一句，提醒就变成唠叨了。
+    if effect_type != "none":
+        week_n = db.query_one(
+            "SELECT COUNT(*) c FROM calibration WHERE member_id=? AND effect_type!='none'"
+            " AND ts >= ?", (member_id, fmt(parse_day(today()) - timedelta(days=7))))["c"]
+        month_n = db.query_one(
+            "SELECT COUNT(*) c FROM calibration WHERE member_id=? AND effect_type!='none'"
+            " AND ts >= ?", (member_id, fmt(parse_day(today()) - timedelta(days=30))))["c"]
+        th = max(1, int(db.cfg("anti_escalation.threshold", 5)))
+        week_th = max(1, int(round(th * 0.4)))
+        if week_n >= week_th or month_n >= th:
+            # 同一条提示 90 天内只弹一次，第二次触发换一句话。不加这一条，
+            # 高频的那几周会每周弹同一句，提醒就变成唠叨了。
             gap = int(db.cfg("anti_escalation.hint_cooldown_days", 90))
-            key = "anti_hint:%d:%d" % (member_id, dim_id)
+            key = "anti_hint:%d" % member_id
             last = db.query_one("SELECT value FROM meta WHERE key=?", (key,))
             if not last or (parse_day(today()) - parse_day(last["value"][:10])).days >= gap:
-                cnt_key = "anti_hint_n:%d:%d" % (member_id, dim_id)
+                cnt_key = "anti_hint_n:%d" % member_id
                 prev = db.query_one("SELECT value FROM meta WHERE key=?", (cnt_key,))
                 times = int(prev["value"]) + 1 if prev else 1
-                dim_name = db.query_one("SELECT name FROM dimension WHERE id=?", (dim_id,))
-                dim_name = dim_name["name"] if dim_name else "这一项"
+                # 有维度的（打分页发起的那些）顺手挑出最集中的那一项，说得出是哪件事；
+                # 没有维度的（写校准发起的）就只报次数。
+                topdim = db.query_one(
+                    "SELECT d.name nm FROM calibration c JOIN dimension d ON d.id=c.dimension_id"
+                    " WHERE c.member_id=? AND c.effect_type!='none' AND c.dimension_id IS NOT NULL"
+                    " AND c.ts >= ? GROUP BY c.dimension_id ORDER BY COUNT(*) DESC LIMIT 1",
+                    (member_id, fmt(parse_day(today()) - timedelta(days=30))))
                 if times == 1:
-                    hint = ("〈%s〉30 天内出现 %d 次，可能是习惯或工具的问题。"
-                            "要不要一起看看卡在哪？换个做法：视觉提示卡、提前 10 分钟闹铃、"
-                            "把东西放在最显眼的位置、减少步骤。" % (dim_name, n))
+                    where = ("其中〈%s〉最集中。" % topdim["nm"]) if topdim else ""
+                    hint = ("最近校准有点密：这周 %d 次、这个月 %d 次。%s"
+                            "可能是习惯或工具的问题，要不要一起看看卡在哪？换个做法："
+                            "视觉提示卡、提前 10 分钟闹铃、把东西放在最显眼的位置、减少步骤。"
+                            % (week_n, month_n, where))
                 else:
-                    hint = "〈%s〉这一项要不要调一下标准？" % dim_name
+                    hint = ("最近校准还是有点密（这周 %d 次、这个月 %d 次），"
+                            "要不要调一下标准？" % (week_n, month_n))
                 for k, v in ((key, today()), (cnt_key, str(times))):
                     db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)", (k, v))
                 push_notify(None, "anti_escalation", "反升级提醒", hint)
@@ -5444,11 +5844,37 @@ def wish_view(w, with_progress=False):
     """给接口用的一条心愿。progress 只给已经生效的算 —— 挂起的没有条件可算。"""
     d = dict(w)
     d["cond"] = json.loads(w["cond_json"] or "{}")
-    if with_progress and w["status"] in ("active", "achieved", "claimed"):
+    if with_progress and w["status"] in ("active", "achieved", "delivered", "claimed"):
         d["progress"] = wish_progress(d)
     else:
         d["progress"] = None
     return d
+
+
+def wish_to_fulfil(member_id=None):
+    """条件达成、还没来得及给他的那几条。家长端审核页那张兑现清单用。
+
+    跟券的「答应了还没办」、卡的「扣了还没用」是同一类东西：对孩子来说那边
+    已经发生，这边还欠着。所以三样并成一张单子（`kind: 'tk' / 'rd' / 'wi'`），
+    家长不用两头找 —— 「同一件事在两个地方各有一颗按钮」是这一页最忌讳的。
+    """
+    sql = ("SELECT w.*, m.name AS who FROM wish w JOIN member m ON m.id=w.member_id"
+           " WHERE w.status='achieved'")
+    args = []
+    if member_id:
+        sql += " AND w.member_id=?"
+        args.append(member_id)
+    sql += " ORDER BY w.achieved_at"
+    out = []
+    for r in db.query(sql, args):
+        out.append({
+            "id": r["id"], "member_id": r["member_id"], "who": r["who"],
+            "title": r["title"], "reward_desc": r["reward_desc"] or "",
+            "price_note": r["price_note"] or "",
+            "cond_text": wish_cond_text(wish_view(r)),
+            "achieved_at": r["achieved_at"] or "",
+        })
+    return out
 
 
 def _wish_cap_room(member_id, status):
@@ -5666,7 +6092,8 @@ def update_wish_status(wish_id, status, operator_id=None):
     if status == "cancelled" and w["selfpay_stardust"]:
         add_ledger(w["member_id"], "pool_deposit", stardust=w["selfpay_stardust"],
                    note="心愿撤回，星尘全额退回", operator_id=operator_id)
-    col = {"achieved": "achieved_at", "claimed": "claimed_at", "cancelled": "cancelled_at"}[status]
+    col = {"achieved": "achieved_at", "delivered": "delivered_at",
+           "claimed": "claimed_at", "cancelled": "cancelled_at"}[status]
     if status == "cancelled":
         # v18：结束的心愿要进历史，历史里得看得出这是「被驳回」还是「自己放弃」。
         # 只存一个 cancelled 的话，这两件事在界面上长得一模一样，
@@ -5678,13 +6105,31 @@ def update_wish_status(wish_id, status, operator_id=None):
             push_notify(w["member_id"], "wish_rejected", "这个愿望没被答应",
                         "「%s」被驳回了，去问问为什么。" % w["title"])
         return {"ok": True}
-    db.execute("UPDATE wish SET status=?, %s=? WHERE id=?" % col, (status, now(), wish_id))
+    if status == "delivered":
+        # 办完这一步要记是谁给的：说过「已经给他了」的人得留个名，
+        # 孩子那边回头问「谁给我的」有地方可查
+        db.execute("UPDATE wish SET status='delivered', delivered_at=?, delivered_by=?"
+                   " WHERE id=?", (now(), operator_id, wish_id))
+    else:
+        db.execute("UPDATE wish SET status=?, %s=? WHERE id=?" % col, (status, now(), wish_id))
     if status == "achieved":
-        push_notify(w["member_id"], "wish_achieved", "愿望达成了",
-                    "「%s」%s" % (w["title"], w["reward_desc"] or ""))
+        # 从这一刻起球在家长那边（去把事情办了），孩子那边同步收到一句
+        # 「够了，等爸爸妈妈给你」—— 不给他这一句，他会以为自己还欠着点什么。
+        push_notify(None, "wish_achieved", "有个心愿达成了",
+                    "「%s」%s的条件到了，去满足他。" % (w["title"], member_name_of(w["member_id"])))
+        push_notify(w["member_id"], "wish_achieved", "你的愿望够了",
+                    "「%s」的条件达到了，等爸爸妈妈给你。" % w["title"])
+    elif status == "delivered":
+        # 家长说办好了。这条从这一刻挂到孩子那边 —— 他点一下才算完
+        push_notify(w["member_id"], "wish_delivered", "心愿的东西给你了",
+                    "「%s」爸爸妈妈说已经给你了，看到了点一下「我收到了」。" % w["title"])
     elif status == "claimed":
-        push_notify(w["member_id"], "wish_claimed", "愿望兑现了",
-                    "「%s」已经给你了" % w["title"])
+        # 孩子点过「我收到了」，这条落地。这回该通知的是家长 ——
+        # 原来这条推给孩子（「愿望兑现了」），可兑现的动作已经发生过了，
+        # 再说一遍等于复读；家长那边才是「他那头总算点了」这条消息的收件人。
+        push_notify(None, "wish_claimed", "他确认收到了",
+                    "「%s」%s 已经点过「我收到了」，这条心愿算完了。"
+                    % (w["title"], member_name_of(w["member_id"])))
     return {"ok": True}
 
 
@@ -5821,29 +6266,26 @@ def _cond_item_text(w, key):
 
 
 def check_wish_ready(member_id):
-    """心愿进度刚够的那一刻，给孩子推一条。
+    """心愿的条件够了的这一刻，把这条心愿落成「已达成」。
 
     进度是现算的（wish_progress 刻意不落库），所以「刚刚够」这件事没有
     现成的信号，得有人主动来问一次。调用点放在分数会变的地方：
     打分、任务确认、周期结算。
 
-    防重报靠 ready_notified_at，它存的不是时刻而是**当前周期的起点日**：
-    「本周期已经报过了」。存时刻的话，下周同一件心愿进度又够了，
-    系统看时间戳非空就不再出声，孩子会以为系统忘了。
-    条件被重新设定时这一列清空，重新数。
+    v44 之前这里只推一条通知、等谁想起来按一下「达成」，于是条件早就成立
+    的事实一直挂在半空。现在算够了就当场落 achieved，通知交给
+    update_wish_status 发（一条给家长、一条给孩子）。
+
+    防重也不用自己管了：落完 status 就不是 active，下一轮查不到它。
     """
     if not is_player(member_id):
         return []
-    wk = week_start_of(today())
     hit = []
-    for w in db.query("SELECT * FROM wish WHERE member_id=? AND status='active'"
-                      " AND (ready_notified_at IS NULL OR ready_notified_at!=?)",
-                      (member_id, wk)):
+    for w in db.query("SELECT * FROM wish WHERE member_id=? AND status='active'",
+                      (member_id,)):
         if not wish_progress(dict(w)).get("done"):
             continue
-        push_notify(member_id, "wish_ready", "心愿的进度够了",
-                    "「%s」的条件已经达成，等爸爸妈妈确认。" % w["title"])
-        db.execute("UPDATE wish SET ready_notified_at=? WHERE id=?", (wk, w["id"]))
+        update_wish_status(w["id"], "achieved")
         hit.append(w["id"])
     return hit
 
@@ -5883,10 +6325,11 @@ def create_pool(title, target_desc="", target_stardust=0, operator_id=None):
         "INSERT INTO wish_pool (title, target_desc, target_stardust, status, created_at)"
         " VALUES (?,?,?,'active',?)", (title, target_desc, target_stardust, now()))
     # 目标是今天才立的，那之前「没处投」的罚款不能就这么算了 —— 一起投进去。
+    # v44：这笔里既有忘打卡罚款，也有家长在「写校准」里发的罚款。
     flushed = _flush_pending_penalty(pid)
     if flushed:
         push_notify(None, "missed_score", "许愿池立起来了",
-                    "之前记下的 %g 星尘忘打卡罚款，已经一起投进去了。" % flushed)
+                    "之前记下的 %g 星尘罚款（忘打卡与校准），已经一起投进去了。" % flushed)
     return {"ok": True, "pool_id": pid, "penalty_flushed": flushed}
 
 
@@ -5897,18 +6340,23 @@ def _flush_pending_penalty(pool_id):
     家长忘打卡等于什么都没发生，界面连一句话都说不出来。现在金额照记
     （counted=0 表示欠着），目标一立起来就一并投进去 —— 家长的疏忽不管
     什么时候都该留下痕迹，孩子那边不亏什么。
+
+    v44：校准罚款（kind='fine'，家长在「发布·写校准」里发的）也走这条路，
+    跟忘打卡那条（kind='penalty'）一起捞。元数一并汇总，池子那个「一共收了
+    多少元」才不偏少。
     """
-    rows = db.query("SELECT * FROM wish_pool_log WHERE kind='penalty' AND counted=0"
-                    " AND COALESCE(stardust,0)>0 ORDER BY day, id")
+    rows = db.query("SELECT * FROM wish_pool_log WHERE kind IN ('penalty','fine')"
+                    " AND counted=0 AND COALESCE(stardust,0)>0 ORDER BY day, id")
     if not rows:
         return 0.0
     total = round(sum(float(r["stardust"] or 0) for r in rows), 2)
     if total <= 0:
         return 0.0
+    cash = round(sum(float(r["cash"] or 0) for r in rows), 2)
     days = "、".join(r["day"] for r in rows)
-    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, note, ts)"
-               " VALUES (?,NULL,'penalty',?,?,?)",
-               (pool_id, total, "忘打卡罚款补投：%s" % days, now()))
+    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
+               " note, ts) VALUES (?,NULL,'penalty',?,?,?,?)",
+               (pool_id, total, cash, "欠着的罚款补投：%s" % days, now()))
     for r in rows:
         db.execute("UPDATE wish_pool_log SET pool_id=?, counted=1 WHERE id=?", (pool_id, r["id"]))
     return total
@@ -6663,11 +7111,7 @@ def _fx(item):
     return json.loads(item["effect_json"] or "{}")
 
 
-def _flag_placeholders(keys):
-    return ",".join("?" * len(keys))
-
-
-ARMED_TEXT = {'double_reward': '装填好了，下一次拿到星尘的时候翻倍', 'double_allowance': '装填好了，下一次换零花钱的时候多拿一份', 'reroll_random': '装填好了，下一箱开出来的随机件会抽两次，取更好的那个', 'choose_consequence': '装填好了，下一次校准的修复方式由你自己定'}
+ARMED_TEXT ={'double_reward': '装填好了，下一次拿到星尘的时候翻倍', 'double_allowance': '装填好了，下一次换零花钱的时候多拿一份', 'reroll_random': '装填好了，下一箱开出来的随机件会抽两次，取更好的那个', 'choose_consequence': '装填好了，下一次校准的修复方式由你自己定'}
 
 # 装填的卡被触发时的那句回执。装填是唯一一种「点了之后什么都不发生」的卡，
 # 没有这条，孩子看着库存少一格、界面毫无变化，会以为卡被吞了。

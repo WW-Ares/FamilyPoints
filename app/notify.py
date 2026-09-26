@@ -45,6 +45,13 @@ import db
 # 就变成「昨天说的今天才看到」，这一步的价值全在当天把话说清楚。
 TIMELY_KINDS = {"ticket", "overtime", "device", "cash"}
 
+# 只落网页、不推手机的通知。
+#   debt_paid   —— 「发放时先扣了欠账」的告知，讲的是网页里的一个状态变化，
+#                  不是「要他去做什么」，正文也只在网页弹层里读得全。
+#   ticket_fine —— 「当场扣掉了 N 张娱乐券」，券包页顶部那条带「知道了」的提示。
+#                  同样是一件已经发生完的事，推手机只会变成噪音。
+NO_PUSH_KINDS = ("debt_paid", "ticket_fine")
+
 # 每轮扫描的间隔（秒）。kick() 会立刻打断这个等待。
 TICK_SECONDS = 10
 
@@ -197,7 +204,8 @@ def scan_once(now_dt=None) -> int:
     merge = max(0, int(db.cfg("push.merge_seconds", 30)))
 
     rows = db.query("SELECT * FROM notification WHERE pushed_at IS NULL AND push_error=''"
-                    " ORDER BY id LIMIT 300")
+                    " AND kind NOT IN (%s) ORDER BY id LIMIT 300"
+                    % ",".join("?" * len(NO_PUSH_KINDS)), tuple(NO_PUSH_KINDS))
     groups = {}
     for r in rows:
         delay = 0 if r["kind"] in TIMELY_KINDS else merge
@@ -439,6 +447,7 @@ def run_scheduled(now_dt=None):
     _sched_missed_score(now_dt)
     _sched_settle(now_dt)
     _sched_snapshot(now_dt)
+    _sched_season(now_dt)
     # 国家节假日日历不在这里同步。它要出网，而这套系统默认跑在没有外网
     # 的 Docker 里，自动联网只会换来一堆超时日志。那张表只由家长在设置页
     # 点「立即更新」来填，见 holiday_cn.sync。
@@ -476,6 +485,43 @@ def _once_today(key, now_dt):
         return False
     db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)", (key, mark))
     return True
+
+
+def _sched_season(now_dt):
+    """赛季：到点清算 + 季末前的两档提醒。
+
+    清算本身是账（清欠账与道具），排在推送开关前面 —— 跟结算、快照同类，
+    不该因为推送关着就不跑。两档提醒走 _notify，自然只在推送开着时出门。
+    """
+    import engine as E
+    try:
+        snap = E.season_snapshot()
+    except Exception:
+        traceback.print_exc()
+        return
+    day = now_dt.strftime("%Y-%m-%d")
+    # 到日子了就清算。close_season 自己判 settled_at，重复调用是空操作。
+    try:
+        if E.season_due(day):
+            r = E.close_season()
+            if r.get("ok"):
+                _log("[赛季] 第 %s 季清算完成" % r.get("season"))
+    except Exception:
+        traceback.print_exc()
+    # 季末前 7 天 / 前 1 天各提醒一次（当天只发一次）
+    left = snap["days_left"]
+    for days, key, head in ((7, "push.sched.season_7", "还有 7 天这个赛季就结束了"),
+                            (1, "push.sched.season_1", "明天这个赛季就结束了")):
+        if left != days or not _once_today(key, now_dt):
+            continue
+        tail = ("季末会把欠账和道具清一清：券会清零、卡折成星尘、欠的账勾掉。"
+                "星尘、等级、身份卡都留着；最后那只没开的宝箱也给你留着，新赛季自己开。"
+                "想用的卡和券趁这几天用掉。")
+        for m in db.query("SELECT id FROM member WHERE role='child' AND active=1"):
+            _notify(m["id"], "season", head, tail)
+        _notify(None, "season", head,
+                "第 %s 季到 %s 结束。孩子们手上没用掉的券会清零，卡会折成星尘。"
+                % (snap["idx"], snap["end_date"]))
 
 
 def _sched_daily_score(now_dt):

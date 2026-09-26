@@ -68,6 +68,9 @@ async function login(page, who) {
     bad('[登录] ' + who + ' 没进去，还停在登录页');
     return who;
   }
+  // 孩子端一登录就弹「这次扣了多少欠款」（v44 的 debt_paid）。它是登录即弹的，
+  // 后面每次点击都会被它挡住，所以进门前先收掉 —— 弹层本身另有专门的断言。
+  await waitSheetClosed(page);
   // 进来的是不是本人。少了这一条，成员号接错线也查不出来 ——
   // 页面照样有内容，只是换成了另一个人的。
   const me = await page.evaluate(async () => {
@@ -108,9 +111,29 @@ async function clickSel(page, sel, tag) {
     bad('[导航] 找不到入口 ' + sel + (tag ? '（' + tag + '）' : ''));
     return false;
   }
+  // 先收一层：孩子端随时可能弹「扣了多少欠款」那一类告知，它压在页面上，
+  // 后面每一次点击都会被 Playwright 判成「被它挡住」。
+  // 只收**页面上的**点击 —— 弹层自己的按钮（#sheetBody 里那些）不能被收，
+  // 收了就点了个空。
+  if (!/^#sheet/.test(sel) && await page.locator('#sheet.on').count()) {
+    await waitSheetClosed(page);
+  }
   await el.click();
   await page.waitForTimeout(1100);
   return true;
+}
+
+/* 接口里「还没处理完的箱子」有几只（没点开的 + 开了但自选没挑完的）。
+   页面那张提醒条只画最近一只，数它看不出少没少 —— 这条断言认接口。 */
+async function pendBoxCount(page) {
+  return await page.evaluate(async () => {
+    const b = await (await fetch('/api/bootstrap', { credentials: 'same-origin' })).json();
+    const kid = (b.members || []).filter(m => m.role === 'child')[0];
+    if (!kid) return -1;
+    const j = await (await fetch('/api/boxes?member_id=' + kid.id,
+      { credentials: 'same-origin' })).json();
+    return ((j && j.pending) || []).length;
+  });
 }
 
 /* ------------------------------------------------ v1.8：弹窗滚动锁 / 底栏铺到底 */
@@ -123,6 +146,22 @@ async function clickSel(page, sel, tag) {
    拦过头一样是坏：弹窗自己滚不动，等于把一个坏修成了另一个坏。所以顺手在
    弹窗**里面**也试一次 —— 内容够长能滚就必须放行，内容没超屏就必须拦住。
    这两条一起，才把「外面拦死、里面照滚」这半句钉住。 */
+/* 把还开着的弹层收干净，等它真的关掉再往下走。
+   孩子端登录就弹的「这次扣了多少欠款」、开箱结果那颗「知道了」都会压在页面上，
+   后面点什么都会被 Playwright 判成 intercepts pointer events。
+   点一下不够：有的弹层是「点完再弹下一条」，所以最多试六次。 */
+async function waitSheetClosed(page) {
+  for (let i = 0; i < 6; i++) {
+    if (!(await page.locator('#sheet.on').count())) return;
+    const ok = page.locator('#sheetBody #kOk');
+    try {
+      if (await ok.count()) await ok.first().click();
+      else await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+    } catch (e) { /* 这一轮它自己没了 */ }
+    await page.waitForTimeout(350);
+  }
+}
+
 async function sheetLock(page, tag) {
   const r = await page.evaluate(() => {
     const fire = (el, t) => el.dispatchEvent(t === 'touchmove'
@@ -729,6 +768,10 @@ async function walkTabs(page, tag) {
       bad('[宝箱] 提醒条又成了按钮：开箱入口只该有 hero 卡上那只箱子一个');
     }
     say('   待开箱提醒: ' + flat(await alert.innerText()).slice(0, 50));
+    // v44：没开的箱不再被系统替开，手上可能同时攒着好几只 ——
+    // 开完这一只只该**少一只**，不是把那一排清空。所以以接口里的 pending
+    // 条数为准（页面上那张提醒条只画最近一只，数它看不出少没少）。
+    const pendBefore = await pendBoxCount(page);
     await fig.click();
     // v1.14：点箱子先走 ChestOpening 整段动画（抖动→开盖→光芒→卡券飞散，
     // 约 3.4s），onDone 之后才开结果弹层，等待要比四拍时代长。
@@ -742,9 +785,11 @@ async function walkTabs(page, tag) {
     const okBtn = page.locator('#sheetBody #kOk');
     if (await okBtn.count()) await okBtn.click();
     else await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+    await waitSheetClosed(page);
     await page.waitForTimeout(1000);
-    if (await page.locator('#view .chest-pod').count()) {
-      bad('[v38] 箱子已经开过了，提醒条还挂着');
+    const pendAfter = await pendBoxCount(page);
+    if (pendAfter >= pendBefore) {
+      bad('[v38] 箱子开过了，待开的没少（' + pendBefore + ' → ' + pendAfter + '）');
     }
   }
   await page.screenshot({ path: path.join(SHOT, 'kid-chest.png'), fullPage: true });
@@ -849,6 +894,63 @@ async function walkTabs(page, tag) {
   for (const tp of ['娱乐券', '陪伴券', '选择券', '豁免券', '独处券', '好友券']) {
     if (coupon.indexOf(tp) < 0) bad('[v31] 券包里没有「' + tp + '」（六种都该摆着）');
   }
+  /* v44：欠账提示三档分开写 —— 欠的分钟 / 欠的整张券 / 欠的星尘。
+     三样还的方式根本不一样（分钟是下一张券变短、券是下次发到券先抵、
+     星尘是下次结算先扣），混成一句「你欠了东西」等于没说。
+     断言按接口报的真数逐条对：手上真欠哪一样，页面上就得有哪一行。
+     只查「有没有」不行 —— 演示库里三样都为零的时候它照样绿。 */
+  const debtTips = await page.evaluate(async () => {
+    const get = u => fetch(u, { credentials: 'same-origin' }).then(r => r.json());
+    // 孩子是谁从 bootstrap 取，不去摸页面里的内部变量（那一层没承诺过对谁开放）
+    const mid = (await get('/api/bootstrap')).me.id;
+    const [h, st, nt] = await Promise.all([
+      get('/api/holdings?member_id=' + mid),
+      get('/api/tickets/state?member_id=' + mid),
+      get('/api/notifications'),
+    ]);
+    return {
+      minDebt: +(st && st.debt || 0), playMin: +(st && st.play_minutes || 0),
+      tkDebt: +(h && h.ticket_debt || 0), sdDebt: +(h && h.debt || 0),
+      tips: Array.from(document.querySelectorAll('#view .tip'))
+        .map(t => t.innerText.replace(/\s+/g, '')),
+      ack: document.querySelectorAll('#view button[data-noteack]').length,
+      fine: ((nt && nt.items) || []).filter(n => n.kind === 'ticket_fine').length,
+    };
+  });
+  say('   券包欠账: 分钟 ' + debtTips.minDebt + '（下一张 ' + debtTips.playMin +
+    ' 分钟）/ 整张券 ' + debtTips.tkDebt + ' / 星尘 ' + debtTips.sdDebt +
+    ' · 「知道了」' + debtTips.ack + ' 颗');
+  const hasTip = re => debtTips.tips.some(t => re.test(t));
+  if (debtTips.minDebt > 0) {
+    if (!hasTip(new RegExp('欠' + debtTips.minDebt + '分钟'))) {
+      bad('[v44] 券包页没写出「欠 ' + debtTips.minDebt + ' 分钟」');
+    }
+    if (!hasTip(/下一张券只能玩\d+(\.\d+)?分钟/)) {
+      bad('[v44] 分钟欠账没点明「下一张券只能玩多少分钟」——不说清扣哪儿就没意义');
+    }
+  }
+  if (debtTips.tkDebt > 0 && !hasTip(new RegExp('欠' + debtTips.tkDebt + '张券'))) {
+    bad('[v44] 券包页没写出「还欠 ' + debtTips.tkDebt + ' 张券」');
+  }
+  if (debtTips.sdDebt > 0 && !hasTip(new RegExp('欠' + debtTips.sdDebt + '星尘'))) {
+    bad('[v44] 券包页没写出「还欠 ' + debtTips.sdDebt + ' 星尘」');
+  }
+  // 「知道了」只在有没读过的扣券通知时才出现，颗数要跟未读条数一一对上。
+  if (debtTips.ack !== debtTips.fine) {
+    bad('[v44] 券包「知道了」' + debtTips.ack + ' 颗，未读的扣券通知却有 ' +
+      debtTips.fine + ' 条（多一颗 = 把「欠着」也做成能点掉的）');
+  }
+  // 「记忆」落在通知的 read_at 上：点一颗，那一颗就该消失、别的都还在。
+  if (debtTips.ack > 0) {
+    const before = (await page.locator('#view button[data-noteack]').allInnerTexts()).length;
+    await page.locator('#view button[data-noteack]').first().click();
+    await page.waitForTimeout(800);
+    const after = await page.locator('#view button[data-noteack]').count();
+    say('   点一颗「知道了」: ' + before + ' -> ' + after);
+    if (after !== before - 1) {
+      bad('[v44] 点过「知道了」以后那颗没消失（' + before + ' -> ' + after + '）');
+    }
+  }
   await page.screenshot({ path: path.join(SHOT, 'kid-coupon.png'), fullPage: true });
 
   /* 「要几张」那排是数量选择的唯一入口。演示库里女儿手上有三十来张娱乐券，
@@ -932,11 +1034,19 @@ async function walkTabs(page, tag) {
   // 拿第一次出现的位置排序，排的是「它最早在哪儿提到」而不是「它排在第几行」。
   const mineGo = await page.evaluate(() => Array.from(
     document.querySelectorAll('#view .row[data-go]')).map(r => r.dataset.go));
-  say('   「我的」四行: ' + mineGo.slice(0, 4).join(' → '));
-  if (mineGo.slice(0, 4).join() !== 'wish,report,family,atlas') {
-    bad('[v1.7] 「我的」四行顺序不是 心愿屋→成长报告→家庭→图鉴，是 ' +
-        mineGo.slice(0, 4).join('→'));
+  say('   「我的」五行: ' + mineGo.slice(0, 5).join(' → '));
+  /* v44：「怎么玩」挂在图鉴底下，是这一组的最末一行（设计稿 G 屏：图鉴 y=305、
+     怎么玩 y=352）。它跟图鉴、成长报告同层，都是孩子自己翻的东西 ——
+     不占底栏那一格，也不做成弹层（看不懂的时候他会回来翻第二遍，弹层关掉就没了）。
+     连它一起按次序断言：只查「四行对不对」的话，它插错队也照样绿。 */
+  if (mineGo.slice(0, 5).join() !== 'wish,report,family,atlas,guide') {
+    bad('[v44] 「我的」五行顺序不是 心愿屋→成长报告→家庭→图鉴→怎么玩，是 ' +
+        mineGo.slice(0, 5).join('→'));
   }
+  if (mineGo.indexOf('guide') !== 4) {
+    bad('[v44] 「怎么玩」不在「我的」第五行（图鉴底下最末那一行）');
+  }
+  if (mine.indexOf('七分怎么来的') < 0) bad('[v44] 「怎么玩」那一行没写清它讲什么');
   if (mine.indexOf('升级进度') < 0) bad('[v31] 「我的」里没有升级进度');
   if (!/Lv\.\d/.test(mine)) bad('[v31] 「我的」里没显示等级');
   /* v38：三宫格第二格从「券在手 · 张」改成「特权道具」，数的是一共多少件
@@ -1310,17 +1420,70 @@ async function walkTabs(page, tag) {
     bad('[v24] 零花钱那一条没写清「同意就等于发放」');
   }
   if (rev.indexOf('已发放的零花钱') < 0) bad('[v24] 审核页没有「已发放的零花钱」那一栏');
-  // 进行中的心愿：行内只留「达成」一颗，撤心愿收进区块头那颗入口。
-  // 撤是低频动作，跟着每一行复制一遍的话，三行叠着最右边缘就出现三颗
-  // 一样的「取消」，家长扫列表的落点正好压在上面。
+  // v44：心愿那一栏只报进度，一颗按钮都不给 —— 条件够了由 check_wish_ready
+  // 当场落成「已达成」，它就从这儿消失、转到上面那张兑现清单里。以前每行挂一颗
+  // 「达成」，条件没到按下去挨的是红条，那颗按钮正是误导的来源。撤心愿照旧
+  // 收进区块头那一颗，不跟着每行复制（三行叠着最右边就是三颗一样的按钮）。
   const wOk = await page.locator('#view button[data-wok]').count();
   const wNo = await page.locator('#view button[data-wx]').count();
-  say('   进行中的心愿 ' + wOk + ' 条（每行「达成」' + wOk + ' 颗 · 行内「取消」' + wNo + ' 颗）');
-  if (rev.indexOf('进行中的心愿') < 0) bad('[v24] 审核页没有「进行中的心愿」');
-  if (!wOk) bad('[v17] 进行中的心愿一条都没列出来');
+  const wiOk = await page.locator('#view button[data-td="wi-ok"]').count();
+  say('   还在攒的心愿 · 行内「达成」' + wOk + ' 颗（应为 0）· 行内「取消」' + wNo +
+    ' 颗 · 兑现清单里的心愿 ' + wiOk + ' 条');
+  if (rev.indexOf('还在攒的心愿') < 0) bad('[v44] 审核页没有「还在攒的心愿」那一栏');
+  if (wOk) bad('[v44] 心愿列表还挂着「达成」按钮 —— 达成由系统判定，不该有人按');
   if (wNo) bad('[v17] 心愿列表行还留着「取消」按钮，撤心愿该走区块头那颗');
+  if (!wiOk) bad('[v44] 条件到了的心愿没进兑现清单');
+  if (wiOk && rev.indexOf('已经给他了') < 0) bad('[v44] 兑现清单里没写「已经给他了」');
   if (await page.locator('#view #wManage').count() !== 1) {
     bad('[v17] 心愿区块头没有「撤心愿」这一颗入口');
+  }
+  /* v44：「最近的校准」那颗灰标签原来恒显「记录」—— 它读的是 c.effect.type，
+     而存进去的 effect 里从来没有 type 这个键（罚款存 stardust/cash/debt/kept，
+     扣时间存 want/whole/tickets……），于是罚了 10 星尘和只记一笔长得一模一样。
+     现在按 effect_type 分着报。这里不看页面自己怎么算：照接口真值把标签重算
+     一遍，再跟页面上那几颗比 —— 同一张数据在两边各算一次，对上了才算对。
+     审核页只显示当前选中的那个孩子，所以跟每个孩子的清单各比一次。 */
+  const calibTagCheck = await page.evaluate(async () => {
+    const flat2 = s => String(s || '').replace(/\s+/g, '');
+    const get = u => fetch(u, { credentials: 'same-origin' }).then(r => r.json());
+    const fmt = n => { const v = Number(n || 0);
+      return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100); };
+    // 与 app.js 的 calibTag 同一套口径（有意重写一份，别调页面里那个函数）
+    const tag = c => {
+      const e = c.effect || {};
+      if (c.effect_type === 'fine') return '罚 ' + fmt(e.stardust || 0) + ' 星尘';
+      if (c.effect_type === 'ticket_min') {
+        const p = [];
+        if (+e.tickets > 0) p.push('扣 ' + fmt(e.tickets) + ' 张券');
+        if (+e.ticket_debt > 0) p.push('欠 ' + fmt(e.ticket_debt) + ' 张');
+        if (+e.minutes > 0) p.push('扣 ' + fmt(e.minutes) + ' 分钟');
+        return p.length ? p.join(' · ') : ('扣 ' + fmt(e.want || 0) + ' 分钟');
+      }
+      if (c.effect_type === 'task') return '修复任务';
+      if (c.effect_type === 'device') return '设备降级';
+      return '记录';
+    };
+    const ov = await get('/api/kids/overview');
+    const want = [];
+    for (const k of (ov.items || [])) {
+      const d = await get('/api/calibration?member_id=' + k.member_id);
+      want.push({ mid: k.member_id, tags: (d.items || []).slice(0, 10).map(c => flat2(tag(c))) });
+    }
+    const sec = Array.from(document.querySelectorAll('#view .stack'))
+      .filter(s => s.innerText.indexOf('最近的校准') >= 0)[0];
+    const got = sec ? Array.from(sec.querySelectorAll('.pill')).map(p => flat2(p.innerText)) : null;
+    return { want: want, got: got };
+  });
+  const wantTags = (calibTagCheck.want || []).map(x => x.tags.join('／'));
+  say('   校准标签: 页面「' + String(calibTagCheck.got || '').replace(/,/g, '／') +
+    '」 · 接口「' + wantTags.join(' 或 ') + '」');
+  if (!(calibTagCheck.want || []).length) {
+    bad('[v44] /api/kids/overview 没给出孩子，校准标签这条验不了');
+  } else if (calibTagCheck.got === null) {
+    bad('[v44] 审核页上找不到「最近的校准」那一块');
+  } else if (wantTags.indexOf(calibTagCheck.got.join('／')) < 0) {
+    bad('[v44] 校准那颗灰标签跟接口真值对不上：页面「' +
+      calibTagCheck.got.join('／') + '」接口「' + wantTags.join(' 或 ') + '」');
   }
   if (wcfg) {
     await page.locator('#view button[data-td="wcfg"]').first().click();
@@ -1553,6 +1716,124 @@ async function walkTabs(page, tag) {
   if (!cg.whyInCard0 || !cg.capInCard0) bad('[v1.8] 「哪件事」或那句小字不在第一张卡里');
   if (!cg.capBelowWhy) bad('[v1.8] 小字说明没跟在「哪件事」输入框下面');
   if (!cg.tplIsRow) bad('[v1.8] 「修复类型」那一行不是 .prow（版式跟写任务不一致）');
+  /* v44：数额当场填。罚款原来金额写死在设置里（想罚 20 元没有入口），扣娱乐时间
+     原来只写一条分钟账、一半概率看不出到底扣没扣。现在：
+       · 「怎么处理」选到罚款 / 扣娱乐时间，才长出「罚多少 / 扣多少」这一行；
+         挂修复任务、只记下来的都不涉及数额，摆一行空的等于多问一道题；
+       · 默认那颗 chip 的数从设置现取，点「自定义」才长出输入框；
+       · 底下那行现算跟着输入逐字变 —— 按下去之前就说清「扣得动多少、剩下多少
+         记欠款」，这一行是家长唯一能在事前看到后果的地方；
+       · 底部那颗按钮跟着数额走，写的就是「罚 N 元 · 并入许愿池」。
+     全是读页面，一个都不提交：真按下去会把演示库那条罚款真的记上。 */
+  const amtQuiet = await page.evaluate(() => {
+    const q = s => document.querySelector('#view ' + s);
+    return { row: !(q('#cAmtRow') || {}).hidden, floor: !(q('#cFloor') || {}).hidden };
+  });
+  if (amtQuiet.row || amtQuiet.floor) {
+    bad('[v44] 还没选处理方式，「罚多少」那一行或预告那句就露出来了');
+  }
+  await clickSel(page, '#view .chip[data-ce="fine"]', '写校准 → 罚款');
+  await page.waitForTimeout(400);
+  const fineRow = await page.evaluate(() => {
+    // evaluate 里跑的是注入进页面的函数，取不到外面那个 flat，就地写一份。
+    const flat2 = s => String(s || '').replace(/\s+/g, '');
+    const q = s => document.querySelector('#view ' + s);
+    const txt = s => flat2((q(s) || {}).textContent || '');
+    return {
+      hidden: !!(q('#cAmtRow') || {}).hidden,
+      lab: txt('#cAmtLab'), unit: txt('#cAmtUnit'), def: txt('#cAmtDef'),
+      calc: txt('#cCalc'), floor: txt('#cFloor'), go: txt('#cGo'),
+      floorHidden: !!(q('#cFloor') || {}).hidden,
+      inpShown: !(q('#cAmtInputRow') || {}).hidden,
+      defOn: !!(q('#cAmtDef') || {}).classList.contains('on'),
+    };
+  });
+  say('   写校准·罚款: 默认「' + fineRow.def + '」/ 现算「' + fineRow.calc +
+    '」/ 按钮「' + fineRow.go + '」');
+  if (fineRow.hidden) bad('[v44] 选了罚款，「罚多少」那一行没长出来');
+  if (fineRow.lab !== '罚多少') bad('[v44] 罚款那行的标签不是「罚多少」，是「' + fineRow.lab + '」');
+  if (fineRow.unit !== '元') bad('[v44] 罚款的单位不是「元」，是「' + fineRow.unit + '」');
+  if (!fineRow.defOn) bad('[v44] 一进来默认那颗 chip 没选中');
+  if (fineRow.inpShown) bad('[v44] 还没点「自定义」，输入框就露出来了');
+  const mDef = fineRow.def.match(/^(\d+(?:\.\d+)?)元·(\d+(?:\.\d+)?)星尘$/);
+  if (!mDef) {
+    bad('[v44] 罚款默认那颗 chip 没写成「N 元 · M 星尘」：' + fineRow.def);
+  }
+  if (!/^=(\d+(?:\.\d+)?)星尘（每1元(\d+(?:\.\d+)?)星尘）$/.test(fineRow.calc)) {
+    bad('[v44] 罚款的现算行没写成「= N 星尘（每 1 元 M 星尘）」：' + fineRow.calc);
+  }
+  if (fineRow.floorHidden || !fineRow.floor) {
+    bad('[v44] 选了罚款，却没在按下去之前说清这次扣得动还是扣不动');
+  }
+  if (fineRow.go.indexOf('罚') !== 0 || fineRow.go.indexOf('并入许愿池') < 0) {
+    bad('[v44] 底部按钮没跟着数额走：' + fineRow.go);
+  }
+  // 点「自定义」→ 长出输入框 → 敲个数，现算那行和按钮都得跟着变。
+  await clickSel(page, '#view #cAmtCus', '写校准 → 自定义数额');
+  await page.waitForTimeout(250);
+  const cusOn = await page.evaluate(() => {
+    const q = s => document.querySelector('#view ' + s);
+    return { inp: !(q('#cAmtInputRow') || {}).hidden,
+             cus: !!(q('#cAmtCus') || {}).classList.contains('on'),
+             def: !!(q('#cAmtDef') || {}).classList.contains('on') };
+  });
+  if (!cusOn.inp) bad('[v44] 点了「自定义」没长出输入框');
+  if (!cusOn.cus || cusOn.def) bad('[v44] 点了「自定义」，两颗 chip 的选中态没跟着换');
+  const want = 20;
+  await page.fill('#view #cAmt', String(want));
+  await page.waitForTimeout(250);
+  const fine20 = await page.evaluate(() => {
+    const flat2 = s => String(s || '').replace(/\s+/g, '');
+    const q = s => document.querySelector('#view ' + s);
+    const txt = s => flat2((q(s) || {}).textContent || '');
+    return { calc: txt('#cCalc'), go: txt('#cGo'), floor: txt('#cFloor') };
+  });
+  say('   填 ' + want + ' 元: 现算「' + fine20.calc + '」/ 按钮「' + fine20.go + '」');
+  // 该出多少星尘由页面上那颗默认 chip 反推（汇率可能被演示库改过），别写死 2。
+  if (mDef) {
+    const rate = (+mDef[2]) / (+mDef[1]);
+    const owe = Math.round(want * rate * 100) / 100;
+    if (fine20.calc.indexOf('=' + owe + '星尘') !== 0) {
+      bad('[v44] 改成 ' + want + ' 元以后现算那行没跟着变（应为 ' + owe + ' 星尘）：' + fine20.calc);
+    }
+  }
+  if (fine20.go.indexOf('罚' + want + '元') < 0) {
+    bad('[v44] 改成 ' + want + ' 元以后底部按钮还写着旧数：' + fine20.go);
+  }
+  // 扣娱乐时间那一档：默认「半张券 · 当天面值÷2」，单位是分钟。
+  await clickSel(page, '#view .chip[data-ce="ticket_min"]', '写校准 → 扣娱乐时间');
+  await page.waitForTimeout(500);
+  const tkRow = await page.evaluate(() => {
+    const flat2 = s => String(s || '').replace(/\s+/g, '');
+    const q = s => document.querySelector('#view ' + s);
+    const txt = s => flat2((q(s) || {}).textContent || '');
+    return {
+      hidden: !!(q('#cAmtRow') || {}).hidden, lab: txt('#cAmtLab'), unit: txt('#cAmtUnit'),
+      def: txt('#cAmtDef'), calc: txt('#cCalc'), go: txt('#cGo'), floor: txt('#cFloor'),
+      inpShown: !(q('#cAmtInputRow') || {}).hidden,
+    };
+  });
+  say('   写校准·扣时间: 默认「' + tkRow.def + '」/ 现算「' + tkRow.calc +
+    '」/ 按钮「' + tkRow.go + '」');
+  if (tkRow.hidden) bad('[v44] 选了扣娱乐时间，「扣多少」那一行没长出来');
+  if (tkRow.lab !== '扣多少') bad('[v44] 扣时间那行的标签不是「扣多少」，是「' + tkRow.lab + '」');
+  if (tkRow.unit !== '分钟') bad('[v44] 扣时间的单位不是「分钟」，是「' + tkRow.unit + '」');
+  if (!/^半张券·(\d+(?:\.\d+)?)分钟$/.test(tkRow.def)) {
+    bad('[v44] 扣时间默认那颗 chip 没写成「半张券 · N 分钟」（当天面值÷2）：' + tkRow.def);
+  }
+  if (!/^=\d+(?:\.\d+)?张券/.test(tkRow.calc)) {
+    bad('[v44] 扣时间的现算行没写成「= N 张券 …」：' + tkRow.calc);
+  }
+  if (tkRow.go.indexOf('分钟娱乐时间') < 0 || tkRow.go.indexOf('扣') !== 0) {
+    bad('[v44] 扣时间的底部按钮没写成「扣 N 分钟娱乐时间」：' + tkRow.go);
+  }
+  // 换了处理方式，数额得退回默认 —— 把上一格敲的数带过来，扣的就是另一个数。
+  if (tkRow.inpShown) bad('[v44] 换了处理方式，输入框没退回去（上一格敲的数还留着）');
+  if (await page.locator('#view #cAmt').count() &&
+      (await page.inputValue('#view #cAmt')) !== '') {
+    bad('[v44] 换了处理方式，输入框里的旧值没清掉');
+  }
+  if (!tkRow.floor) bad('[v44] 扣时间没在按下去之前说清扣得动几张、零头挂哪儿');
   /* 写任务：「给谁」原来分两层（先选「派给一个孩子」，再在这一层里选哪个孩子），
      多点一次、多占一排。现在一层：挂大厅 + 每个孩子各一颗按钮，点谁就是派给谁。 */
   await clickSel(page, '#view .seg-item[data-pseg="new"]', '发布 → 写任务');
@@ -2182,7 +2463,8 @@ async function walkTabs(page, tag) {
   await page.waitForTimeout(700);
   const meRows = flat(await page.locator('#view').innerText());
   if (meRows.indexOf('更多') >= 0) bad('[v41] 「我的」页还留着「更多」');
-  for (const want of ['我的记录', '家庭和账号', '改我的密码', '备份与导出', '设置']) {
+  for (const want of ['我的记录', '家庭和账号', '改我的密码', '备份与导出', '设置',
+    '规则说明']) {
     if (meRows.indexOf(want) < 0) bad('[v41] 「我的」页缺入口「' + want + '」');
   }
   if (meRows.indexOf('家人账号') >= 0) {
@@ -2226,11 +2508,78 @@ async function walkTabs(page, tag) {
     await page.waitForTimeout(300);
   }
 
+  /* 规则说明（v44）。四张页卡 + 一行「孩子端『怎么玩』」。
+     这一页原来被报过「目录锚点落错、落空」：卡上的小节名跟页里真有的小节
+     是两套顺序，点下去落在页顶或者干脆落空。现在卡上写的小节名就是那页里
+     真有的小节，点一条得落到那一页、那一节上 —— 只查「页换没换」查不出来，
+     得回去读落点。 */
+  await clickSel(page, '#view [data-act="rules"]', '我的 → 规则说明');
+  await page.waitForTimeout(700);
+  const rulePg = await page.evaluate(() => ({
+    cards: Array.from(document.querySelectorAll('#view [data-rulecard]'))
+      .map(c => c.dataset.rulecard),
+    secs: document.querySelectorAll('#view .rule-sec').length,
+    txt: (document.querySelector('#view') || {}).innerText || '',
+  }));
+  say('   规则说明页卡: ' + rulePg.cards.join(' / ') + '（小节 ' + rulePg.secs + ' 条）');
+  for (const t of ['rulescore', 'rulesoutput', 'ruleticket', 'rulecalib']) {
+    if (rulePg.cards.indexOf(t) < 0) bad('[v44] 规则说明缺「' + t + '」那张页卡');
+  }
+  if (rulePg.secs < 12) bad('[v44] 规则说明的小节按钮只有 ' + rulePg.secs + ' 条');
+  if (rulePg.txt.indexOf('孩子端「怎么玩」') < 0) {
+    bad('[v44] 规则说明里没有「孩子端『怎么玩』」那一行');
+  }
+  if (rulePg.txt.indexOf('四条红线') < 0) bad('[v44] 规则说明里没有「四条红线」那段');
+  // 点一条小节 → 换到那一页，且那一节真的在页面上、真的滚到了它
+  await clickSel(page, '#view [data-rules="rulecalib"][data-anchor="rc-back"]',
+    '规则说明 → 反升级');
+  await page.waitForTimeout(600);
+  const landed = await page.evaluate(() => {
+    const e = document.querySelector('#view #rc-back');
+    return {
+      has: !!e, hash: String(location.hash || ''),
+      top: e ? Math.round(e.getBoundingClientRect().top) : -1,
+      vh: window.innerHeight,
+    };
+  });
+  say('   点「反升级」: hash=' + landed.hash + ' 落点 top=' + landed.top + 'px（视口 ' +
+    landed.vh + 'px）');
+  if (!landed.has) bad('[v44] 点小节跳过去以后，那一页里找不到 #rc-back（锚点落空）');
+  if (landed.hash.indexOf('rulecalib') < 0) {
+    bad('[v44] 点小节没换页，hash 还是 ' + landed.hash);
+  } else if (landed.has && (landed.top < -20 || landed.top > landed.vh)) {
+    bad('[v44] 点小节换页了但没滚到那一节（落点 ' + landed.top + 'px，在视口外）');
+  }
+  // 孩子端「怎么玩」的家长只读版：正文跟孩子端是同一份，得说清这是只读的
+  await clickSel(page, '#view [data-back]', '反升级 → 规则说明');
+  await page.waitForTimeout(500);
+  await clickSel(page, '#view [data-rules="kidguide"]', '规则说明 → 孩子端「怎么玩」');
+  await page.waitForTimeout(700);
+  const kidGuide = await page.evaluate(() => ({
+    txt: (document.querySelector('#view') || {}).innerText || '',
+    steps: document.querySelectorAll('#view [data-guide]').length,
+  }));
+  say('   家长端「怎么玩」只读版: 可点入口 ' + kidGuide.steps + ' 个');
+  if (kidGuide.txt.indexOf('只能看，改不了') < 0) {
+    bad('[v44] 家长端的「怎么玩」没写清这是只读的（家长账号进不去孩子端那一屏）');
+  }
+  if (kidGuide.txt.indexOf('每天做七件事') < 0) {
+    bad('[v44] 家长端「怎么玩」没画出孩子看到的那三步');
+  }
+  if (!kidGuide.steps) bad('[v44] 家长端「怎么玩」目录里那几步点不动');
+  // 回到「我的」，下面接着走设置
+  await page.evaluate(() => { location.hash = '#me'; });
+  await page.waitForTimeout(800);
+
   // 设置页里那两个「不是数字、得单独开一屏」的入口。原先它们挂在「更多」
   // 里，跟这两个分组说的是同一件事。
   await clickSel(page, '#view [data-go="settings"]', '我的 → 设置');
+  /* v44 顺带补上「校准与钱 → 赛季」：赛季是这一版新起的一个节点（欠款与道具
+     原来每个周期末免一次，现在跨周期滚动累积、只在季末清一次），家长得有个
+     地方看它到哪天、还剩几天、长度能不能改。 */
   for (const [grp, qa, name] of [['通知与推送', 'push', '家人的手机与推送'],
-    ['周期与假期', 'holiday', '假期日历']]) {
+    ['周期与假期', 'holiday', '假期日历'],
+    ['校准与钱', 'season', '赛季']]) {
     await clickSel(page, '#view [data-setgrp="' + grp + '"]', '设置 → ' + grp);
     await clickSel(page, '#view [data-grpqa="' + qa + '"]', grp + ' → ' + name);
     await page.waitForTimeout(700);

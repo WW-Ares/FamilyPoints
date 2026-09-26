@@ -651,16 +651,10 @@ body.grown .qa-cell .qt { display: flex; flex-direction: column; gap: 2px; min-w
 body.grown .qa-cell .qt b { font-size: calc(12 * var(--u)); font-weight: 700; color: var(--ink-title); }
 body.grown .qa-cell .qt span { font-size: calc(10 * var(--u-sm)); color: var(--ink-2); }
 
-/* 孩子速览那种卡（旧 .kcard / .kstats 结构） */
-body.grown .kcard {
-  background: #fff; border: 2px solid var(--card-line); border-radius: var(--r-xl);
-  padding: 12px; box-shadow: var(--sh-card); cursor: pointer; margin-bottom: 10px;
-}
-body.grown .khead { display: flex; align-items: center; gap: 10px; }
+/* 孩子速览卡（.kcard / .khead / .kid-id 那套旧结构 v1.16 删了 —— 界面早已
+   换成 .card，只剩 .kav 头像与 .kstats 那排数字还挂在 renderKidCard 上） */
 body.grown .kav { width: 36px; height: 36px; border-radius: 50%; overflow: hidden; flex: none; }
 body.grown .kav svg, body.grown .kav img { width: 100%; height: 100%; display: block; }
-body.grown .kid-id { flex: 1; min-width: 0; }
-body.grown .kid-id .nm { font-size: calc(15 * var(--u)); font-weight: 700; color: var(--ink-title); }
 body.grown .kstats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
 body.grown .kstats > div {
   flex: 1; min-width: 62px; background: #FBF6EE; border-radius: var(--r-xs); padding: 6px 8px;
@@ -686,37 +680,15 @@ body.grown .boxtrack > div.on { border-color: var(--orange); background: var(--b
 body.grown .boxtrack b { display: block; font-size: calc(11 * var(--u)); font-weight: 700; color: var(--ink-title); }
 body.grown .boxtrack .bt-s { display: block; font-family: var(--font-num); font-size: calc(10 * var(--u-sm)); color: var(--ink-3); }
 body.grown .boxtrack .bt-c { display: block; font-size: calc(9 * var(--u-sm)); color: var(--ink-2); }
-body.grown .ladder { display: flex; gap: 5px; overflow-x: auto; }
-body.grown .ladder > div {
-  flex: 1; min-width: 46px; text-align: center; padding: 6px 3px; border-radius: var(--r-xs);
-  background: #FBF6EE; font-family: var(--font-num); font-size: calc(11 * var(--u)); color: var(--ink-2);
-}
-body.grown .ladder > div.on { background: var(--brand-soft); color: var(--orange-deep); font-weight: 700; }
 
 /* 券卡（正在玩）在弹层里也用到 */
 body.grown .tk-big { font-family: var(--font-num); font-size: calc(22 * var(--u)); font-weight: 800; color: var(--orange-deep); }
 body.grown .tk-no { color: var(--warn); }
 
-/* ------------------------------------------------------------------ 登录页 */
-body.grown .login-wrap { padding: 26px 4px; }
-body.grown .login-brand {
-  display: flex; align-items: center; gap: 8px; justify-content: center;
-  font-size: calc(19 * var(--u)); font-weight: 700; color: var(--ink-title); margin-bottom: 8px;
-}
-body.grown .login-brand .mark {
-  width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--orange), var(--orange-deep));
-  color: #fff; font-size: calc(16 * var(--u));
-}
-body.grown .login-wrap p { text-align: center; color: var(--ink-2); font-size: calc(12 * var(--u)); margin: 0 0 16px; }
-body.grown .login-form {
-  background: #fff; border: 2px solid var(--card-line); border-radius: var(--r-2xl);
-  padding: 16px; box-shadow: var(--sh-card-lg); display: flex; flex-direction: column; gap: 12px;
-}
-body.grown .login-form .field { margin: 0; }
-body.grown .login-note { margin-top: 14px; font-size: calc(11 * var(--u)); color: var(--ink-3); line-height: 1.6; }
-
 /* ------------------------------------------------------------------ 弹层 */
+/* 登录页那一块（.login-wrap / .login-brand / .login-form / .login-note）v1.16
+   删了：登录页现在是 web/login.css 里那套 lg-*，parent.css 这份是它换皮之前
+   的旧版，四个类名在 JS 与 HTML 里都已经找不到。 */
 /* #sheet / #toast 两个端共用（孩子端在 child.css 里另有一套），这里只盖家长端。 */
 body.grown .sheet { background: rgba(74,54,39,.42); }
 body.grown .sheet-body {
@@ -827,22 +799,14 @@ body.grown .dr-row .dr-v.no { color: var(--warn); }
 }
 
 
-/* ------------------------------------------------- 家人账号 · 行拆三层 ----- */
-/* 原来头像、名字、账号、四颗按钮全挤在一条横线上：.wact 撑得很宽，把 .txt
-   挤到只剩几个字宽，名字被压成一字一行。账号位数只是让它更显眼 —— 短名一样
-   坏。拆成三层之后，长账号自己折行，压不到名字，也压不到按钮。 */
-body.grown .mem-row { flex-direction: column; align-items: stretch; gap: 7px; }
-body.grown .mem-line { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
-body.grown .mem-line .txt { flex: 1; min-width: 0; }
-body.grown .mem-line .nm { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-body.grown .mem-pw { flex: none; white-space: nowrap; font-size: calc(10.5 * var(--u)); }
-body.grown .mem-line--acc { padding-left: calc(44 * var(--u)); gap: 6px; }
+/* ------------------------------------------------- 成员行 · 账号那一格 ----- */
+/* 「账号」和它的值拆成两个 span：标签窄、值可折。行里那一层（.memcard-acc）
+   还压了省略号，账号再长也只在自己这一格里收尾，压不到名字，也压不到按钮。 */
 body.grown .mem-key { flex: none; font-size: calc(11 * var(--u)); color: var(--ink-3); }
 body.grown .mem-acc {
   flex: 1; min-width: 0; font-size: calc(12 * var(--u));
   color: var(--ink-2); word-break: break-all;
 }
-body.grown .mem-row .wact { margin-top: 0; }
 
 /* ------------------------------------------------- 发布页 · 胶囊 / 步进器 --- */
 /* 三格切换做成真胶囊：底衬是浅色圆角槽，选中那格橙底白字。
@@ -938,6 +902,29 @@ body.grown .ppair .st-btn { width: 28px; height: 28px; border-radius: 9px; }
 body.grown .ppair .stepper input.st-val {
   width: auto; flex: 1 1 auto; min-width: 30px;
 }
+
+/* 发布 · 写校准 · 「罚多少 / 扣多少」这一格（v44）。
+   标签还是左边那个（罚多少 / 扣多少），控件这一侧要竖着排三样：两颗 chip、
+   一个输入框、一行现算。所以不能直接用 .prow > .chips 那一套 —— 那是横排的。 */
+body.grown .pbody {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; gap: calc(7 * var(--u));
+}
+body.grown .pcalcline { display: flex; align-items: center; gap: calc(6 * var(--u)); }
+/* 数额框只占一小截：一个「20」或「120」不该横跨半屏，右边那个单位要挨着它。 */
+body.grown .pcalcline .pin {
+  flex: 0 0 auto; width: calc(84 * var(--u));
+  text-align: center; font-weight: 700;
+}
+body.grown .unit { flex: none; font-size: calc(12 * var(--u)); color: var(--ink-2); }
+body.grown .calc {
+  margin: 0; font-size: calc(11 * var(--u)); color: var(--ink-3); line-height: 1.6;
+}
+body.grown .calc b { color: var(--orange-deep); font-family: var(--font-num); }
+body.grown .calc i { font-style: normal; color: var(--ink-3); }
+/* 预告句用的是弹层那条 .callout-line，但它在卡里、卡本身已有 11 的竖间距，
+   再叠一个 10 的 margin-top 会把这一行跟前一行拉开一截。 */
+body.grown .pc > .callout-line { margin-top: 0; }
 
 /* ------------------------------------------------------------------ 我的记录 · 自定义区间 */
 /* 开始 / 结束并排两栏。原来上下各占一行，弹层里多出的一行正好把

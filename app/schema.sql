@@ -1,5 +1,5 @@
 -- 家庭积分工程 · 数据库结构
--- 规则真值以最新的《项目当前开发文档》为准（当前 schema v43），结构变更都带 _migrate_vNN 迁移。
+-- 规则真值以最新的《项目当前开发文档》为准（当前 schema v44），结构变更都带 _migrate_vNN 迁移。
 --
 -- 两条贯穿全库的约定：
 --   1. 所有余额都由流水求和得出，不存冗余余额字段（项目原则 6）。
@@ -308,8 +308,13 @@ CREATE TABLE IF NOT EXISTS wish (
   selfpay_stardust REAL    NOT NULL DEFAULT 0,
   -- wished：孩子许下了，条件还没定，挂在墙上等家长处理，不算「进行中」
   -- active：条件定了，心愿点亮生效，进度开始算
-  status           TEXT    NOT NULL DEFAULT 'active',  -- wished|active|achieved|claimed|cancelled
+  -- achieved：条件到了（系统自己判，算够了就落），球到家长那边 —— 去把事情办了
+  -- delivered：家长说「已经给他了」，球回孩子那边，等他点一下
+  -- claimed：孩子点过「我收到了」，这条算完
+  status           TEXT    NOT NULL DEFAULT 'active',  -- wished|active|achieved|delivered|claimed|cancelled
   created_at       TEXT, achieved_at TEXT, claimed_at TEXT, cancelled_at TEXT,
+  delivered_at     TEXT,                 -- v44：家长点「已经给他了」的时刻
+  delivered_by     INTEGER,              -- v44：这一步是谁做的（他回头问「谁给的」有地方可查）
   configured_at    TEXT,               -- v17：家长把条件定下来的时刻，进度从这里开始算
   configured_by    INTEGER,            -- v17：定条件的那位家长
   closed_by        INTEGER,            -- v18：谁把它结束的（驳回 / 撤回 / 放弃都记这里）
@@ -380,6 +385,7 @@ CREATE TABLE IF NOT EXISTS wish_pool_log (
   kids_json TEXT    NOT NULL DEFAULT '[]',   -- 这一天被漏打的孩子 [{id,name}]
   kids_days INTEGER NOT NULL DEFAULT 0,      -- 漏打涉及的孩子天数合计
   stardust  REAL    NOT NULL DEFAULT 0,      -- 实际注入池子的星尘
+  cash      REAL    NOT NULL DEFAULT 0,      -- v44：这笔罚款的元数（补投时「一共收了多少元」要算上）
   counted   INTEGER NOT NULL DEFAULT 1,      -- 1 = 计入目标进度
   note      TEXT    NOT NULL DEFAULT '',
   ts        TEXT    NOT NULL
@@ -674,6 +680,29 @@ CREATE TABLE IF NOT EXISTS cash_request (
 );
 CREATE INDEX IF NOT EXISTS ix_cash_request_member ON cash_request (member_id, status);
 CREATE INDEX IF NOT EXISTS ix_cash_request_status ON cash_request (status, created_at);
+
+-- ---------------------------------------------------------------------------
+-- 赛季（v44）：欠款与道具的冲刷周期
+-- ---------------------------------------------------------------------------
+-- 之前欠款是「每个周期末免一次」（周期默认 7 天），太勤 —— 一张大额罚单
+-- 一期就免掉大半。现在改成跨周期滚动累积，只在赛季末清一次。
+--
+-- 一季默认 90 天（跟历史上卡有效期的「一个赛季」对齐），到点自动推下一季；
+-- 家长可以改长度。结束日撞上寒暑假就顺延（复用假期保护窗那套参数）。
+--
+-- 季末清算只动「欠账与道具」：清欠款 / 清消耗卡（按 expire_refund 折星尘）/
+-- 清六种券 / 清碎片；星尘余额、等级、三张身份卡一律不动。没开的宝箱留着，
+-- 让他在新赛季自己点开。
+CREATE TABLE IF NOT EXISTS season (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  idx        INTEGER NOT NULL,              -- 第几季，从 1 开始
+  theme      TEXT    NOT NULL DEFAULT '',   -- 主题占位（换皮以后用得上）
+  start_date TEXT    NOT NULL,
+  end_date   TEXT    NOT NULL,
+  settled_at TEXT,                          -- 季末清算完成的时刻；空 = 还没结
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_season_dates ON season (start_date, end_date);
 
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,

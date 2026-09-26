@@ -75,10 +75,6 @@ def executemany(sql: str, seq) -> None:
     conn.commit()
 
 
-def to_dict(row) -> dict:
-    return dict(row) if row is not None else None
-
-
 def to_dicts(rows) -> list:
     return [dict(r) for r in rows]
 
@@ -243,6 +239,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v41(conn)
     _migrate_v42(conn)
     _migrate_v43(conn)
+    _migrate_v44(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -1001,6 +998,8 @@ def _migrate_v38(conn):
     是后台一次静默抽奖。这一版起结算只落一只待开箱，箱子里有什么压到他
     点开那一刻才抽；直购仍然是付完星尘当场开（配同一段开箱动画）。
     一直没开的箱，下个周期结算时系统替他开掉（engine.auto_open_stale）。
+    v44 把「替他开」这半条整条删了：没开的箱子留到新赛季让他自己点开。
+    这张迁移本身不动，它记的是 v38 当时做了什么。
 
     DDL 只有一列：box_open.opened_at。NULL = 待开，有值 = 开过了。
     存量记录一律按 ts 补上 —— 那些箱子里的东西在 v38 之前就已经发到手上，
@@ -1133,6 +1132,77 @@ def _migrate_v43(conn):
         ("硬停止（不用上学的日子）",
          "周末、国家法定假日、家长填的寒暑假用这个，可以比上学日放宽一点。"
          "调休上班的周末按上学日算，那天要上学。"))
+
+
+def _migrate_v44(conn):
+    """v44：心愿多一段「家长已经给他了」+ 校准数额/保底/赛季。
+
+    这一版并了两轮（戊：两轮并作一版 44 / 1.16）。
+
+    一、心愿多两步，照零花钱那条链路的样子来（家长批=发放 → 他点
+    「收到了」才算完）：
+
+        wished → active → achieved（系统判定）→ delivered（家长「已经给他了」）
+               → claimed（孩子「我收到了」，完结）
+
+    所以加两列：delivered_at / delivered_by。存量的 achieved 那几条不用
+    补数据 —— 它们本来就是「条件够了、还没给」的状态，在新链路上位置正好。
+    ready_notified_at 这一列退休：条件够了就直接落 achieved，状态一变下一轮
+    就查不到它了。列留着不删（SQLite 删列要重建表）。
+
+    二、校准那轮：
+    - wish_pool_log 补一列 cash —— 校准罚款在「没设许愿池」时也要照记金额
+      （counted=0，等立了目标一并投进去），补投时那个「一共收了多少元」要
+      算上元数，而这张表原来只存星尘。
+    - 新建 season 表：欠款原来每个周期末免一次，太勤；现在跨周期滚、赛季末
+      才清一次。第一季从建库那天起算、对齐到今天所在的那一季 —— 不对齐的话，
+      一个用了半年的老库一升级就会当场触发季末清算。
+    """
+    _ensure_column(conn, "wish", "delivered_at", "TEXT")
+    _ensure_column(conn, "wish", "delivered_by", "INTEGER")
+    _ensure_column(conn, "wish_pool_log", "cash", "REAL NOT NULL DEFAULT 0")
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS season (
+             id         INTEGER PRIMARY KEY AUTOINCREMENT,
+             idx        INTEGER NOT NULL,
+             theme      TEXT    NOT NULL DEFAULT '',
+             start_date TEXT    NOT NULL,
+             end_date   TEXT    NOT NULL,
+             settled_at TEXT,
+             created_at TEXT    NOT NULL
+           )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_season_dates ON season (start_date, end_date)")
+
+    if conn.execute("SELECT COUNT(*) FROM season").fetchone()[0] == 0:
+        base = _builtin_start_date(conn)
+        length = 90          # 与 seed_data 里 season.length_days 的默认值同一个数
+        start = base
+        # 结束日跟 engine.season_end 用同一算法（起点 + 长度 − 1），下一季从
+        # 结束日的次日起。两处各写一遍的话，升级建出来的第一季会比后面每季
+        # 多一天、而且相邻两季共用结束日那一天。
+        end = _shift_day(start, length - 1)
+        today_s = today()
+        idx = 1
+        while end < today_s:
+            start = _shift_day(end, 1)
+            end = _shift_day(start, length - 1)
+            idx += 1
+        conn.execute(
+            "INSERT INTO season (idx, theme, start_date, end_date, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (idx, "", start, end, now()),
+        )
+
+
+def _shift_day(day: str, days: int) -> str:
+    """把 YYYY-MM-DD 往后挪 days 天。"""
+    try:
+        d = datetime.strptime(day[:10], "%Y-%m-%d") + timedelta(days=days)
+        return d.strftime("%Y-%m-%d")
+    except ValueError:
+        return day[:10]
 
 
 if __name__ == "__main__":
