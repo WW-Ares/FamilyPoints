@@ -950,8 +950,12 @@ def main():
     call("POST", "/api/wishes/%d/pay" % w5, actor=girl, expect_error=True)   # 不许付第二遍
     # 别人的心愿碰不得
     call("POST", "/api/wishes/%d/pay" % w5, actor=boy, expect_error=True)
+    # v1.18：撤回只认发起人。上面那条是爸爸定的，女儿撤不动，爸爸才能撤。
+    # 反过来也一样，wid 那一条是女儿自己许的，家长划不掉。
+    call("POST", "/api/wishes/%d/status" % w5, {"status": "cancelled"}, actor=girl, expect_error=True)
+    call("POST", "/api/wishes/%d/status" % wid, {"status": "cancelled"}, actor=dad, expect_error=True)
     # 撤回要退钱
-    call("POST", "/api/wishes/%d/status" % w5, {"status": "cancelled"}, actor=girl)
+    call("POST", "/api/wishes/%d/status" % w5, {"status": "cancelled"}, actor=dad)
     check("撤回后自付的星尘全额退回", E.stardust_balance(GIRL) == bal0)
     call("GET", "/api/wishes", query={"member_id": str(GIRL)}, actor=dad)
 

@@ -68,6 +68,24 @@ body.kid {
   --ok:        #3E9E68;   /* 做到了 / 已完成，走草绿 */
   --ok-bg:     #E9F7EF;
 
+  /* ---------------- 兜住 style.css 那批两端同名的变量 ----------------
+     style.css 的深色段（@media prefers-color-scheme: dark）会改 :root 上的
+     --bg / --brand 这一整批。孩子端是糖果橙，跟家长端深绿不是一套色，
+     这些名字在 body.kid 下必须自己声明一遍：漏一个，深色模式里就会漏进
+     家长的深色值。最显眼的一处是「最近发生 → 查看全部」那个弹层 ——
+     行卡底色取 var(--bg)，漏进来就变成近黑一块，深棕字糊在上面读不出来。
+     家长端那头一处不漏（parent-tokens.css 早就写全了），这一头以前漏了九个。
+     --bg 取渐变最下段那一档：这行的本意就是「拿页面底色跟白弹层分层」。 */
+  --bg:          #FFFBF3;
+  --brand:       #FF8A3D;   /* 孩子端的主色是冒险橙，不是家长的深绿 */
+  --brand-dark:  #E8722A;
+  --brand-soft:  #FFF3E2;
+  --brand-line:  #F3D9B4;
+  --blue-soft:   #E7F1FF;
+  --gold-soft:   #FFE9A8;
+  --warn-soft:   #FFF3E2;
+  --shadow:      0 7px 16px -4px rgba(184,128,64,.13);   /* 同 --sh-card */
+
   /* ---------------- 圆角 ---------------- */
   --r-xs: calc(11 * var(--u));
   --r-sm: calc(15 * var(--u));

@@ -2278,6 +2278,13 @@ async function kScreenWish() {
           '<span class="ok-t" style="font-size:10.5px">够了，等爸爸妈妈给你</span></div>'
         : '') +
       wishNotesHTML(x) +
+      // 撤心愿：谁发起的谁才能撤。他在心愿屋自己许的（operator_id 是自己）
+      // 才有这一颗；爸爸妈妈用「你直接定一个」给他建的，这颗不出现 —— 那是
+      // 家长发起的，撤不撤由发起的那个人说了算。接口那边同一道判据再挡一次。
+      ((x.operator_id == null || +x.operator_id === +S.me.id)
+        ? '<div class="hb" style="margin-top:10px">' +
+          '<button class="btn btn--sm line" data-wdrop="' + x.id + '">不想要了</button></div>'
+        : '') +
       '</div>';
   });
 

@@ -66,7 +66,17 @@ body {
   line-height: 1.55;
   overscroll-behavior-y: none;
 }
-button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+/* touch-action:manipulation 关掉「双击缩放」，滑动与双指缩放都保留 ——
+   自绘的数字键盘（登录页那排 .lg-key）连按同一个键会被 iOS 认成双击手势，
+   整页放大而且两次 click 都不派发；孩子端里连点同一个按钮是同一个毛病。
+   后两条是顺带：按下不再闪一层灰色高亮，长按不再弹 iOS 的选择菜单。
+   别用 viewport 的 user-scalable=no 来做这件事：iOS 10 之后直接忽略它。 */
+button {
+  font: inherit; color: inherit; border: 0; background: none; cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
 input, select, textarea { font: inherit; color: inherit; }
 img { max-width: 100%; }
 #app { max-width: var(--shell-w); margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }

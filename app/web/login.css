@@ -188,11 +188,23 @@ body.lg #view { padding: 0; padding-bottom: 0; flex: 1; display: flex; }
   display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 12px; margin-top: 26px; max-width: 360px; align-self: center; width: 100%;
 }
+/* 这排键是网页画的，不是系统键盘，所以 iOS 的手势照样落在它身上：
+   密码里出现 11、22 这种连按同一个键，会被认成双击手势把整页放大，
+   而且那两次 click 都不派发 —— 界面放大了，第二个数字还输不进去。
+   touch-action:manipulation 只关掉双击缩放，滑动与双指缩放都保留；
+   顺带消掉 iOS 那 300ms 的点击等待，输密码跟手得多。
+   别改用 user-scalable=no：iOS 10 之后直接忽略它，安卓上倒是有效，
+   可那会把双指缩放一起废掉。
+   后面三条是同一类触屏小毛病：长按数字键不再弹 iOS 的选择放大镜，
+   按下时不再闪一层灰色高亮（按下反馈本来就由 :active 那 2px 位移给）。 */
 .lg-key {
   height: 54px; border-radius: 16px; background: #fff;
   border: 2px solid var(--card-line); box-shadow: 0 3px 0 0 #E8D5B0;
   font-family: var(--font-num); font-size: calc(24 * var(--u)); font-weight: 500; color: var(--ink);
   display: grid; place-items: center;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .lg-key:active { transform: translateY(2px); box-shadow: 0 1px 0 0 #E8D5B0; }
 .lg-key.gap { visibility: hidden; }

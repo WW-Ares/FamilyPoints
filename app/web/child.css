@@ -19,8 +19,14 @@ body.kid #app {
 }
 /* 孩子端没有顶栏：角色条在首页，「我是谁 / 改密码 / 退出」在「我的」里 */
 body.kid #topbar { display: none !important; }
-body.kid #view { flex: 1 1 auto; min-height: 0; padding: 0; display: flex; }
-body.kid .screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* min-width:0 这两条不能省。flex item 默认 min-width:auto（等于 min-content），
+   孩子端首页「最近发生」那几行是 white-space:nowrap + text-overflow:ellipsis ——
+   省略号要生效，祖先必须给出一个确定宽度。少了这两条，min-content 会一路向上顶，
+   #view / .screen / .content 连同每一张卡一起被撑宽，整页比视口宽、右边被切、
+   还能左右滑（iPhone 15 / 15 Pro Max 实测）。演示库的文本短，本地看不出来；
+   正式库里只要有一条更长的新闻就越界。 */
+body.kid #view { flex: 1 1 auto; min-height: 0; min-width: 0; padding: 0; display: flex; }
+body.kid .screen { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 
 /* ============================ 页面标题行 ============================ */
 body.kid .appbar {
@@ -279,7 +285,9 @@ body.kid .icon-box {
 /* ============================ 首页动态胶囊 ============================ */
 /* 三条和自己有关的动态，每条一个来源色（颜色在 child.js 的 K_FEED_SRC 里，
    跟小符号一起给）。一行截断：首页是用来「扫一眼」的，细节不该在这儿讲。 */
-body.kid .kfeed { display: flex; flex-direction: column; gap: calc(7 * var(--u)); }
+/* overflow:hidden 是双保险：万一以后某条动态带着不可断的长串（一长串数字、
+   没有空格的地址），也不至于再从这里把整页顶宽。 */
+body.kid .kfeed { display: flex; flex-direction: column; gap: calc(7 * var(--u)); overflow: hidden; }
 body.kid .kfeed-row {
   display: flex; align-items: center; gap: calc(8 * var(--u));
   border-radius: var(--r-pill);

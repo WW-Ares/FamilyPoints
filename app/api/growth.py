@@ -440,6 +440,21 @@ def wish_status(ctx):
             raise ApiError("已经达成的心愿不能取消，这一条是不设否决权的红线")
         if w["status"] not in ("wished", "active"):
             raise ApiError("这条心愿已经结束了")
+        # 撤心愿按阶段分两种，别混成一条：
+        #
+        #   wished（他许了愿、条件还没定）—— 家长可以「驳回」，他也可以自己撤回。
+        #     这一栏的球本来就在家长手上：条件要家长定，家长说不可以，说得通。
+        #
+        #   active（条件定了、正在算）—— 谁发起的谁才能撤。他许的只有他撤得掉，
+        #     家长在「你直接定一个」里建的也只有那位家长撤得掉。家长替他把自己
+        #     许的愿划掉，等于把他的东西随手拿走，这一条不让。
+        if w["status"] == "active":
+            starter = w["operator_id"]
+            if not starter:
+                # 老数据的兜底：operator_id 那一列还没写的那批，按心愿本身是谁的算
+                starter = w["configured_by"] or w["member_id"]
+            if int(starter) != int(me["id"]):
+                raise ApiError("这条心愿不是你发起的，撤不了 —— 让他自己撤")
     return E.update_wish_status(wid, status, operator_id=me["id"])
 
 

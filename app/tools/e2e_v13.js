@@ -123,16 +123,24 @@ async function clickSel(page, sel, tag) {
   return true;
 }
 
-/* 接口里「还没处理完的箱子」有几只（没点开的 + 开了但自选没挑完的）。
-   页面那张提醒条只画最近一只，数它看不出少没少 —— 这条断言认接口。 */
+/* 接口里「还没处理完的箱子」有几只，按两种状态分开数：
+     unopened  压根没点开的
+     unpicked  开了、随机件是自选、那几张还没挑的
+   页面那张提醒条只画最近一只，数它看不出少没少 —— 这条断言认接口。
+   两种要分开：开出来的那只要挑自选时，它只是从「没开」挪到「待挑」，
+   总数一只不少 —— 只数总数会把「开箱成功了」误判成「没开」。 */
 async function pendBoxCount(page) {
   return await page.evaluate(async () => {
     const b = await (await fetch('/api/bootstrap', { credentials: 'same-origin' })).json();
     const kid = (b.members || []).filter(m => m.role === 'child')[0];
-    if (!kid) return -1;
+    if (!kid) return { unopened: -1, unpicked: -1 };
     const j = await (await fetch('/api/boxes?member_id=' + kid.id,
       { credentials: 'same-origin' })).json();
-    return ((j && j.pending) || []).length;
+    const p = (j && j.pending) || [];
+    return {
+      unopened: p.filter(x => x.state === 'unopened').length,
+      unpicked: p.filter(x => x.state === 'unpicked').length,
+    };
   });
 }
 
@@ -808,8 +816,13 @@ async function walkTabs(page, tag) {
     await waitSheetClosed(page);
     await page.waitForTimeout(1000);
     const pendAfter = await pendBoxCount(page);
-    if (pendAfter >= pendBefore) {
-      bad('[v38] 箱子开过了，待开的没少（' + pendBefore + ' → ' + pendAfter + '）');
+    if (pendAfter.unopened >= pendBefore.unopened) {
+      bad('[v38] 箱子开过了，没开的没少一只（' + pendBefore.unopened +
+          ' → ' + pendAfter.unopened + '）');
+    }
+    if (pendAfter.unpicked > pendBefore.unpicked) {
+      say('   这只开出自选件，从「没开」挪到「等他挑」（' + pendBefore.unpicked +
+          ' → ' + pendAfter.unpicked + '）');
     }
   }
   await page.screenshot({ path: path.join(SHOT, 'kid-chest.png'), fullPage: true });

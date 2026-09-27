@@ -245,6 +245,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v43(conn)
     _migrate_v44(conn)
     _migrate_v45(conn)
+    _migrate_v46(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -1298,6 +1299,71 @@ def _migrate_v45(conn):
             newly = True
     if newly:
         conn.execute("UPDATE calibration SET settled_at=ts WHERE settled_at=''")
+
+
+def _migrate_v46(conn):
+    """v46：把「校准与钱」那批设置的名字与说明改回它们真正的意思。
+
+    只改文案，不动一个数值、不动一行数据：这十项在代码里的读法一处没变，
+    变的是摆在设置页上那句话。名字跟真值对不上，家长改的时候不知道自己在
+    改什么 —— 最典型的是 calib.reserve_pct，原来叫「每次最多扣多少比例」，
+    填 25 实际是「至少留 25%、最多扣 75%」，整条说反了；calib.floor_tickets
+    写着「券永远留这么多张」，其实只在罚款和还款时守着，孩子自己用券可以
+    用到 0 张。
+
+    已灌进库的 label / note 不会跟着 seed_data 走（_seed 只补差集、不覆盖），
+    所以存量库要靠这一次迁移回填。判据照抄 v43 那次的做法：只认旧文案还原样
+    在的那一行 —— 家长改过的、或者本来就已经是新版文案的，一律不动。
+    下面这些新文案与 seed_data.SETTINGS 里的一字不差，改一处就得改另一处。
+    """
+    relabel = [
+        # key, 旧名, 新名, 新说明
+        ("calib.fine_amount", "单次罚款", "默认罚款金额",
+         "单位：元。发布页那颗默认 chip 用的数，当场也可以填别的数。"),
+        ("calib.floor_tickets", "娱乐券保底", "罚与还时留几张券",
+         "单位：张。罚款和还款时至少给他留这么多张，其余才拿来扣。"
+         "孩子自己用券不受这条管，可以一直用到 0 张。"),
+        ("calib.reserve_pct", "每次最多扣多少比例", "每次至少留多少比例",
+         "单位：%。填 25 就是「手上 100 星尘，这一次最多扣 75，至少留 25」。"
+         "罚款与还款都守这一条，跟上面两条保底一起取对他最宽松的那个。"),
+        ("homework.revoke_study", "抄作业可撤当日智识分", "作业复核可撤当日智识分",
+         "家长在孩子详情页点「作业复核」时走这一步：撤掉那天「智识」那一分，"
+         "其余六个维度不动。那个周期已经结算就撤不了。"
+         "撤的是一个还没核实的判断，不是收回已经发出去的奖励。"),
+        ("anti_escalation.threshold", "反升级阈值", "一个月几次算太密",
+         "单位：次。两个条件任一满足就提醒一句：这个月达到这个次数，或者这一周达到"
+         "它的四成（默认 5，也就是一周 2 次）。只弹一句话，不分事项、不打更重的罚。"),
+    ]
+    for key, old_label, label, note in relabel:
+        conn.execute(
+            "UPDATE setting SET label=?, note=? WHERE key=? AND label=?",
+            (label, note, key, old_label))
+
+    renote = [
+        # key, 旧说明, 新说明（名字没动，只把那句说错 / 说漏的补对）
+        ("steal_game.days",
+         "设备使用权降为「只能在公共区域用」，到期自动恢复。",
+         "单位：天。设备使用权降为「只能在公共区域用」，到期自动恢复。"
+         "再记一次不是把天数叠上去，是从当天重新计时。"),
+        ("steal_game.repeat_days",
+         "窗口期内重复时用的天数。重复不加重别的惩罚，改规则。",
+         "单位：天。窗口内第二次起改用这个天数。同样不是叠加：把上一条结束，"
+         "从当天重新计时。重复不加别的罚 —— 它说明的是规则不够用，不是孩子更坏。"),
+        ("repair.auto_archive_hours",
+         "提交后这么久未处理视为完成，不进逾期。孩子的义务是「做」不是「等按钮」。",
+         "单位：小时。提交后这么久未处理视为完成，不进逾期。"
+         "孩子的义务是「做」不是「等按钮」。"),
+        ("rate.fixed_to_stardust",
+         "1 分每日固定分 = 多少星尘。默认 1，即每天满 7 分得 7 星尘。",
+         "周期结算时才换算：1 分每日固定分 = 多少星尘。默认 1，即一周满 49 分得 49 星尘。"),
+        ("cash.monthly_cap_stardust",
+         "单位：星尘（= 30 元）。超出部分只能换券、卡、宝箱或投许愿池。",
+         "单位：星尘。按自然月算，已经在审的那几条也占额度。"
+         "超出部分只能换券、卡、宝箱或投许愿池。"),
+    ]
+    for key, old_note, note in renote:
+        conn.execute(
+            "UPDATE setting SET note=? WHERE key=? AND note=?", (note, key, old_note))
 
 
 if __name__ == "__main__":

@@ -616,6 +616,13 @@ body.grown .ask-body {
   padding: 10px 12px 11px; font-size: calc(10.5 * var(--u-sm));
   color: var(--ink-2); line-height: 1.5;
 }
+/* 无事可办那一态（.done）：淡绿带 + 深绿字 + 勾，卡框也跟着转绿。
+   绿带刻意用浅底不用实心 —— 一橙一绿并排是最常见的中间态（打分打过、
+   审核还没过），两块分量一样的话，扫一眼分不出哪块才是「等你动手」的那块。
+   深绿 #2F7A55 压在 #E9F7EF 上，白底那套的字重不用动。 */
+body.grown .ask-card.done { border-color: #D8EAD3; }
+body.grown .ask-card.done .ask-band { background: #E9F7EF; color: #2F7A55; }
+body.grown .ask-card.done .ask-body { color: #4E8B6C; }
 
 /* 总览那张孩子卡的进度条。满格是本周期固定分满分，刻线是下一档的门槛 ——
    两条线放在同一根轨上，家长才看得出「还差多少」。 */

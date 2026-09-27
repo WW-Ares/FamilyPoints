@@ -3645,21 +3645,34 @@ async function renderAdminHome(v) {
   h += playingHTML(pl.items);
 
   // 今天要办的事。这个区从来不只关晚上 —— 白天交上来的任务也落在这里，
-  // 写「今晚」是错的。两张卡并排，状态词压在实心橙带上。
+  // 写「今晚」是错的。两张卡并排，状态词压在实心色带上。
+  //
+  // 一件都没有的那一态转成绿（方案 B）：橙带说的是「这件事等你动手」，
+  // 今天空着的时候它得退后一档 —— 两块一样沉的实心色并排，家长扫一眼只看
+  // 见「两件待办」，看不出今天其实是空的。所以绿带、深绿字、勾，卡框一起转绿；
+  // 绿带用浅底而不是实心绿，就是为了让它比橙那一档轻。
+  // 两张卡都留着、都还能点：空态也是个能核对的入口，不是一句装饰。
+  const noScore = !unscored.length;
+  const noReview = !n;
+  const kidNames = kids.map(k => k.name).filter(Boolean).join('、');
   h += '<div class="stack"><div class="sec-head"><span class="sec-title">今天要办的事</span>' +
-    '<span class="sec-link" data-go="review">全部 ' + n + ' 件</span></div>' +
+    '<span class="sec-link" data-go="review">' +
+    (noReview ? '都办完了' : '全部 ' + n + ' 件') + '</span></div>' +
     '<div class="ask-row">' +
-    '<div class="ask-card" data-go="score">' +
-    '<div class="ask-band"><span class="ask-band-l">' + pic('i-card-a', 14, '', '#fff') +
-    '<span>今日打分</span></span><b>' + (unscored.length ? '还没打' : '都打过') + '</b></div>' +
+    '<div class="ask-card' + (noScore ? ' done' : '') + '" data-go="score">' +
+    '<div class="ask-band"><span class="ask-band-l">' +
+    (noScore ? pic('i-check-circle', 14, '', '#2F7A55') : pic('i-card-a', 14, '', '#fff')) +
+    '<span>今日打分</span></span><b>' + (noScore ? '都打过' : '还没打') + '</b></div>' +
     '<div class="ask-body">' +
-    (unscored.length
-      ? esc(unscored.map(k => k.name).join('、')) + ' · 点一下就能打'
-      : '今天没有再要打的了') + '</div></div>' +
-    '<div class="ask-card" data-go="review">' +
-    '<div class="ask-band"><span class="ask-band-l">' + pic('i-card-b', 14, '', '#fff') +
+    (noScore
+      ? (kidNames ? esc(kidNames) + ' 今天都打过啦' : '今天都打过啦')
+      : esc(unscored.map(k => k.name).join('、')) + ' · 点一下就能打') + '</div></div>' +
+    '<div class="ask-card' + (noReview ? ' done' : '') + '" data-go="review">' +
+    '<div class="ask-band"><span class="ask-band-l">' +
+    (noReview ? pic('i-check-circle', 14, '', '#2F7A55') : pic('i-card-b', 14, '', '#fff')) +
     '<span>待审核</span></span><b>' + num(n) + ' 件</b></div>' +
-    '<div class="ask-body">' + esc(pTodoBreakdown(TD)) + '</div></div>' +
+    '<div class="ask-body">' +
+    (noReview ? '没有等你点头的事' : esc(pTodoBreakdown(TD))) + '</div></div>' +
     '</div></div>';
 
   // 选中的那个孩子这一周：拿了多少、够哪一档、差多少升档、手上有多少东西。
@@ -6726,7 +6739,8 @@ async function wishSheet() {
   // 进行中：把进度也摆出来，家长在定条件时能看见门槛是不是设高了
   if (active.length) {
     h += '<div class="card" style="margin-top:10px"><div class="pad wband"><b>正在算</b>' +
-      '<span class="muted">（' + active.length + ' / ' + wishes.limit + '）</span></div>' +
+      '<span class="muted">（' + active.length + ' / ' + wishes.limit +
+      '）　要撤由发起的人撤，家长这边没有这一颗</span></div>' +
       active.map(x => '<div class="item">' + glyph(x.icon, 'wish', 30) +
         '<div class="txt"><div class="nm">' + esc(x.title) +
         ' <span class="tag">进行中</span></div>' +
@@ -6738,8 +6752,9 @@ async function wishSheet() {
             '<div class="wact"><button class="btn sm line" data-wselfp="' + x.id +
             '">替他付掉</button></div>'
           : '') +
-        '<div class="wact"><button class="btn sm line" data-wdrop="' + x.id +
-        '">撤掉这个心愿</button></div>' +
+        // 这里原来有一颗「撤掉这个心愿」。摘掉了：心愿是他许的，撤不撤该他说了
+        // 算，家长在旁边按一下撤销，等于把他的东西随手划掉。家长这一侧的出口是
+        // 待定栏那颗「驳回」（他还没定条件时家长可以说不），不是这一颗。
         '</div></div>').join('') + '</div>';
   }
 
@@ -6826,19 +6841,9 @@ async function wishSheet() {
         closeSheet(); toast('驳回了。跟他说清楚为什么，不然他不会写第二条'); await wishSheet();
       } catch (e) { err(e); }
     }));
-    $$('[data-wdrop]', box).forEach(b => b.addEventListener('click', async () => {
-      const x = (wishes.items || []).filter(y => y.id === +b.dataset.wdrop)[0] || {};
-      askSheet({
-        title: '撤掉《' + (x.title || '') + '》',
-        hint: '心愿进历史且不能恢复，他那边立刻能看到。',
-        ok: '确认取消',
-      }, async () => {
-        try {
-          await api('POST', '/api/wishes/' + b.dataset.wdrop + '/status', { status: 'cancelled' });
-          closeSheet(); toast('撤掉了'); await wishSheet();
-        } catch (e) { err(e); }
-      }, () => wishSheet());
-    }));
+    // 家长端这里不绑 data-wdrop：「撤掉这个心愿」那颗按钮已经摘掉了。孩子端
+    // 自己那颗（心愿屋里「不想要了」）在 child.js，两条路径都过接口那道
+    // 「谁发起的谁才能撤」，家长替他撤会被挡回来。
     $$('[data-wselfp]', box).forEach(b => b.addEventListener('click', async () => {
       const x = (wishes.items || []).filter(y => y.id === +b.dataset.wselfp)[0] || {};
       const pay = x.progress && x.progress.selfpay_stardust ? x.progress.selfpay_stardust
