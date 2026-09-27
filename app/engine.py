@@ -403,7 +403,7 @@ def grant_item(member_id, item_id, qty=1.0, source="box", note="", ref_type="", 
         # source → kind。漏登记会写成「手动调整」这种看不出所以然的类型，
         # 而家长正是靠这个字段回答「这东西哪来的」。（v28 补 levelup）
         kind = {"box": "box_free", "shop": "shop_card", "task": "repair",
-                "levelup": "level_up"}.get(source, "adjust")
+                "levelup": "level_up", "refund": "appeal_refund"}.get(source, "adjust")
     expires = None
     if it["shelf_life_days"]:
         expires = fmt(parse_day(today()) + timedelta(days=int(it["shelf_life_days"])))
@@ -2451,9 +2451,14 @@ def wish_cond_text(w):
 
 
 def _feed_tasks(member_id=None):
-    """还没结束的发布任务。状态就是进度，不需要另算一个百分比。"""
+    """还没结束的发布任务。状态就是进度，不需要另算一个百分比。
+
+    v45 把修复任务（kind='repair'）也收进来：它以前只在「任务记录」里留一行，
+    孩子手上那会儿其实压着一件活，首页和任务页都当它不存在。
+    """
     sql = ("SELECT t.*, m.name AS who FROM task t JOIN member m ON m.id=t.assignee_id"
-           " WHERE t.kind='reward' AND t.status IN ('pending','claimed','submitted')")
+           " WHERE t.kind IN ('reward','repair')"
+           " AND t.status IN ('pending','claimed','submitted')")
     args = []
     if member_id:
         sql += " AND t.assignee_id=?"
@@ -2462,13 +2467,22 @@ def _feed_tasks(member_id=None):
     out = []
     for r in db.query(sql, args):
         st = r["status"]
-        detail = "奖励 " + _reward_text(r["reward_type"], json.loads(r["reward_json"] or "{}"))
+        is_repair = r["kind"] == "repair"
+        if is_repair:
+            # 修复任务没有奖励，写「奖励」两个字等于骗他。它上面挂着的是校准。
+            detail = "校准的后果，做完交上去"
+        else:
+            detail = "奖励 " + _reward_text(r["reward_type"], json.loads(r["reward_json"] or "{}"))
         if r["deadline"]:
             detail += "　截止 " + str(r["deadline"])[:16]
         out.append({
-            "kind": "task", "kind_text": "任务",
+            "kind": "task", "kind_text": "校准" if is_repair else "任务",
+            "is_repair": is_repair,
             "task_id": r["id"], "member_id": r["assignee_id"], "who": r["who"],
             "title": r["title"], "std": r["std"],
+            "reward_text": "" if is_repair
+            else _reward_text(r["reward_type"], json.loads(r["reward_json"] or "{}")),
+            "reward_type": r["reward_type"] or "",
             "state_key": st, "state_text": _FEED_TASK_STATE.get(st, st),
             "detail": detail, "icon": r["icon"],
             "step": _FEED_TASK_STEP.get(st, 1), "steps": FEED_TASK_STEPS,
@@ -2481,8 +2495,13 @@ def _feed_tasks(member_id=None):
 
 
 def _feed_wishes(member_id=None):
-    """挂起的和进行中的心愿。进度直接借 wish_progress，前后端只此一份算法。"""
-    sql = "SELECT * FROM wish WHERE status IN ('wished','active')"
+    """还没了结的心愿。进度直接借 wish_progress，前后端只此一份算法。
+
+    v45 起把 achieved / delivered 也收进来。原来只取 wished / active，
+    于是心愿一到「条件够了、等你给」就从「要做的事」里消失 —— 恰恰是最该
+    被看见的那一步（球刚交到大人手上），孩子和大人两头都看不到它。
+    """
+    sql = "SELECT * FROM wish WHERE status IN ('wished','active','achieved','delivered')"
     args = []
     if member_id:
         sql += " AND member_id=?"
@@ -2494,19 +2513,26 @@ def _feed_wishes(member_id=None):
         p = v.get("progress") or {}
         ready = bool(p.get("ready"))
         manual = bool(p.get("manual"))
-        if r["status"] == "wished":
+        if r["status"] == "delivered":
+            # 球回到孩子手上：东西已经在家里了，就差他点一下「我收到了」。
+            detail = "爸爸妈妈已经给你了，点一下收下就算完"
+            state, rank, sk = "等你说收到", 2, "delivered"
+        elif r["status"] == "achieved":
+            detail = "条件已经够了，等爸爸妈妈给你"
+            state, rank, sk = "够了，等爸爸妈妈给你", 0, "ready"
+        elif r["status"] == "wished":
             detail = "还挂在墙上等定条件，这会儿不占「进行中」的名额"
-            state, rank = "等爸爸妈妈定条件", 1
+            state, rank, sk = "等爸爸妈妈定条件", 1, "wished"
         elif manual:
             # 自定义那条没有进度条，状态也就不该说「进行中」——
             # 系统算不出它在走还是停了，能说的只有「好了就说一声」。
             detail = "条件　「%s」" % (p.get("text") or "")
-            state, rank = "好了就说一声", 2
+            state, rank, sk = "好了就说一声", 2, "active"
         elif p.get("has_manual"):
             # 多选里含自定义那条：系统能算的那部分照常走，但里面有一条得人判，
             # 所以不能报「进行中」—— 那条走到了哪一步，机器根本不知道。
             detail = ("条件　" + _WISH_COND_LABEL["any"] + "　" + (p.get("text") or ""))
-            state, rank = "好了就说一声", 2
+            state, rank, sk = "好了就说一声", 2, "active"
         else:
             # 只写条件名，不写门槛数字：数字在下面那条进度里，
             # 两行都写「3」的时候，看的人会以为自己数错了
@@ -2515,50 +2541,43 @@ def _feed_wishes(member_id=None):
             # 家长那边由 feedRow 覆写成「该你去办了」—— 同一个状态，
             # 两头各自该看见的那句话不一样。
             state, rank = ("够了，等爸爸妈妈给你" if ready else "进行中"), (0 if ready else 2)
+            sk = "ready" if ready else "active"
         out.append({
             "kind": "wish", "kind_text": "心愿",
             "wish_id": r["id"], "member_id": r["member_id"],
             "who": member_name_of(r["member_id"]),
             "title": r["title"], "std": "",
-            "state_key": "ready" if ready else r["status"], "state_text": state,
+            "state_key": sk, "state_text": state,
             "detail": detail, "icon": r["icon"],
             "step": None, "steps": [],
             "percent": p.get("percent"), "text": p.get("text", ""),
-            "rank": rank, "ts": r["created_at"],
+            "rank": rank,
+            "ts": r["created_at"] or r["achieved_at"] or r["delivered_at"],
         })
     return out
 
 
 def _feed_calibrations(member_id=None):
-    """还没了结的校准：修复任务没交、欠款没结、设备降级还没到期。
+    """还没了结的校准卡。
 
-    已经当场生效的那几种（扣时长）不在这里 —— 它们没有「还没做完」这一说，
-    摆进动态只会变成一条永远挂着的旧账。
+    数据源是 calibration 表本身，不是 kind='repair' 的任务 —— 罚款和扣券这两
+    种根本不生成任务，只写一条校准记录，按任务去找永远找不到它们。这也正是
+    「星尘少了、券少了，却没人说明为什么」的根源。
+
+    欠款另起一条：它是跨周期的账（周期末抵扣、赛季末清），不是某一次校准，
+    挂在某一条上会跟着那条一起过期消失。
     """
+    settle_due_calibrations()
     ids = [member_id] if member_id else [m["id"] for m in _kids()]
     if not ids:
         return []
     out = []
-    sql = ("SELECT t.*, m.name AS who FROM task t JOIN member m ON m.id=t.assignee_id"
-           " WHERE t.kind='repair' AND t.status IN ('pending','claimed','submitted')")
-    args = []
-    if member_id:
-        sql += " AND t.assignee_id=?"
-        args.append(member_id)
-    sql += " ORDER BY t.id DESC LIMIT 40"
-    for r in db.query(sql, args):
-        st = r["status"]
-        out.append({
-            "kind": "calibration", "kind_text": "校准",
-            "task_id": r["id"], "member_id": r["assignee_id"], "who": r["who"],
-            "title": r["title"], "std": r["std"],
-            "state_key": st, "state_text": _FEED_TASK_STATE.get(st, st),
-            "detail": "完成标准：" + (r["std"] or "没写"),
-            "step": _FEED_TASK_STEP.get(st, 1), "steps": FEED_TASK_STEPS,
-            "percent": None, "text": "",
-            "rank": 0 if st == "submitted" else 2,
-            "ts": r["submitted_at"] or r["created_at"],
-        })
+    q = ",".join("?" * len(ids))
+    for c in db.query(
+            "SELECT c.*, m.name AS who FROM calibration c JOIN member m ON m.id=c.member_id"
+            " WHERE c.member_id IN (%s) AND c.effect_type!='none' AND c.settled_at=''"
+            " ORDER BY c.id DESC LIMIT 60" % q, list(ids)):
+        out.append(_calib_card(c))
     for mid in ids:
         d = debt_balance(mid)
         if d > 0:
@@ -2566,29 +2585,200 @@ def _feed_calibrations(member_id=None):
                                 " ORDER BY id DESC LIMIT 1", (mid,))
             out.append({
                 "kind": "calibration", "kind_text": "校准",
-                "task_id": None, "member_id": mid, "who": member_name_of(mid),
+                "task_id": None, "calibration_id": None,
+                "member_id": mid, "who": member_name_of(mid),
                 "title": "还没结清的欠款", "std": "",
                 "state_key": "debt", "state_text": "待结清",
+                "effect_type": "debt", "effect_text": "欠 %g 星尘" % d,
+                "appeal_status": "none", "appeal_reason": "", "appeal_used": True,
+                "deadline": "", "hours_left": None,
                 "detail": "欠 %g 星尘。周期末先从星尘里抵扣，扣不完的滚一期就免掉，不会变成负数" % d,
                 "step": None, "steps": [], "percent": None, "text": "",
                 "rank": 4, "ts": last["ts"] if last else "",
             })
-        for c in db.query("SELECT * FROM calibration WHERE member_id=? AND effect_type='device'"
-                          " ORDER BY id DESC LIMIT 10", (mid,)):
-            left = (parse_day(c["ts"]) + timedelta(days=3) - parse_day(today())).days
-            if left < 0:
-                continue
-            out.append({
-                "kind": "calibration", "kind_text": "校准",
-                "task_id": None, "member_id": mid, "who": member_name_of(mid),
-                "title": "设备降级中", "std": "",
-                "state_key": "device", "state_text": "还剩 %d 天" % left,
-                "detail": "设备改到公共区域使用，3 天后自动恢复。" + (c["reason"] or ""),
-                "step": None, "steps": [],
-                "percent": int(round((3 - left) / 3.0 * 100)), "text": "第 %d / 3 天" % (3 - left),
-                "rank": 5, "ts": c["ts"],
-            })
     return out
+
+
+# ---------------------------------------------------------------------------
+# 校准卡：孩子认罚 / 申诉，家长裁决
+# ---------------------------------------------------------------------------
+def _calib_load(cid):
+    return db.query_one(
+        "SELECT c.*, m.name AS who FROM calibration c JOIN member m ON m.id=c.member_id"
+        " WHERE c.id=?", (cid,))
+
+
+def my_work(member_id):
+    """孩子手上还有哪些活，分两栏。
+
+    「归哪一栏」不看是任务、心愿还是校准，看这一步该谁动 —— 孩子扫一眼就
+    知道现在是自己干活，还是等爸爸妈妈。这也是 v45 之前那个毛病的修法：
+    心愿一到「够了，等爸爸妈妈给你」就从列表里消失，最该被看见的那一步
+    两头都看不到。
+    """
+    settle_due_calibrations()
+    archive_due_tasks()
+    rows = _feed_tasks(member_id) + _feed_wishes(member_id) + _feed_calibrations(member_id)
+    doing, waiting = [], []
+    for x in rows:
+        (waiting if x.get("rank", 9) <= 1 else doing).append(x)
+    for lst in (doing, waiting):
+        lst.sort(key=lambda x: x.get("ts") or "", reverse=True)
+        lst.sort(key=lambda x: x.get("rank", 9))
+    return {"doing": doing, "waiting": waiting,
+            "counts": {"doing": len(doing), "waiting": len(waiting)},
+            "total": len(rows)}
+
+
+def ack_calibration(calibration_id, member_id):
+    """孩子点了「知道了」。认了，这条校准了结，落进他的任务记录。"""
+    settle_due_calibrations()
+    c = _calib_load(calibration_id)
+    if not c:
+        return {"ok": False, "msg": "这条校准不存在"}
+    if c["member_id"] != member_id:
+        return {"ok": False, "msg": "这不是记在你名下的"}
+    if c["settled_at"]:
+        return {"ok": False, "msg": "这条已经结过了"}
+    db.execute("UPDATE calibration SET settled_at=?, settle_kind='ack' WHERE id=?",
+               (now(), calibration_id))
+    return {"ok": True}
+
+
+def submit_calibration_appeal(calibration_id, member_id, reason):
+    """孩子提交申诉。一次机会，48 小时内有效。
+
+    申诉不先撤回已经扣掉的东西 —— 那笔账在家长点头之前照旧挂着，同意之后
+    才一次性返还（见 decide_calibration_appeal）。这样「申诉中」这个状态
+    任何时候都能说清账上是什么样，扣一半留一半会算不清。
+    """
+    settle_due_calibrations()
+    reason = (reason or "").strip()
+    if not reason:
+        return {"ok": False, "msg": "写一句理由，爸爸妈妈才知道你想说什么"}
+    if len(reason) > 200:
+        return {"ok": False, "msg": "理由写不下这么多，200 字以内"}
+    c = _calib_load(calibration_id)
+    if not c:
+        return {"ok": False, "msg": "这条校准不存在"}
+    if c["member_id"] != member_id:
+        return {"ok": False, "msg": "这不是记在你名下的"}
+    if c["settled_at"]:
+        return {"ok": False, "msg": "这条已经结过了，改不了"}
+    if (c["appeal_status"] or "none") != "none":
+        return {"ok": False, "msg": "申诉只有一次机会，这条已经用过了"}
+    if not (c["due_at"] or "").strip():
+        return {"ok": False, "msg": "这条不在申诉期内"}
+    db.execute("UPDATE calibration SET appeal_status='pending', appeal_reason=?, appeal_at=?"
+               " WHERE id=?", (reason, now(), calibration_id))
+    push_notify(None, "calibration_appeal", "有一条申诉等你裁",
+                "%s 对「%s」提了申诉" % (c["who"], c["reason"]))
+    return {"ok": True, "appeal_status": "pending"}
+
+
+def _refund_calibration(c, operator_id):
+    """把这次校准扣掉的还回去，返回一句人话。
+
+    逐项还原，读的是 effect_json（当初扣的时候那一份）：星尘加回、欠款勾掉、
+    券加回、券欠账抹掉、分钟还回去，挂着的那件修复任务一并撤掉。
+
+    许愿池里那笔罚款不动。池子回答的是「罚的钱去哪了」，退回来会跟已经达成
+    或已经兑换的目标打架；这笔钱按原样留在池子里，只把星尘还给孩子。
+    """
+    try:
+        eff = json.loads(c["effect_json"] or "{}")
+    except (TypeError, ValueError):
+        eff = {}
+    t = c["effect_type"] or ""
+    mid = c["member_id"]
+    done = []
+    if t == "fine":
+        back = float(eff.get("kept") or 0)
+        debt = float(eff.get("debt") or 0)
+        if back > 0:
+            add_ledger(mid, "appeal_refund", stardust=back, operator_id=operator_id,
+                       ref_type="calibration", ref_id=c["id"],
+                       note="申诉通过，退回罚款星尘 %g" % back)
+            done.append("退回星尘 %g" % back)
+        if debt > 0:
+            add_ledger(mid, "appeal_refund", debt=-debt, operator_id=operator_id,
+                       ref_type="calibration", ref_id=c["id"],
+                       note="申诉通过，%g 星尘的欠款勾掉" % debt)
+            done.append("欠款 %g 星尘不用还了" % debt)
+    elif t == "ticket_min":
+        whole = int(eff.get("tickets") or 0)
+        frac = float(eff.get("minutes") or 0)
+        debt = int(eff.get("ticket_debt") or 0)
+        fun = item_by_code(FUN_CODE)
+        if whole > 0 and fun:
+            grant_item(mid, fun["id"], whole, source="refund", operator_id=operator_id,
+                       ref_type="calibration", ref_id=c["id"], auto_fragment=False,
+                       note="申诉通过，退回娱乐券 %d 张" % whole)
+            done.append("退回娱乐券 %d 张" % whole)
+        if debt > 0:
+            add_ledger(mid, "appeal_refund", ticket=debt, operator_id=operator_id,
+                       ref_type="calibration", ref_id=c["id"],
+                       note="申诉通过，%d 张券的欠账抹掉" % debt)
+            done.append("券欠账 %d 张抹掉" % debt)
+        if frac > 0:
+            add_ledger(mid, "appeal_refund", day=today(), minutes=frac, operator_id=operator_id,
+                       ref_type="calibration", ref_id=c["id"],
+                       note="申诉通过，退回 %g 分钟" % frac)
+            done.append("退回 %g 分钟" % frac)
+    elif t == "task":
+        tid = eff.get("task_id")
+        if tid:
+            row = db.query_one("SELECT status FROM task WHERE id=?", (tid,))
+            if row and row["status"] in ("pending", "claimed", "submitted"):
+                db.execute("UPDATE task SET status='archived', archived_at=? WHERE id=?",
+                           (now(), tid))
+                done.append("那件补做的活也不用做了")
+    elif t == "device":
+        done.append("设备可以放回原处用")
+    return {"items": done, "text": "；".join(done) if done else "这条本来就没扣下什么"}
+
+
+def decide_calibration_appeal(calibration_id, granted, operator_id):
+    """家长裁决。同意就把这次扣的还回去，不同意就让孩子认了。"""
+    if not is_judge(operator_id):
+        return {"ok": False, "msg": JUDGE_MSG}
+    settle_due_calibrations()
+    c = _calib_load(calibration_id)
+    if not c:
+        return {"ok": False, "msg": "这条校准不存在"}
+    if (c["appeal_status"] or "none") != "pending":
+        return {"ok": False, "msg": "这条已经不在申诉中了"}
+    if c["settled_at"]:
+        return {"ok": False, "msg": "这条已经结过了"}
+    if granted:
+        refund = _refund_calibration(c, operator_id)
+        db.execute("UPDATE calibration SET appeal_status='granted', appeal_by=?, decided_at=?,"
+                   " settled_at=?, settle_kind='granted' WHERE id=?",
+                   (operator_id, now(), now(), calibration_id))
+        push_notify(c["member_id"], "calibration_appeal_ok", "申诉通过了",
+                    "「%s」这次不算，%s" % (c["reason"], refund["text"]))
+        return {"ok": True, "granted": True, "refund": refund}
+    db.execute("UPDATE calibration SET appeal_status='rejected', appeal_by=?, decided_at=?"
+               " WHERE id=?", (operator_id, now(), calibration_id))
+    push_notify(c["member_id"], "calibration_appeal_no", "申诉没通过",
+                "「%s」这次照旧，点一下「知道了」结掉它" % c["reason"])
+    return {"ok": True, "granted": False}
+
+
+def calibration_appeals():
+    """等家长裁的申诉。带着孩子的原话和这次扣了什么，裁决时不用再翻一遍。"""
+    settle_due_calibrations()
+    rows = db.query(
+        "SELECT c.*, m.name AS who FROM calibration c JOIN member m ON m.id=c.member_id"
+        " WHERE c.appeal_status='pending' AND c.settled_at=''"
+        " ORDER BY c.appeal_at LIMIT 50")
+    out = []
+    for c in rows:
+        d = _calib_card(c)
+        d["appeal_at"] = c["appeal_at"] or ""
+        d["level"] = c["level"]
+        out.append(d)
+    return {"items": out, "total": len(out)}
 
 
 def _feed_recent(member_id=None, limit=6):
@@ -2678,6 +2868,7 @@ _KIND_GROUP = {
     "carryover": "given", "cash_bonus": "given", "holiday_delay": "given",
     "explore": "judge", "daily_score": "judge", "fine": "judge",
     "adjust": "judge", "correction": "judge", "test": "judge",
+    "appeal_refund": "judge",
     "expire_refund": "system", "season_close": "system",
 }
 
@@ -3100,7 +3291,10 @@ def pulse(member_id=None, is_parent=False):
             _mx("SELECT MAX(COALESCE(revised_at, created_at)) v"
                 " FROM score_entry WHERE member_id=?", (mid,)),
             _mx("SELECT MAX(id) v FROM task WHERE assignee_id=?", (mid,)),
-            _mx("SELECT MAX(id) v FROM calibration WHERE member_id=?", (mid,)),
+            # 校准卡的消息签名不能只看 id：申诉、裁决、超时都是 UPDATE，
+            # id 不动，只看 id 的话孩子那头永远等不到刷新。
+            _mx("SELECT MAX(COALESCE(decided_at, appeal_at, settled_at, ts, '')) v"
+                " FROM calibration WHERE member_id=?", (mid,)),
             _mx("SELECT MAX(id) v FROM wish WHERE member_id=?", (mid,)),
             _mx("SELECT MAX(id) v FROM box_open WHERE member_id=?", (mid,)),
         ],
@@ -3122,7 +3316,7 @@ def pulse(member_id=None, is_parent=False):
 
 
 def todo_counts():
-    """家长端待办的七个数（唯一来源）。
+    """家长端待办的那几个数（唯一来源）。
 
     首页铃铛角标、首页那张「待审核」卡、审核页顶上的计数胶囊、心跳签名，
     全读这一份，不许在别处再数一遍 —— 数两遍迟早对不上。
@@ -3143,9 +3337,16 @@ def todo_counts():
         "SELECT COUNT(*) c FROM card_redeem WHERE status='pending'")["c"]
     pending_wish = db.query_one(
         "SELECT COUNT(*) c FROM wish WHERE status='wished'")["c"]
+    # 等裁的申诉（v45）：孩子递了话上来，家长不点它就永远停在那儿。
+    # 先惰性了结一遍过点的，免得把已经超时的算进待办。
+    settle_due_calibrations()
+    pending_appeal = db.query_one(
+        "SELECT COUNT(*) c FROM calibration WHERE appeal_status='pending'"
+        " AND settled_at=''")["c"]
     return {"tasks": pending_tasks, "overtime": pending_ot, "help": pending_help,
             "settings": pending_set, "tickets": pending_ticket, "cards": pending_card,
-            "cash": pending_cash_count(), "wishes": pending_wish}
+            "cash": pending_cash_count(), "wishes": pending_wish,
+            "appeals": pending_appeal}
 
 
 # ---------------------------------------------------------------------------
@@ -4747,6 +4948,131 @@ def apply_ticket_debt(member_id, operator_id=None, gross=0):
 # ---------------------------------------------------------------------------
 # 校准（三层）
 # ---------------------------------------------------------------------------
+# 校准卡（v45）：每条有后果的校准都要孩子回话
+#
+# 校准一直只在家长端记一笔。孩子那头的表现是：修复任务还能在「任务记录」里
+# 看到一行「修复」，罚款和扣券连那一行都没有 —— 星尘少了、券少了，他找不到
+# 任何一句话说明为什么。这一节补的就是那句「凭什么」，顺带给他一次说话的机会。
+CALIB_APPEAL_HOURS = 48
+
+
+def _calib_due_at(hours=None):
+    """认罚期限。默认 48 小时，到点了按「知道了」了结。"""
+    h = CALIB_APPEAL_HOURS if hours is None else float(hours)
+    if h <= 0:
+        return ""
+    return (_dtnow() + timedelta(hours=h)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _calib_hours_left(c):
+    """离到点还剩几小时，负数表示已经过点了。没写期限的返回 None。"""
+    if not (c["due_at"] or "").strip():
+        return None
+    try:
+        d = datetime.strptime(str(c["due_at"])[:19], "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+    return round((d - _dtnow()).total_seconds() / 3600.0, 1)
+
+
+def _calib_effect_text(c):
+    """这次扣了什么，一句话。读的是 effect_json，和当初扣的时候同一份。"""
+    try:
+        eff = json.loads(c["effect_json"] or "{}")
+    except (TypeError, ValueError):
+        eff = {}
+    t = c["effect_type"] or ""
+    if t == "fine":
+        sd = float(eff.get("stardust") or 0)
+        cash = float(eff.get("cash") or 0)
+        debt = float(eff.get("debt") or 0)
+        s = ("扣星尘 %g" % sd) if sd else "罚款"
+        if cash:
+            s += "（%g 元）" % cash
+        if debt:
+            s += "，另有 %g 星尘记成欠款" % debt
+        return s
+    if t == "ticket_min":
+        whole = int(eff.get("tickets") or 0)
+        frac = float(eff.get("minutes") or 0)
+        debt = int(eff.get("ticket_debt") or 0)
+        parts = []
+        if whole:
+            parts.append("扣 %d 张娱乐券" % whole)
+        if frac:
+            parts.append("扣 %g 分钟" % frac)
+        if debt:
+            parts.append("%d 张一时扣不动，先记着" % debt)
+        return "，".join(parts) or "扣娱乐时间"
+    if t == "task":
+        return "要补做一件事"
+    if t == "device":
+        return "设备改到公共区域用，3 天后恢复"
+    return "记了一笔"
+
+
+def _calib_task_id(c):
+    try:
+        return json.loads(c["effect_json"] or "{}").get("task_id")
+    except (TypeError, ValueError):
+        return None
+
+
+def _calib_state(c):
+    """校准卡走到哪一步。球在谁手上决定它归「在做」还是「等爸爸妈妈确认」。"""
+    a = c["appeal_status"] or "none"
+    if a == "pending":
+        return "appeal", "申诉中 · 等爸爸妈妈看", 0
+    if a == "rejected":
+        return "rejected", "申诉没过，点「知道了」结掉", 2
+    return "pending", "等你回话", 2
+
+
+def settle_due_calibrations():
+    """过点的校准卡自动按「知道了」了结。
+
+    惰性做，不挂定时器：这台机器跑在别人家的 NAS 上，多一个常驻线程就多
+    一处半夜出错的地方。读写校准的地方都先过一遍这个函数。
+
+    申诉还挂着的（pending）同时标成 expired —— 那张卡已经按认罚结了，
+    家长事后打开裁决页还能看见它，但不该再让他点「同意」去改一笔旧账。
+    """
+    db.execute(
+        "UPDATE calibration SET settled_at=due_at, settle_kind='timeout',"
+        " appeal_status=CASE WHEN appeal_status='pending' THEN 'expired'"
+        "                     ELSE appeal_status END"
+        " WHERE settled_at='' AND due_at!='' AND due_at<?", (now(),))
+
+
+def _calib_card(c):
+    """一条校准卡。孩子端要能回答三个问题：哪件事、为什么、扣了什么。"""
+    state_key, state_text, rank = _calib_state(c)
+    left = _calib_hours_left(c)
+    effect_text = _calib_effect_text(c)
+    if (c["effect_type"] or "") == "device":
+        # 降级是按天走的，卡上要说清还剩几天 —— 只写「3 天后恢复」的话，
+        # 第三天打开还这么写，孩子会以为那个数从来不动。
+        gone = (parse_day(today()) - parse_day(c["ts"])).days
+        effect_text = "设备改到公共区域用，还有 %d 天恢复" % max(0, 3 - gone)
+    return {
+        "kind": "calibration", "kind_text": "校准",
+        "calibration_id": c["id"], "task_id": _calib_task_id(c),
+        "member_id": c["member_id"], "who": c["who"],
+        "title": c["reason"], "std": "",
+        "effect_type": c["effect_type"] or "",
+        "effect_text": effect_text,
+        "appeal_status": c["appeal_status"] or "none",
+        "appeal_reason": c["appeal_reason"] or "",
+        "appeal_used": (c["appeal_status"] or "none") != "none",
+        "deadline": c["due_at"] or "",
+        "hours_left": left,
+        "state_key": state_key, "state_text": state_text,
+        "detail": effect_text,
+        "step": None, "steps": [], "percent": None, "text": "",
+        "rank": rank, "ts": c["ts"],
+    }
+
+
 def add_calibration(member_id, level, reason, *, dimension_code=None, effect_type="none",
                     amount=0, template=None, operator_id=None, auto_task=True,
                     repair_std=None):
@@ -4850,11 +5176,18 @@ def add_calibration(member_id, level, reason, *, dimension_code=None, effect_typ
     elif effect_type == "device":
         effect = {"detail": "设备改到公共区域使用，3 天后自动恢复"}
 
+    # 只记下来那种（effect_type='none'）不给孩子发卡：他没有可回的话，
+    # 一张「你被记了一笔」的卡就是记账式敲打。直接当已了结，不进他的待办。
+    ts_now = now()
+    send_card = effect_type != "none"
     cid = db.execute(
         "INSERT INTO calibration (member_id, level, dimension_id, reason, effect_type, effect_json,"
-        " amount, operator_id, ts) VALUES (?,?,?,?,?,?,?,?,?)",
+        " amount, operator_id, ts, due_at, settled_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (member_id, level, dim_id, reason, effect_type,
-         json.dumps(effect, ensure_ascii=False), amount, operator_id, now()))
+         json.dumps(effect, ensure_ascii=False), amount, operator_id, ts_now,
+         _calib_due_at() if send_card else "",
+         "" if send_card else ts_now))
 
     if task_id:
         db.execute("UPDATE task SET calibration_id=? WHERE id=?", (cid, task_id))
@@ -6738,7 +7071,10 @@ def verify_help(request_id, operator_id=None, approved=True):
 # 有效期：续期 / 到期折半返还 / 假期顺延
 # ---------------------------------------------------------------------------
 def expiring_soon(member_id, days=None):
-    days = days or int(db.cfg("notify.card_expire_days", 14))
+    # v45：改读 push.expire_warn_days。原来这里读 notify.card_expire_days、
+    # 手机推送那边读 push.expire_warn_days，两个旋钮管同一件事，家长改一个
+    # 只动一半（网页提醒条变了、推送没变，或者反过来）。现在统一到一个。
+    days = days or int(db.cfg("push.expire_warn_days", 14))
     limit = fmt(parse_day(today()) + timedelta(days=days))
     return db.query(
         "SELECT h.*, i.name, i.rarity, i.price, i.shelf_life_days, i.renew_cost_pct, i.renew_times,"
@@ -6761,7 +7097,7 @@ def renew_card(holding_id, operator_id=None, owner_id=None):
         return {"ok": False, "msg": "这张卡已经续过一次了"}
     # 只能在提醒期内续（剩 N 天以内）。随时能续等于没有有效期，
     # 而且会把「什么时候用掉它」这个决策直接抹掉。
-    notice = int(db.cfg("notify.card_expire_days", 14))
+    notice = int(db.cfg("push.expire_warn_days", 14))
     if h["expires_at"]:
         left = (parse_day(h["expires_at"]) - parse_day(today())).days
         if left > notice:

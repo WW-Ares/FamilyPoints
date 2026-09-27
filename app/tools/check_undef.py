@@ -27,6 +27,13 @@
 # 类方法 / 对象字面量里的简写方法不认，块级作用域（if / for 的 {}）也不算。
 # 认不出的地方一律按**更外层**算 —— 宁可漏报，也不误报：
 # 误报会让这条自查链变噪声，噪声一多就没人看了，工具等于没有。
+#
+# 2026-09-27 再补一项：**整块被涂掉的区间**。app.js 里有一段块注释忘了写收尾，
+# 从「一个箱子里面到底有什么」一路吃到 canReroll 那段的结尾，中间 55 行连带
+# confirmBuyBox / showBoxResult 两个函数定义一起消失。node --check 照样过
+# （注释本身是合法语法），浏览器也不报错，症状只有一个：孩子端点「直购宝箱」，
+# 界面一动不动。上面那两条规则查不出来 —— 被吃掉的那段里连「引用」都没了。
+# 注释不该一次盖住二十行以上，超过就报出来。
 import re, sys, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +54,27 @@ _REGEX_KW = {'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete',
 
 _IDENT_CH = re.compile(r'[A-Za-z0-9_$]')
 _IDENT = r'[A-Za-z_$][\w$]*'
+
+# 一次涂掉多少行才算「像被注释吃了」。正常注释一条盖不住二十行。
+SWALLOW_MIN = 20
+
+
+def swallowed_spans(raw, code):
+    """raw 与涂过噪声的 code 逐行比，找出「原本有字、涂完变空」的连续段（>= SWALLOW_MIN 行）。
+
+    返回 [(起始行, 结束行)]，行号从 1 起。
+    """
+    spans, cur = [], []
+    for i, (a, b) in enumerate(zip(raw.split('\n'), code.split('\n'))):
+        if a.strip() and not b.strip():
+            cur.append(i + 1)
+        else:
+            if len(cur) >= SWALLOW_MIN:
+                spans.append((cur[0], cur[-1]))
+            cur = []
+    if len(cur) >= SWALLOW_MIN:
+        spans.append((cur[0], cur[-1]))
+    return spans
 
 
 def _mask(chunk):
@@ -437,6 +465,12 @@ function bindTaskPage(d) {
 '''
 
 
+# 忘了收尾的块注释：从第一行一路吃到文件末，二十多行连同那个函数一起没了。
+# 这种形态下 analyze() 什么都查不出来（引用和声明一起消失），只能靠行数判。
+_UNCLOSED = '/* 这段注释忘了写收尾\n' + ''.join(
+    '   还有第 %d 行说明\n' % i for i in range(1, 22)) + 'function gone() { return 1; }\n'
+
+
 def selftest():
     """改这个工具的人先跑它。夹具就是当年的那个坏：两个函数各有一个 d，
     第二个函数引了第一个函数的局部量 submitted。"""
@@ -452,10 +486,18 @@ def selftest():
     elif un:
         bad = 1
         print('[自测失败] 假名夹具不该有「未声明」：%s' % un)
+    if swallowed_spans(_CLEAN, strip_noise(_CLEAN)) or \
+       swallowed_spans(_BUG, strip_noise(_BUG)):
+        bad = 1
+        print('[自测失败] 干净样本被判成「被注释吃掉」')
+    if not swallowed_spans(_UNCLOSED, strip_noise(_UNCLOSED)):
+        bad = 1
+        print('[自测失败] 忘了收尾的夹具没被报成「被注释吃掉」')
     if bad:
         print('自测没过。')
         return 1
-    print('自测通过：干净样本 0 候选，假名夹具报出了 submitted。')
+    print('自测通过：干净样本 0 候选，假名夹具报出了 submitted，'
+          '忘了收尾的注释被报成吞块。')
     return 0
 
 
@@ -470,11 +512,21 @@ def main():
         else:
             print('跳过（文件不在）：%s' % fn)
     undeclared, cross = analyze(raw)
+    eats = []
+    for fn, txt in raw.items():
+        for a, b in swallowed_spans(txt, strip_noise(txt)):
+            eats.append((fn, a, b))
 
-    if not undeclared and not cross:
-        print('OK：没有发现未声明的标识符，也没有跨函数误用的同名局部量')
+    if not undeclared and not cross and not eats:
+        print('OK：没有发现未声明的标识符，没有跨函数误用的同名局部量，'
+              '也没有被注释整块吃掉的区间')
         return 0
 
+    if eats:
+        print('整块被涂掉的连续区间（>= %d 行）—— 块注释多半忘了写收尾，后面的代码跟着一起消失：'
+              % SWALLOW_MIN)
+        for fn, a, b in sorted(eats):
+            print('  %-16s %4d–%-4d（%d 行）' % (fn, a, b, b - a + 1))
     if cross:
         print('跨函数误用同名局部量（声明在别的函数里，此处根本看不见）：')
         for name in sorted(cross, key=lambda k: -len(cross[k]['uses'])):

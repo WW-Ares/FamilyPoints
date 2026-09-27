@@ -284,6 +284,17 @@ def main():
                     r["request_id"]))
     print("  券核销待办: %s" % r.get("msg", "ok"))
 
+    #    再留一条「要人办」的券（陪伴券）。这一类核销时 minutes 存 0，不进
+    #    「正在玩」，审核页那张卡和确认弹层走的是另一段文案（批了只是答应，
+    #    办完还得回兑现清单点一下）。演示库里得有一条能看见这段。
+    r2 = E.request_ticket(kids[1]["id"], E.item_by_code("ticket_company")["id"], 1,
+                          note="陪我拼一次乐高")
+    if r2.get("request_id"):
+        db.execute("UPDATE ticket_request SET expire_at=? WHERE id=?",
+                   ((E.parse_day(today) + timedelta(days=30)).strftime("%Y-%m-%d") + " 23:59:59",
+                    r2["request_id"]))
+    print("  陪伴券待办: %s" % r2.get("msg", "ok"))
+
     # 9c) 一条「正在玩」的记录（v27）。演示库是个静态快照，翻页面的时候
     #     未必正好有人在使用券，所以这里单开一条，拿**真实此刻**当锚点：
     #     这一刻往前 8 分钟开始、往后 22 分钟结束。灌完数据随手打开页面，
@@ -312,6 +323,25 @@ def main():
     E.add_calibration(kids[0]["id"], 3, "说好睡前刷牙，昨天和今天都没刷",
                       dimension_code="clean", effect_type="fine", operator_id=dad["id"])
     print("  校准：秩序（扣 15 分钟）/ 洁净（扣星尘）")
+
+    # 9d-v45) 校准卡的四种状态都要有样品，否则新版这几个界面在演示库里是空的：
+    #     「等你回话」上面那条已经在了；这里补申诉的两种 —— 一条正挂着等家长
+    #     裁决（孩子端在「等爸爸妈妈确认」，家长端在「待审核」那张申诉卡），
+    #     一条已经被驳回（孩子端还在「在做」，只等他点「知道了」结掉）。
+    #     申诉必须由孩子发起、家长裁决，所以走真引擎，不直接改状态。
+    _cal = db.query("SELECT id FROM calibration WHERE member_id=? AND settled_at=''"
+                    " AND effect_type!='none' ORDER BY id", (kids[0]["id"],))
+    if len(_cal) >= 2:
+        _ap = E.submit_calibration_appeal(_cal[0]["id"], kids[0]["id"],
+                                          "那天其实做到了，妈妈可能没看到")
+        # 再一条：申诉被驳回，卡回到他手上。「申诉没过」和「没人理」在界面上
+        # 是两句话（一句催他点「知道了」，一句只是挂着），各留一条才分得出来。
+        _rj = E.submit_calibration_appeal(_cal[1]["id"], kids[0]["id"],
+                                          "我不是故意的，下次肯定记住")
+        if _rj.get("ok"):
+            E.decide_calibration_appeal(_cal[1]["id"], False, dad["id"])
+        print("  校准申诉：申诉中 %s / 被驳回 %s"
+              % ("1" if _ap.get("ok") else "0", "1" if _rj.get("ok") else "0"))
 
     # 9e) v29 三件在界面上非有数据不可看的事：
     #     ① 孩子自己按的那些按钮，日志里写的是他自己的名字（不是「家长」）；

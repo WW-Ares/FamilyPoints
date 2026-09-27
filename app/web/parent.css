@@ -150,21 +150,6 @@ body.grown .badge-pilot {
   border-radius: var(--r-pill); padding: 2px 8px; line-height: 1.4;
   flex: none;
 }
-body.grown .bell {
-  position: relative; width: 38px; height: 38px; flex: none;
-  display: flex; align-items: center; justify-content: center;
-  background: #fff; border: 1px solid var(--card-line); border-radius: 14px;
-  box-shadow: var(--sh-card); cursor: pointer; color: var(--ink);
-}
-body.grown .bell .ico { width: calc(20 * var(--u)); height: calc(20 * var(--u)); }
-body.grown .bell .dot {
-  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px;
-  border-radius: var(--r-pill); background: var(--orange-deep); color: #fff;
-  font-size: calc(11 * var(--u)); font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  border: 2px solid var(--bg-mid); padding: 0 4px;
-}
-
 /* ------------------------------------------------------------------ 卡片 */
 body.grown .card {
   background: var(--card); border: 2px solid var(--card-line);
@@ -197,6 +182,11 @@ body.grown .sec-title { font-size: calc(13 * var(--u)); font-weight: 700; color:
   display: flex; align-items: center; gap: 7px; }
 body.grown .sec-link { font-size: calc(10.5 * var(--u)); font-weight: 700; color: var(--orange-deep); cursor: pointer; white-space: nowrap; }
 body.grown .sec-count { font-size: calc(10.5 * var(--u)); color: var(--ink-3); }
+/* 「等你点头」里的小栏标题（v45）。比 .sec-title 轻一级 —— 它们是同一区里的
+   几个小组，不该跟「兑现清单」那种整页分区标题同重。 */
+body.grown .sec-mini { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+body.grown .sec-mini-t { font-size: calc(11.5 * var(--u)); font-weight: 700; color: var(--ink-2); }
+body.grown .sec-mini-c { font-size: calc(10.5 * var(--u)); color: var(--ink-3); }
 body.grown .stack { display: flex; flex-direction: column; gap: 10px; }
 body.grown .stack--sm { gap: 8px; }
 body.grown .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -600,12 +590,50 @@ body.grown .notice {
   background: var(--warn-soft); color: #A2601F;
 }
 body.grown .notice.info { background: rgba(255,138,61,.12); color: var(--orange-deep); }
-/* 「回执」那条：它不是警告，是一条承诺 —— 告诉家长他刚才那一下在孩子
-   那边长什么样。所以走成功色，别用那条橙色的提醒条。 */
-body.grown .notice.ok { background: #EAF6EE; color: #2F7A50; }
 body.grown .notice b { font-weight: 700; }
 body.grown .no-t { color: var(--warn); }
 body.grown .ok-t { color: #2F8A5F; }
+
+/* ------------------------------------------------------------------ 总览 · 今天要办的事 */
+/* 两张卡并排，状态词压在实心橙带上（v1.17 方案 C）。橙带用 --orange 而不是
+   更深的 --orange-deep：白字压深橙发闷，压主橙正好。底下仍是一张白卡，
+   跟「孩子那一周」那张连成一套，两块的轻重能一眼分开。 */
+body.grown .ask-row { display: flex; gap: 10px; }
+body.grown .ask-card {
+  flex: 1; min-width: 0; cursor: pointer; background: #fff;
+  border: 2px solid var(--card-line); border-radius: var(--r-md);
+  overflow: hidden; box-shadow: var(--sh-card);
+}
+body.grown .ask-band {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 8px 12px; background: var(--orange); color: #fff;
+}
+body.grown .ask-band-l { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+body.grown .ask-band-l .ico { flex: none; display: block; }
+body.grown .ask-band-l span { font-size: calc(11 * var(--u)); font-weight: 600; }
+body.grown .ask-band b { font-size: calc(13 * var(--u)); font-weight: 800; white-space: nowrap; }
+body.grown .ask-body {
+  padding: 10px 12px 11px; font-size: calc(10.5 * var(--u-sm));
+  color: var(--ink-2); line-height: 1.5;
+}
+
+/* 总览那张孩子卡的进度条。满格是本周期固定分满分，刻线是下一档的门槛 ——
+   两条线放在同一根轨上，家长才看得出「还差多少」。 */
+body.grown .home-bar {
+  position: relative; height: 8px; margin-top: 10px;
+  border-radius: var(--r-pill); background: var(--track); overflow: hidden;
+}
+body.grown .home-bar > i {
+  display: block; height: 100%; border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--orange), var(--orange-deep));
+}
+body.grown .home-mark {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: rgba(74,54,37,.38);
+}
+body.grown .home-bar-note {
+  margin-top: 6px; font-size: calc(10 * var(--u-sm)); color: var(--ink-2);
+}
 
 /* ------------------------------------------------------------------ 兼容旧类名 */
 /* 弹层里还有一批沿用旧标记的列表与格子（.item / .qa-cell / .metric 这些），

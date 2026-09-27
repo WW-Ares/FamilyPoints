@@ -1,5 +1,5 @@
 -- 家庭积分工程 · 数据库结构
--- 规则真值以最新的《项目当前开发文档》为准（当前 schema v44），结构变更都带 _migrate_vNN 迁移。
+-- 规则真值以最新的《项目当前开发文档》为准（当前 schema v45），结构变更都带 _migrate_vNN 迁移。
 --
 -- 两条贯穿全库的约定：
 --   1. 所有余额都由流水求和得出，不存冗余余额字段（项目原则 6）。
@@ -432,7 +432,17 @@ CREATE TABLE IF NOT EXISTS calibration (
   effect_json  TEXT    NOT NULL DEFAULT '{}',
   amount       REAL    NOT NULL DEFAULT 0,
   operator_id  INTEGER,
-  ts           TEXT    NOT NULL
+  ts           TEXT    NOT NULL,
+  -- v45 孩子端校准卡。原来校准只在家长端记一笔，孩子那头看不见；
+  -- 现在每条有后果的校准都是一张要孩子回话的卡。
+  due_at        TEXT    NOT NULL DEFAULT '',   -- 48 小时认罚期限，超时按「知道了」了结
+  settled_at    TEXT    NOT NULL DEFAULT '',   -- 空=还没了结，孩子端「在做」里躺着
+  settle_kind   TEXT    NOT NULL DEFAULT '',   -- ack 认了 | timeout 超时 | granted 申诉通过
+  appeal_status TEXT    NOT NULL DEFAULT 'none', -- none|pending|granted|rejected|expired
+  appeal_reason TEXT    NOT NULL DEFAULT '',   -- 孩子写的申诉理由，家长要看到原话
+  appeal_at     TEXT    NOT NULL DEFAULT '',
+  appeal_by     INTEGER,                       -- 同意/拒绝的那个人
+  decided_at    TEXT    NOT NULL DEFAULT ''
 );
 
 -- ---------------------------------------------------------------------------

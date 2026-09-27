@@ -284,22 +284,18 @@ SETTINGS = [
      "YYYY-MM-DD。这天（含）之前不算「忘打卡」：不补分、不罚星尘、不留日志 —— "
      "那几天这套系统还不存在。默认建库那天。从别处搬家过来时，把这里改成你想"
      "开始算账的那天。", 0, 0),
-    ("score.daily_full", 7, "int", "成员与打分", "每日固定满分",
-     "七个维度各 1 分，一周 49。改这里宝箱门槛要跟着重算。", 1, 0),
-    ("score.dimension_score", 1, "float", "成员与打分", "每维度分值",
-     "所有维度共用同一个分值。改后宝箱门槛需同步重算。", 2, 0),
+    # v45 撤掉 score.daily_full / score.dimension_score 两项：
+    # 后端满分一直是「七个维度分之和」算出来的，这两个旋钮只有规则说明页在读，
+    # 改了算分不变，只会让说明书印出一个错数字。规则页取不到会退回 7 / 1，
+    # 跟后端的真实值一致。见 HIDDEN_SETTINGS。
     # v13：家长已退出奖励循环，「家长账号的产出」这一项整条删除。
     # 家长没有每日 7 分、没有周期与宝箱，分数根本不在家长身上产生。
-    ("score.stardust_timing", "cycle_end", "text", "成员与打分", "星尘入账时点",
-     "cycle_end = 周期末一次性结算（默认）。周能量实时入账，星尘按本周固定分在结算日到账。", 4, 0),
     ("score.explore_enabled", True, "bool", "成员与打分", "额外加分（星探）", "开启后家长可随手发额外分。", 5, 0),
     ("score.explore_daily_cap", 2, "int", "成员与打分", "星探每日上限", "单位：分。", 6, 0),
     ("score.explore_weekly_cap", 7, "int", "成员与打分", "星探每周上限",
      "与任务发的周能量共用这 7 分，超出部分自动转星尘。", 7, 0),
     ("score.explore_default_kind", "stardust", "text", "成员与打分", "星探默认发放类型",
      "stardust（纯星尘，≤5）/ energy（纯周能量，≤1）/ both（≤3 星尘 + 1 分）。", 8, 0),
-    ("score.ui_mode", "all_full", "text", "成员与打分", "打分交互",
-     "all_full = 默认全满，点掉没做到的项，每天 0 到 3 次点击。", 9, 0),
     ("score.correct_window_hours", 24, "int", "成员与打分", "修正窗口", "单位：小时。", 10, 0),
     ("score.correct_flag_count", 3, "int", "成员与打分", "修正次数标记阈值",
      "同一条记录修正超过这个次数，在家长侧打标记，不给孩子看。", 11, 0),
@@ -321,10 +317,8 @@ SETTINGS = [
     # 见 RETIRED_SETTINGS。
 
     # 三、宝箱 ----------------------------------------------------------------
-    ("box.thresholds", [7, 14, 21, 28, 35, 42, 49], "list", "宝箱", "七档门槛",
-     "等于 1 天到 7 天满分。详细配置见宝箱档位表。", 1, 0),
-    ("box.card_from_tier", 4, "int", "宝箱", "高级件起点",
-     "从第 4 档（金箱，28 分）起必出 1 张卡。", 2, 0),
+    # v45 撤掉 box.thresholds / box.card_from_tier 两项：七档门槛与「几档起出卡」
+    # 的真值都在 box_tier 表里，这两个旋钮后端从来不读，改了箱子照旧。见 HIDDEN_SETTINGS。
     ("box.purchase_weekly_limit", 1, "int", "宝箱", "直购每周期次数",
      "直购不看本周成绩，随时可买，永远比打出来贵五成。", 3, 0),
     ("box.perfect_require_fixed_49", True, "bool", "宝箱", "完美箱要求固定分满 49",
@@ -375,15 +369,13 @@ SETTINGS = [
     # v30 删掉了 surprise_pack.enabled / price。开关一直是个假的：
     # 商店接口把值回显给前端，但全库没有任何购买实现，打开也不会有卡包出现。
     # 要么做出来，要么别摆在设置页 —— 家里选了后者。
-    ("double_week.stardust_full", 49, "int", "券与道具", "星尘双倍周满勤收益",
-     "单位：星尘。只翻每日固定分，星探、任务、随机件不翻倍。", 18, 0),
+    # v45 同理撤掉 double_week.stardust_full：双倍周那套后端从来没读过这个值，
+    # 改它只是给自己一个「调过了」的错觉。见 HIDDEN_SETTINGS。
 
     # 五、汇率与基金 ----------------------------------------------------------
     ("rate.stardust_to_cash", 0.5, "float", "汇率与基金", "星尘兑零花钱", "1 星尘 = 多少元。", 1, 0),
     ("cash.monthly_cap_stardust", 60, "int", "汇率与基金", "零花钱月度上限",
      "单位：星尘（= 30 元）。超出部分只能换券、卡、宝箱或投许愿池。", 2, 0),
-    ("pool.intake", "both", "text", "汇率与基金", "许愿池投入方式",
-     "fine = 只收罚款；selfpay = 只收主动投币；both = 两者都收（默认）。", 3, 0),
     ("rate.fixed_to_stardust", 1, "float", "汇率与基金", "固定分转星尘",
      "1 分每日固定分 = 多少星尘。默认 1，即每天满 7 分得 7 星尘。", 4, 0),
 
@@ -412,16 +404,15 @@ SETTINGS = [
          "撤的是一个还没被验证的判断，不是已发的奖励。", 23, 0),
     ("repair.auto_archive_hours", 48, "int", "校准与修复", "修复任务自动归档",
      "提交后这么久未处理视为完成，不进逾期。孩子的义务是「做」不是「等按钮」。", 6, 0),
-    ("repair.parent_enabled", True, "bool", "校准与修复", "家长修复任务",
-     "家长的流程、时限、退回规则与孩子完全一致，由孩子确认。", 7, 0),
     ("anti_escalation.threshold", 5, "int", "校准与修复", "反升级阈值",
      "一个月内达到这个次数（约当一周 2 次）触发技能缺口提示，不分事项、不打更重的罚。", 8, 0),
     ("anti_escalation.hint_cooldown_days", 90, "int", "校准与修复", "反升级提示冷却",
      "单位：天。这么久只弹一次提示，第二次换一句话，别把提醒做成唠叨。", 9, 0),
     # v44 撤掉 calib.ticket_min（单次扣减分钟）：默认改取「半张券」= 当天面值 ÷ 2，
     # 跟券面值走，不再有一个平行的固定分钟数说另一件事。
-    ("season.length_days", 90, "int", "校准与修复", "赛季长度",
-     "单位：天。一季到点自动推下一季；结束日撞上寒暑假会顺延。欠款与道具只在季末清一次。", 11, 0),
+    # v45 撤掉 season.length_days：赛季长度有两处入口（这里和「校准与钱」页的
+    # 赛季卡），两处都改得动同一个数，家长会以为自己改错了地方。只留赛季卡那处，
+    # 它旁边就写着「本季还剩几天」，改完立刻看得见影响。见 HIDDEN_SETTINGS。
 
     # 七、两套系统 ------------------------------------------------------------
     ("wish.max_active", 2, "int", "两套系统", "心愿单同时进行上限",
@@ -447,10 +438,11 @@ SETTINGS = [
     ("holiday.delay_window_after", 7, "int", "假期", "顺延落点（假期后）", "顺延到假期结束后这么多天。", 4, 0),
     ("holiday.delay_max_per_year", 2, "int", "假期", "每年顺延次数上限", "寒暑假各一次。", 5, 0),
 
-    # 九、通知 ----------------------------------------------------------------
-    ("notify.unscored_time", "20:00", "text", "通知", "未打分提醒", "发给家长。", 1, 0),
-    ("notify.card_expire_days", 14, "int", "通知", "卡片到期提前提醒", "单位：天。假期保护窗内不推。", 2, 0),
-    ("notify.repair_warn_hours", 12, "int", "通知", "修复任务逾期前提醒", "只发给家长。", 3, 0),
+    # 九、通知（v45 整组并进「通知与推送」）
+    # 原来这组三项：未打分提醒（跟 push.daily_score_at 重复）、卡片到期提前提醒
+    # （跟 push.expire_warn_days 重复，而且网页与推送各读一个，改一个只动一半）、
+    # 修复任务逾期前提醒（从来没人读）。整组并掉，设置页少一层同名分组。
+    # 见 HIDDEN_SETTINGS。
 
     # 十、运维与权限 ----------------------------------------------------------
     ("ops.snapshot_keep_days", 30, "int", "运维与权限", "快照保留天数", "每日自动快照。", 1, 0),
@@ -587,6 +579,67 @@ RETIRED_SETTINGS = [
     "cycle.debt_keep_minutes",
 ]
 
+# v45：从设置页撤下的项。判据只有一条 —— **改了没有效果**。分三种：
+#
+#   零读取  后端全库没有一处读它。真值都另有出处：七档门槛在 box_tier 表、
+#           每日满分在 day_score 里由七个维度分相加得出。「家长修复任务」
+#           这个开关尤其误导：它读起来像能关掉一条流程，实际后端一次都没查过。
+#   假旋钮  只有规则说明页在读，后端算分时不认。家长拧了它，分数一分不变，
+#           页面上那个数字却变了 —— 比没有这个旋钮更坏。
+#   重复    同一件事有两个旋钮，改一个只动一半（卡片到期提醒：网页提醒条读
+#           notify.card_expire_days、手机推送读 push.expire_warn_days；
+#           赛季长度：这里一个、「校准与钱」页的赛季卡一个）。
+#
+# 跟 RETIRED_SETTINGS 的区别是这里**不删库**：旧值原样留着（规则页还要读
+# daily_full / dimension_score 那两项做文案），只是不再灌进新库、也不再出现在
+# 设置页。前端取值走 pCfg(..., fallback)，取不到会退回默认值，页面不会白。
+HIDDEN_SETTINGS = [
+    # 零读取
+    "score.stardust_timing", "score.ui_mode",
+    "box.thresholds", "box.card_from_tier",
+    "double_week.stardust_full", "pool.intake",
+    "repair.parent_enabled",
+    "notify.unscored_time", "notify.repair_warn_hours",
+    # 假旋钮
+    "score.daily_full", "score.dimension_score",
+    # 重复
+    "notify.card_expire_days", "season.length_days",
+]
+
+# v45：枚举型设置项的可选值。
+#
+# 这一类以前也是「点开弹层手输」：星探发放类型要手打 stardust / energy / both，
+# 任务奖励卡上限要手打 rare 这种英文串。打错一个字母，POST /api/settings 照样
+# 落库，后端读不到认识的值就静默走默认分支 —— 家长那头显示「已更新」，
+# 功能一点没变，这种「改了没反应」最难查。前端按这里渲染成选项，后端拿它校验，
+# 一份定义两处用。
+SETTING_OPTIONS = {
+    "score.explore_default_kind": [
+        ("stardust", "只给星尘（最多 5）"),
+        ("energy", "只给周能量（最多 1 分）"),
+        ("both", "星尘 + 周能量（最多 3 星尘、1 分）"),
+    ],
+    "task.card_max_rarity": [
+        ("common", "普通"),
+        ("rare", "稀有"),
+        ("legend", "传说"),
+        ("diamond", "钻石"),
+    ],
+}
+
+# v45：格式受控的文本项。time 是 HH:MM，date 是 YYYY-MM-DD。
+# 同样是「写错了后端不吭声」那一类：curfew 写成 9:60，入库后当天所有券
+# 都核销不了，而页面上那个值看着还挺正常。
+SETTING_FMT = {
+    "family.start_date": "date",
+    "ticket.evening_after": "time",
+    "ticket.curfew_school": "time",
+    "ticket.curfew_weekend": "time",
+    "push.quiet_start": "time",
+    "push.quiet_end": "time",
+    "push.daily_score_at": "time",
+}
+
 # ---------------------------------------------------------------------------
 # 许愿池目标模板（v30）
 # ---------------------------------------------------------------------------
@@ -604,8 +657,8 @@ POOL_TEMPLATES = [
 
 # 库结构版本。迁移链、pack_release.py 的打包名、verify_devdoc.py 的判据都认它，
 # 改它等于宣告库结构变了，要配套写 _migrate_vNN。跟对外叫的版本号是两码事。
-SCHEMA_VERSION = "44"
+SCHEMA_VERSION = "45"
 
 # 对外版本号。v1.2 是本项目的第一版对外发布，此前 v3–v39 的内部编号作废。
 # 登录页与家长端「我的」页脚显示的是它，不是 SCHEMA_VERSION。
-APP_VERSION = "1.16"
+APP_VERSION = "1.17"

@@ -172,3 +172,49 @@ def dims(ctx):
     """
     mid = ctx.target_child()
     return E.dims_report(mid, days=_days(ctx, 365))
+
+
+# ---------------------------------------------------------------------------
+# 孩子手上的活（v45）：任务 / 心愿 / 校准，按「球在谁手上」分两栏
+# ---------------------------------------------------------------------------
+@route("GET", "/api/my/work")
+def my_work(ctx):
+    """孩子手上还有哪些活。分「在做」和「等爸爸妈妈确认」两栏。
+
+    分栏规则放在后端：球在谁手上决定归哪栏，前端不再自己按 kind 分 ——
+    两处各写一份迟早会打架，孩子看到的就是「这一栏少了一条」。
+    """
+    me = ctx.as_member()
+    if me["role"] != "child":
+        raise ApiError("这条只给孩子看自己的活", 403)
+    return E.my_work(me["id"])
+
+
+@route("POST", "/api/my/calibration/:id/ack")
+def ack_calibration(ctx):
+    """孩子点「知道了」：认下这条校准，它了结，落进任务记录。"""
+    me = ctx.as_member()
+    if me["role"] != "child":
+        raise ApiError("这条只给孩子用", 403)
+    r = E.ack_calibration(ctx.id_path("id", "校准 id"), me["id"])
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "没记上"))
+    return r
+
+
+@route("POST", "/api/my/calibration/:id/appeal")
+def submit_calibration_appeal(ctx):
+    """孩子提交申诉。一次机会，写了理由才算数。
+
+    路径带 my/ 前缀是为了跟家长端那条裁决接口分开：两条都是
+    /api/calibration/:id/appeal 的话，路由按注册顺序取第一个命中的，
+    孩子一申诉会打到家长那条上去。
+    """
+    me = ctx.as_member()
+    if me["role"] != "child":
+        raise ApiError("这条只给孩子用", 403)
+    r = E.submit_calibration_appeal(ctx.id_path("id", "校准 id"), me["id"],
+                                    ctx.p("reason", ""))
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "没提上去"))
+    return r

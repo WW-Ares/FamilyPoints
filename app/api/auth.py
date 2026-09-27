@@ -443,9 +443,15 @@ def archive_member(ctx):
 def get_settings(ctx):
     ctx.as_member()
     rows = db.query("SELECT * FROM setting ORDER BY grp, sort")
+    # v45：撤下的项从界面上摘掉，但库里的值不删 —— 有的是老库残留（新库
+    # 已经不种了），有的是前端说明页还在读的兜底值。整组都撤的（「通知」）
+    # 会因为这里筛空而整个不出现，不用另外写「隐藏空组」的逻辑。
+    hide = set(seed_data.HIDDEN_SETTINGS)
     groups = []
     cur = None
     for r in rows:
+        if r["key"] in hide:
+            continue
         if not cur or cur["grp"] != r["grp"]:
             cur = {"grp": r["grp"], "items": []}
             groups.append(cur)
@@ -456,7 +462,12 @@ def get_settings(ctx):
             val = r["value"]
         cur["items"].append({"key": r["key"], "value": val, "vtype": r["vtype"],
                              "label": r["label"], "note": r["note"],
-                             "locked": bool(r["locked"]), "editable": bool(r["editable"])})
+                             "locked": bool(r["locked"]), "editable": bool(r["editable"]),
+                             # v45：枚举项带上可选值，格式受控的项带上格式名。
+                             # 前端据此渲染成选择 / 时间输入，不再让人手打英文串。
+                             "options": [[v, t] for v, t in
+                                         seed_data.SETTING_OPTIONS.get(r["key"], [])],
+                             "fmt": seed_data.SETTING_FMT.get(r["key"], "")})
     pending = db.query("SELECT * FROM setting_change WHERE status='pending' ORDER BY id DESC")
     # holiday_days 是给一级列表那个「未同步」角标用的：国家日历一张都没拉
     # 的时候，家长不进二级页也该看见这件事。它不会自己联网，得有人去点。

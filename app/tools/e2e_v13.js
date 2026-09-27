@@ -584,13 +584,16 @@ async function walkTabs(page, tag) {
   const tGive = await page.locator('#view button[data-tgive]').count();
   say('   手上的任务按钮: 做完了 ' + tDone + '，我不做了 ' + tGive);
   if (tGive > tDone) bad('[v31] 「我不做了」比「做完了」还多，按钮配错了');
-  // v33：家长直接派下来的活是 pending（待做），大厅里领的才是 claimed（在做）。
+  // v33：家长直接派下来的活是 pending，大厅里领的才是 claimed。
   // 孩子端两处列表原先只认 claimed，派下来的那条被整个藏掉，而首页和大厅的
   // 计数又把它数进去 —— 表现是「你在做 1 件」，点进去空空如也。
+  // v1.17：任务页改读 /api/my/work，状态词跟着引擎的 _FEED_TASK_STATE 走
+  // （pending = 「还没开始」），不再是前端那份「待做」。断言跟着文案改，
+  // 守的还是原来那件事：派下来的活要看得见、要带状态。
   if (taskTxt.indexOf('给弟弟读一本绘本') < 0) {
-    bad('[v33] 家长直接派下来的任务（待做）在孩子端看不见');
+    bad('[v33] 家长直接派下来的任务（还没开始）在孩子端看不见');
   }
-  if (taskTxt.indexOf('待做') < 0) bad('[v33] 待做的任务没标出「待做」');
+  if (taskTxt.indexOf('还没开始') < 0) bad('[v33] 派下来的任务没标出状态（还没开始）');
   if (tDone < 1) bad('[v33] 待做的任务没有「交上去」按钮，孩子交不了（退回之后也回不来）');
   /* v13：任务页底部摆「任务记录」—— 最近 3 条 + 一个「展开全部」，回溯近一个月。
      原来那儿只有一行小灰字「看看我的全部记录 ›」，跳去的是「我的记录」，
@@ -750,6 +753,23 @@ async function walkTabs(page, tag) {
   if (buy.some(b => b.over > 1)) bad('[v1.7] 直购格撑爆了 ' + Math.max(...buy.map(b => b.over)) + 'px');
   if (buy.length && new Set(buy.map(b => Math.round(b.ph))).size !== 1) {
     bad('[v1.7] 直购三格高矮不一：' + buy.map(b => Math.round(b.ph)).join('/'));
+  }
+
+  /* v1.17：直购格要真点一次。上面几条只量了价钱怎么写、有没有折行，**没点过** ——
+     而 confirmBuyBox 曾被 app.js 里一段忘了闭合的块注释整块吞掉（50 行代码静默消失），
+     点下去只报 ReferenceError，界面一动不动，上面那几条一条都拦不住。
+     这里只弹确认层、不点确认，不花星尘。 */
+  if (buyBoxes) {
+    await page.locator('#view button[data-box]').first().click();
+    await page.waitForTimeout(700);
+    const buyTxt = flat(await page.locator('#sheetBody').innerText().catch(() => ''));
+    if (!/直购宝箱/.test(buyTxt)) {
+      bad('[v1.17] 点直购格没弹出确认层：' + (buyTxt.slice(0, 40) || '（弹层空的）'));
+    } else {
+      say('   点直购格: 确认层出来了');
+    }
+    await page.locator('#sheet').click({ position: { x: 4, y: 4 } });
+    await page.waitForTimeout(400);
   }
 
   /* v38：结算只发一只箱子，箱子里有什么点开那一刻才抽。
@@ -1522,26 +1542,34 @@ async function walkTabs(page, tag) {
   await tabTo(page, '总览');
   await page.waitForTimeout(900);
   const home = flat(await page.locator('#view').innerText());
-  // 交付包里速览从「一人一张卡」改成「一人一行」：一屏扫完两个孩子，
-  // 不必先切两次人。六项细节（券卡碎片、在做几件事）挪进孩子详细页，
-  // 这里每行留的是「本周能量 / 星尘 / 今天打没打」。
-  const kRows = await page.locator('#view [data-kid]').count();
-  const kidRowsN = +(home.match(/全部(\d+)位/) || [])[1] || 0;
-  say('   孩子速览: ' + kRows + ' 行（「全部 N 位」写的 ' + kidRowsN + '）');
-  if (kRows < 2) bad('[v15] 总览没把所有孩子都列出来，只有 ' + kRows + ' 行');
-  if (kidRowsN && kRows !== kidRowsN) {
-    bad('[v15] 速览行数与「全部 N 位」对不上：' + kRows + ' vs ' + kidRowsN);
+  // v1.17：总览重做。页头副标只剩日期、右上角铃铛换成切孩子；「今晚要办的事」
+  // 改成「今天要办的事」两张橙带卡；「孩子速览」那一人一行撤了，换成**选中那个
+  // 孩子**的一张详情卡（跟着右上角切换走）。所以这一段整体重写。
+  const kidSwitch = await page.locator('#view .kid-switch button[data-kid]').count();
+  say('   切孩子按钮: ' + kidSwitch + ' 个');
+  if (kidSwitch < 2) bad('[v1.17] 总览右上角没有切孩子（两个孩子应有两颗）');
+  const askCards = await page.locator('#view .ask-card').count();
+  const askBands = await page.locator('#view .ask-band').count();
+  say('   今天要办的事: ' + askCards + ' 张卡 / ' + askBands + ' 条橙带');
+  if (askCards !== 2) bad('[v1.17] 「今天要办的事」不是两张卡，是 ' + askCards);
+  if (askBands !== 2) bad('[v1.17] 两张卡顶上没有整条橙带（.ask-band），找到 ' + askBands);
+  for (const need of ['今天要办的事', '今日打分', '待审核']) {
+    if (home.indexOf(need) < 0) bad('[v1.17] 总览缺「' + need + '」');
   }
   // 家长身份要写出来。交付包管这个角色叫「领航员」，不再叫「裁判」——
   // 同一个意思换了词，换的是「跟着一起走」而不是「站在旁边判」。
   if (!/领航员|裁判/.test(home)) bad('[v13] 家长总览没标出「领航员 / 裁判」身份');
-  for (const need of ['星尘', '本周能量', '今天']) {
-    if (home.indexOf(need) < 0) bad('[v15] 速览行缺「' + need + '」这一项');
+  // 选中孩子那张卡：这一周拿到哪、够哪一档、还差多少、手上有什么
+  const kidCard = flat(await page.locator('#view .stack')
+    .filter({ has: page.locator('[data-kiddetail]') }).first().innerText().catch(() => ''));
+  for (const need of ['本周能量', '星尘', '娱乐券', '道具', '在做', '差']) {
+    if (kidCard.indexOf(need) < 0) bad('[v1.17] 选中孩子那张卡缺「' + need + '」');
   }
-  if (!/今天还没给|今天的分都记上了/.test(home)) bad('[v15] 总览没标出今天打分没有');
-  // 还没打分的写「未打」，不写 0/7 ——「0 分」和「没打分」不是一件事
-  if (home.indexOf('未打') >= 0 && /0\/7/.test(home)) {
-    bad('[v15] 速览里把没打分写成了 0/7，两件事混成一件');
+  // 「今天打分没有」从页头副标挪到「今日打分」那张卡的橙带上（状态词）
+  if (!/还没打|都打过/.test(home)) bad('[v15] 总览没标出今天打分没有');
+  // 还没打分的写「还没打」，不写 0/7 ——「0 分」和「没打分」不是一件事
+  if (/还没打/.test(home) && /0\/7/.test(home)) {
+    bad('[v15] 把没打分写成了 0/7，两件事混成一件');
   }
 
   const homeRun = await page.locator('#view [data-tkend]').count();
@@ -1560,24 +1588,24 @@ async function walkTabs(page, tag) {
     if (t1 === t2) bad('[v27] 总览的倒计时没在走（两次读到的都是 ' + t1 + '）');
     if (!(await page.locator('#view [data-tkbar]').count())) bad('[v27] 总览的「正在玩」没有进度条');
   }
-  // 「正在玩」必须排在孩子速览前面：有时效的东西不该埋在下面
+  // 「正在玩」必须排在「今天要办的事」前面：有时效的东西不该埋在下面
   const runPos = await page.evaluate(() => {
     const v = document.querySelector('#view');
     const tk = v.querySelector('[data-tkend]');
     const sec = Array.prototype.slice.call(v.querySelectorAll('.sec-title'))
-      .filter(x => x.textContent.indexOf('孩子速览') >= 0)[0];
+      .filter(x => x.textContent.indexOf('今天要办的事') >= 0)[0];
     if (!tk || !sec) return 'unknown';
     return (tk.compareDocumentPosition(sec) & Node.DOCUMENT_POSITION_FOLLOWING) ? 'before' : 'after';
   });
-  say('   正在玩相对孩子速览: ' + runPos);
-  if (runPos === 'after') bad('[v27] 「正在玩」被压到孩子速览后面了');
+  say('   正在玩相对「今天要办的事」: ' + runPos);
+  if (runPos === 'after') bad('[v27] 「正在玩」被压到「今天要办的事」后面了');
   if (!homeRun) bad('[v27] 总览的「正在玩」没渲染出卡片');
 
-  // 最近发生：首页只放两条，其余的点进日志页
+  // 最近发生：首页放 5 条（v1.17 从 2 条提到 5 条，接口 recent 同时 6→8），其余点进日志页
   const feedRows = await page.locator('#view .log-item').count();
   say('   总览最近发生: ' + feedRows + ' 条');
   if (home.indexOf('最近发生') < 0) bad('[v18] 家长总览没有「最近发生」');
-  if (!feedRows) bad('[v18] 家长总览的「最近发生」一条都没渲染出来');
+  if (feedRows !== 5) bad('[v1.17] 总览「最近发生」不是 5 条，是 ' + feedRows);
   await page.screenshot({ path: path.join(SHOT, 'dad-kids-overview.png'), fullPage: true });
 
   // v18：两个孩子手上各自还没完的事，每条都得写着是谁的。
@@ -1597,10 +1625,11 @@ async function walkTabs(page, tag) {
   if (!cn) bad('[v18] 审核页一件待办都没渲染出来');
   if (named !== cn - setN) bad('[v18] 有 ' + (cn - setN - named) + ' 件待办没写清是谁的事');
 
-  // 详细页：从总览点一行孩子进去
+  // 详细页：从总览那张孩子卡的「看明细」进去（v1.17 起入口在这里，
+  // 原来点的是「孩子速览」那一行 [data-kid]）
   await tabTo(page, '总览');
   await page.waitForTimeout(700);
-  await clickSel(page, '#view [data-kid]', '总览 → 孩子速览行');
+  await clickSel(page, '#view [data-kiddetail]', '总览 → 孩子卡「看明细」');
   const kd = flat(await page.locator('#view').innerText());
   const backBar = await page.locator('#view [data-back]').count();
   say('   孩子详细: 返回按钮 ' + backBar + ' 个');

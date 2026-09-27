@@ -118,6 +118,128 @@ function kDots(state) {
   return h + '</span>';
 }
 const K_TASK_STATE = { claimed: '在做', submitted: '等确认', pending: '待做' };
+
+/* ============================================================ 要做的事（v45） */
+/* 任务、心愿、校准三类共用同一张卡。对孩子来说它们都是「我手上压着的一件事」，
+   长三种样子只会让他多认三套壳子；真正区分身份的是右边那个小标和底下的按钮。
+   分栏规则（哪一栏、排第几）在后端 /api/my/work，前端只管画 —— 两边各算一遍，
+   迟早会出现「这栏少了一条」。 */
+/* 「还剩 47 小时」。不到一小时就说「不到 1 小时」—— 写成 0 小时看着像已经过期了。 */
+function kCalLeft(x) {
+  const h = x.hours_left;
+  if (h == null || h <= 0) return '';
+  return ' · 还剩 ' + (h < 1 ? '不到 1 小时' : Math.round(h) + ' 小时');
+}
+/* full=true 时任务卡也带动作按钮（任务页用）。首页只给三类里「必须他动手」的
+   那两个带按钮（校准要回话、心愿要收货），任务卡在那儿不带 —— 首页是概览，
+   一条条摊开按钮会把「这周拿到了什么」挤下去。 */
+function kWorkCard(x, full) {
+  const isCal = x.kind === 'calibration';
+  const isWish = x.kind === 'wish';
+  const box = isCal ? 'var(--purple-bg)' : (isWish ? 'var(--pink-bg)' : 'var(--blue-bg)');
+  let h = '<div class="task-card"><div class="task-row">' +
+    '<span class="task-ico" style="background:' + box + '">' +
+    (isCal ? ic('i-info', 20, 'var(--purple-deep)')
+      : glyph(x.icon, isWish ? 'wish' : 'task', 20)) + '</span>' +
+    '<div class="grow"><div class="task-name">' + esc(x.title) + '</div>';
+
+  if (isCal) {
+    // 校准卡的标题就是原因原文（家长当时写的那句话），副标说清这是校准、
+    // 走到哪一步、还剩多久。少这两句，孩子看到的只是星尘莫名其妙少了。
+    h += '<div class="task-sub">校准 · ' + esc(x.state_text) + kCalLeft(x) + '</div>';
+  } else if (isWish) {
+    h += '<div class="task-sub">' + esc(x.state_text) + '</div>';
+    const p = x.percent;
+    if (p != null) {
+      const pc = Math.max(0, Math.min(100, p));
+      h += '<div class="h g8" style="margin-top:6px">' +
+        '<span class="bar" style="flex:1"><i style="width:' + pc + '%' +
+        (pc >= 100 ? ';background:linear-gradient(90deg,#9BD8B4,#57B981)' : '') +
+        '"></i></span><span class="num t-2" style="font-size:10.5px">' + pc + '%</span></div>';
+    }
+  } else {
+    h += '<div class="h g6 mt6">' + kDots(x.state_key) +
+      '<span class="t-2" style="font-size:10px">' + esc(x.state_text) + '</span></div>';
+  }
+  h += '</div>';
+  // 右边的小标：任务写奖励；心愿写它卡在哪一步；校准写这次扣了什么。
+  if (isCal) {
+    h += '<span class="reward" style="background:var(--purple-bg);color:var(--purple-deep)">' +
+      esc(x.effect_text || '校准') + '</span>';
+  } else if (isWish) {
+    h += '<span class="reward" style="background:var(--pink-bg);color:var(--pink-deep)">' +
+      esc(x.state_text) + '</span>';
+  } else {
+    h += kReward(x.reward_text, x.reward_type);
+  }
+  h += '</div>';
+
+  if (isCal && x.calibration_id) {
+    h += '<div class="hb">';
+    if (x.state_key === 'pending') {
+      h += '<button class="btn btn--sm line" data-kappeal="' + x.calibration_id + '">申诉</button>' +
+        '<button class="btn btn--sm" data-kack="' + x.calibration_id + '">知道了</button>';
+    } else if (x.state_key === 'rejected') {
+      h += '<span class="t-2" style="font-size:10.5px">爸爸妈妈说你写的理由不成立</span>' +
+        '<button class="btn btn--sm" data-kack="' + x.calibration_id + '">知道了</button>';
+    } else {
+      h += '<span class="t-2" style="font-size:10.5px">等爸爸妈妈看完，同意了扣的会还给你</span>';
+    }
+    h += '</div>';
+  } else if (isWish && x.state_key === 'delivered') {
+    h += '<div class="hb"><span class="t-2" style="font-size:10.5px">' +
+      esc(x.detail || '') + '</span>' +
+      '<button class="btn btn--sm" data-wishgot="' + x.wish_id + '">我收到了</button></div>';
+  } else if (full && x.task_id && x.state_key !== 'submitted') {
+    h += '<div class="hb">' +
+      '<button class="btn btn--sm" data-tdone="' + x.task_id + '">交上去</button>' +
+      // 「不做了」只给大厅领来的那份：引擎里 task_abandon 只认 claimed，
+      // 家长直接派下来的活推不掉。按钮跟着引擎走，免得点了报错。
+      (x.state_key === 'claimed'
+        ? '<button class="btn btn--sm line" data-tgive="' + x.task_id + '">不做了</button>' : '') +
+      '</div>';
+  }
+  return h + '</div>';
+}
+
+/* 一张卡上的按钮。首页和任务页共用 —— 同一张卡在两个地方摆两套绑定，
+   迟早有一处忘了接。 */
+function bindWorkCards(root) {
+  $$('[data-kack]', root).forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('「知道了」之后这条就结掉了，改不了。')) return;
+    try {
+      await api('POST', '/api/my/calibration/' + b.dataset.kack + '/ack', {});
+      toast('记下了'); render();
+    } catch (e) { err(e); }
+  }));
+  $$('[data-kappeal]', root).forEach(b => b.addEventListener('click', () => {
+    kAppealSheet(b.dataset.kappeal);
+  }));
+  $$('[data-wishgot]', root).forEach(b => b.addEventListener('click', async () => {
+    try {
+      await api('POST', '/api/wishes/' + b.dataset.wishgot + '/status', { status: 'claimed' });
+      toast('收下了'); render();
+    } catch (e) { err(e); }
+  }));
+}
+
+/* 申诉弹层。理由必填 —— 后端也拦，但这里先拦一道：让他看见「总得说一句」。 */
+function kAppealSheet(cid) {
+  sheet('<h3>说说你的理由</h3>' +
+    '<p class="muted">只有这一次机会，写清楚发生了什么。爸爸妈妈看完，同意了扣的东西会还给你。</p>' +
+    '<div class="field"><textarea id="kr" rows="4" maxlength="200" ' +
+    'placeholder="比如：铅笔是我拿书的时候碰掉的，不是摔的"></textarea></div>' +
+    '<button class="btn wide" id="go">交上去</button>', b2 => {
+    $('#go', b2).addEventListener('click', async () => {
+      const v = ($('#kr', b2).value || '').trim();
+      if (!v) { toast('写一句理由'); return; }
+      try {
+        await api('POST', '/api/my/calibration/' + cid + '/appeal', { reason: v });
+        closeSheet(); toast('递给爸爸妈妈了'); render();
+      } catch (e) { err(e); }
+    });
+  });
+}
 const WD_NAME = ['日', '一', '二', '三', '四', '五', '六'];
 /* 「2026-09-19」在 iOS Safari 里被当成 UTC 午夜，直接 new Date(day).getDay()
    在东八区会往前偏一天。按年月日自己拼一个本地时间，星期才对得上。 */
@@ -390,7 +512,7 @@ async function kScreenHome() {
   const dv = await kg('/api/score/day?member_id=' + mid + '&day=' + todayStr());
   const tks = await kg('/api/tickets/mine?member_id=' + mid);
   const hl = await kg('/api/tasks/hall');
-  const ws = await kg('/api/wishes');
+  const mw = await kg('/api/my/work');
   const wk = await kg('/api/score/cycle?member_id=' + mid + '&day=' + todayStr());
 
   const lv = cyc.level;
@@ -469,32 +591,20 @@ async function kScreenHome() {
   // 结束跟没发生过一样。这张存档卡就接在那一下：看一眼，点掉，落进「今天用过什么」。
   (tks && tks.items || []).filter(x => x.needs_ack).forEach(x => { h += kAckHTML(x); });
 
-  // ④ 要做的事
-  // 家长直接派下来的活是 pending（待做），大厅里领的才是 claimed（在做）。
-  // 两种都是孩子手上还没交的活，只认 claimed 会把派下来的那条整个藏掉 ——
-  // 首页照「全部 N 件」算的时候又把它数进去，于是「全部 1 件」底下写着「手上没有活」。
-  const mine = (hl && hl.doing || []).filter(t => t.assignee_id === mid);
-  const doing = mine.filter(t => t.status !== 'submitted');
-  const waits = mine.filter(t => t.status === 'submitted');
-  const all = doing.concat(waits).slice(0, 3);
+  // ④ 要做的事（v45）
+  // 任务、心愿、校准三类混排在一条列表里，按「球在谁手上」排：交上去等点头的、
+  // 条件够了等给你的排最前 —— 那两步卡在大人手上，不摆在孩子眼前就永远停着。
+  // 合并与排序都在后端（/api/my/work），前端只管画，免得两边各算一遍。
+  const wp = (mw && mw.waiting) || [];
+  const dn = (mw && mw.doing) || [];
+  const all = wp.concat(dn).slice(0, 3);
   h += '<div class="sect-head"><span class="sect-title">' + ic('i-task', 16, 'var(--blue-deep)') +
     '要做的事</span><span class="sect-note" data-go="task" style="cursor:pointer">全部 ' +
-    num(mine.length) + ' 件 ›</span></div>';
+    num((mw && mw.total) || 0) + ' 件 ›</span></div>';
   if (!all.length) {
     h += '<div class="card"><div class="empty">手上没有活，去任务大厅看看</div></div>';
   } else {
-    all.forEach(t => {
-      h += '<div class="task-card"><div class="task-row">' +
-        '<span class="task-ico">' + glyph(t.icon, 'task', 20) + '</span>' +
-        '<div class="grow"><div class="task-name">' + esc(t.title) + '</div>' +
-        '<div class="h g6 mt6">' + kDots(t.status) +
-        '<span class="t-2" style="font-size:10px">' +
-        (t.status === 'submitted' ? '交上去了 · 等爸爸妈妈点头'
-          : ((K_TASK_STATE[t.status] || '在做') +
-             (t.deadline ? ' · ' + esc(kDeadline(t.deadline)) + ' 前交上去' : ' · 做完点提交'))) +
-        '</span></div></div>' +
-        kReward(t.reward_text, t.reward_type) + '</div></div>';
-    });
+    h += all.map(x => kWorkCard(x)).join('');
   }
   const fresh = (hl && hl.hall || []).filter(x => x.can_claim);
   if (fresh.length) {
@@ -508,27 +618,15 @@ async function kScreenHome() {
   // ⑤ 遇到困难。放在心愿上面：孩子开首页多半正写着作业，这一条要先被看见。
   h += kAskCard('help');
 
-  // ⑥ 心愿
-  const act = (ws && ws.items || []).filter(x => x.status === 'active');
-  const w = act[0];
-  if (w) {
-    const p = w.progress || {};
-    const pc = p.known && p.percent != null ? Math.max(0, Math.min(100, p.percent)) : 0;
-    h += '<div class="row" data-go="wish" style="cursor:pointer">' +
-      '<span class="icon-box" style="background:var(--pink-bg)">' + ic('i-wishstar', 20, 'var(--pink-deep)') + '</span>' +
-      '<div class="row-grow"><div class="row-title">' + esc(w.title) + '</div>' +
-      (p.known && !p.manual
-        ? '<div class="h g8 mt6"><span class="bar" style="flex:1"><i style="width:' + pc + '%"></i></span>' +
-          '<span class="num t-2" style="font-size:10.5px">' + esc(p.text || '') + '</span></div>'
-        : '<div class="row-sub">' + esc(p.where || '等爸爸妈妈定条件') + '</div>') +
-      '</div>' + ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
-  } else {
-    h += '<div class="row" data-go="wish" style="cursor:pointer">' +
-      '<span class="icon-box" style="background:var(--pink-bg)">' + ic('i-wishstar', 20, 'var(--pink-deep)') + '</span>' +
-      '<div class="row-grow"><div class="row-title">许一个心愿</div>' +
-      '<div class="row-sub">写下来挂到心愿屋，爸爸妈妈给你定条件</div></div>' +
-      ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
-  }
+  // ⑥ 许一个心愿（v45）。原来这里摆的是「进行中那个心愿 + 它的进度」，撤掉了：
+  //    心愿现在自己就是「要做的事」里的一条（走同一个接口），再摆一张等于同一根
+  //    进度条在一屏里出现两次。入口不能跟着撤 —— 撤了就没地方许愿了。
+  h += '<div class="row" data-go="wish" style="cursor:pointer">' +
+    '<span class="icon-box" style="background:var(--pink-bg)">' +
+    ic('i-wishstar', 20, 'var(--pink-deep)') + '</span>' +
+    '<div class="row-grow"><div class="row-title">许一个心愿</div>' +
+    '<div class="row-sub">写下来挂到心愿屋，爸爸妈妈给你定条件</div></div>' +
+    ic('i-chevron', 16, 'var(--ink-line)') + '</div>';
 
   // ⑦ 最近发生。v43 起走 /api/my/news：加减分、申请、买东西、开箱全算，
   //    不再只是「自己按的 + 拿到手的」两类 —— 挑着给他看，账就不全，
@@ -679,62 +777,21 @@ function kNewsSheet() {
 }
 
 /* ============================================================ 任务（我的任务） */
-/* 任务页里的心愿卡。心愿也是要靠一条条条件慢慢凑出来的活，只是它长得慢；
-   挂在心愿屋里，孩子想不起来去看，任务页就成了天天会开的那个地方。
-   这儿只给「名字 + 进度 + 状态」，交一条、付星尘、「我做到了」那些按钮
-   仍留在心愿屋 —— 同一件事不在两个地方各摆一套按钮，整卡点进去就是心愿屋。 */
-function kTaskWishCard(x) {
-  const p = x.progress || {};
-  const pc = (p.known && p.percent != null) ? Math.max(0, Math.min(100, p.percent)) : 0;
-  let tag;
-  if (!p.known) tag = '<span class="pill pill--gray">等条件</span>';
-  else if (p.done) tag = '<span class="tag ok">可以兑现</span>';
-  else if (p.manual) {
-    // 靠人判的那一条后端给的是 percent=null，硬凑一个「0%」等于编数字。
-    // 按它走到哪一步说话：交上去了等确认 / 上次没过 / 还没交。
-    tag = '<span class="tag gold">' +
-      (p.pending ? '等爸爸妈妈确认' : (p.rejected ? '上次没通过' : '等爸爸妈妈看')) + '</span>';
-  } else {
-    // 「要 2 条，已经做到 1 条，还差 1 条」整句太长，小标里只留「还差 N …」这一截。
-    // 取不到就退回百分比；百分比也没有（不该发生）就只说还在做。
-    const m = String(p.text || '').match(/还差[^，,。]*/);
-    tag = '<span class="tag gold">' +
-      esc(m ? m[0] : (p.percent != null ? pc + '%' : '还在做')) + '</span>';
-  }
-  return '<div class="card card--tight" data-go="wish" style="cursor:pointer">' +
-    '<div class="h g10">' +
-    '<span class="icon-box" style="flex:0 0 34px;width:34px;height:34px;background:var(--pink-bg)">' +
-    glyph(x.icon, 'wish', 18) + '</span>' +
-    '<div class="grow v g3" style="min-width:0">' +
-    '<div class="row-title">' + esc(x.title) + '</div>' +
-    // 靠人判的条件（manual）没有百分比，给它一条进度条等于编数字，所以只出文字
-    (p.known && !p.manual
-      ? '<div class="h g8"><span class="bar" style="flex:1;height:6px"><i style="width:' + pc + '%' +
-        (p.done ? ';background:linear-gradient(90deg,#9BD8B4,#57B981)' : '') +
-        '"></i></span><span class="num t-2" style="font-size:10.5px">' + pc + '%</span></div>'
-      : '') +
-    '<div class="row-sub">' + esc(p.known ? (p.text || '') : '等爸爸妈妈定条件') + '</div>' +
-    '</div>' + tag + '</div></div>';
-}
-/* 还等着定条件的那一行。不显示的话，孩子会以为刚许的愿丢了。 */
-function kTaskWishPending(x) {
-  return '<div class="card" data-go="wish" style="cursor:pointer"><div class="row">' +
-    '<span class="icon-box" style="background:var(--purple-bg)">' +
-    glyph(x.icon, 'wish', 18) + '</span>' +
-    '<div class="row-grow"><div class="row-title">' + esc(x.title) + '</div>' +
-    '<div class="row-sub">等爸爸妈妈定条件</div></div>' +
-    '<span class="pill pill--gray">等条件</span></div></div>';
-}
+/* v45：原来这儿有两个心愿卡渲染函数（进行中 / 等定条件），都撤掉了 ——
+   心愿现在就在 /api/my/work 给的两栏里，走 kWorkCard 同一个壳子。
+   留两套渲染的话，同一个心愿在任务页和首页会长得不一样，孩子会以为是两条。 */
 
 async function kScreenTask() {
-  const mid = S.me.id;
   const hl = await api('GET', '/api/tasks/hall');
   const act = await kg('/api/activity?group=given&days=1&limit=60');
   const hs = await kg('/api/tasks/mine?days=30');
-  const ws = await kg('/api/wishes');
-  const mine = (hl.doing || []).filter(t => t.assignee_id === mid);
-  const doing = mine.filter(t => t.status !== 'submitted');   // 待做 + 在做，两种都是手上的活
-  const waits = mine.filter(t => t.status === 'submitted');
+  // 手上的活统一从 /api/my/work 来（任务 + 心愿 + 校准，后端已经按「球在谁手上」
+  // 分好栏）。原来这里自己按 kind 筛，漏了两处：心愿只认 wished / active，于是
+  // 一到「够了，等爸爸妈妈给你」就从列表里消失；修复任务压根不在 /api/tasks/hall
+  // 里（那边只查 kind='reward'），罚款和扣券更是连一条记录都没有。
+  const mw = await kg('/api/my/work');
+  const doing = (mw && mw.doing) || [];
+  const waits = (mw && mw.waiting) || [];
   const fresh = (hl.hall || []).filter(x => x.can_claim);
   const doneToday = ((act && act.items) || []).filter(x => String(x.kind || '').indexOf('task_') === 0);
 
@@ -743,53 +800,20 @@ async function kScreenTask() {
     '<button class="seg-item" data-go="hall">任务大厅' +
     (fresh.length ? ' · ' + fresh.length : '') + '</button></div>';
 
-  // 心愿排在最上面：它是长期的活，是「我为什么在做下面这些」。
-  // 数据现取，家长改了条件、进度变了这边跟着变，不存第二份。
-  const wAll = (ws && ws.items) || [];
-  const wAct = wAll.filter(x => x.status === 'active');
-  const wPend = wAll.filter(x => x.status === 'wished');
-  if (wAct.length || wPend.length) {
-    h += '<div class="sect-head"><span class="sect-title">' +
-      ic('i-wishstar', 16, 'var(--pink-deep)') + '我的心愿</span>' +
-      '<span class="sect-note">进行中 ' + num(wAct.length) + ' 个 · 点开看要做到什么</span></div>' +
-      wAct.map(kTaskWishCard).join('') + wPend.map(kTaskWishPending).join('');
-  }
-
+  // 「我的心愿」这一区撤了（v45）：心愿现在按它走到哪一步，落在下面两栏里。
+  // 原来它单独成一区，于是「够了等给你」（球在大人手上）和「进行中」摆在一起，
+  // 孩子看不出哪条该等、哪条该自己接着做。
   h += '<div class="sect-head"><span class="sect-title">' +
     ic('i-clock', 16, 'var(--purple)') + '在做</span>' +
-    '<span class="sect-note">' + num(doing.length) + ' 件 · 做完点「交上去」</span></div>';
+    '<span class="sect-note">' + num(doing.length) + ' 件 · 该你动手的</span></div>';
   if (!doing.length) h += '<div class="card"><div class="empty">手上没有要做的活</div></div>';
-  doing.forEach(t => {
-    h += '<div class="task-card"><div class="task-row">' +
-      '<span class="task-ico">' + glyph(t.icon, 'task', 20) + '</span>' +
-      '<span class="task-name">' + esc(t.title) + '</span>' +
-      kReward(t.reward_text, t.reward_type) + '</div>' +
-      (t.std ? '<div class="task-sub" style="margin:0">' + esc(t.std) + '</div>' : '') +
-      '<div class="hb"><span class="h g7">' + kDots(t.status) +
-      '<span class="t-2" style="font-size:10.5px">' + (K_TASK_STATE[t.status] || '在做') +
-      (t.deadline ? ' · ' + esc(kDeadline(t.deadline)) + ' 前交上去' : ' · 今天之内') + '</span></span>' +
-      '<span class="h g6">' +
-      '<button class="btn btn--sm" data-tdone="' + t.id + '">交上去</button>' +
-      // 「不做了」只给大厅里领来的那份：引擎里 task_abandon 只认 claimed，
-      // 家长直接派下来的活不能推掉。按钮跟着引擎走，免得点了报错。
-      (t.status === 'claimed'
-        ? '<button class="btn btn--sm line" data-tgive="' + t.id + '">不做了</button>' : '') +
-      '</span></div></div>';
-  });
+  doing.forEach(x => { h += kWorkCard(x, true); });
 
   h += '<div class="sect-head"><span class="sect-title">' +
     ic('i-check', 16, 'var(--orange)') + '等爸爸妈妈确认</span>' +
-    '<span class="sect-note">' + num(waits.length) + ' 件 · 点头就发奖励</span></div>';
+    '<span class="sect-note">' + num(waits.length) + ' 件 · 球在他们手上</span></div>';
   if (!waits.length) h += '<div class="card"><div class="empty">没有在等确认的</div></div>';
-  waits.forEach(t => {
-    h += '<div class="task-card"><div class="task-row">' +
-      '<span class="task-ico" style="background:var(--purple-bg)">' + glyph(t.icon, 'task', 20) + '</span>' +
-      '<span class="task-name">' + esc(t.title) + '</span>' +
-      kReward(t.reward_text, t.reward_type) + '</div>' +
-      '<span class="h g7">' + kDots('submitted') +
-      '<span class="t-2" style="font-size:10.5px">已经交上去 · 等爸爸妈妈点头' +
-      (t.deadline ? '，最晚 ' + esc(kDeadline(t.deadline)) : '') + '</span></span></div>';
-  });
+  waits.forEach(x => { h += kWorkCard(x, true); });
 
   if (doneToday.length) {
     h += '<div class="sect-head"><span class="sect-title">' +
@@ -3140,6 +3164,9 @@ CHILD.bind = function () {
   // 心愿的三个动作（交一条 / 付星尘 / 登记达成）走 app.js 里那一套，
   // 同一件事在首页和心愿屋两边必须一模一样，否则孩子会以为坏了。
   bindTaskActions();
+  // v45：校准的「知道了 / 申诉」和心愿的「我收到了」。这两个是孩子端自己的动作，
+  // app.js 那套里没有，绑在这儿 —— 首页和任务页共用同一张卡，绑一处就够。
+  bindWorkCards(el);
   bindWishActions();
   $$('#view [data-wdrop]').forEach(b => b.addEventListener('click', async () => {
     askSheet({

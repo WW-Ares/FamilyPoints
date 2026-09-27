@@ -26,6 +26,9 @@ const S = {
   // 打分页底部那张月度统计看的是哪个月（'YYYY-MM'）。空着就跟着 S.day 走，
   // 切了月份之后不再被选日期带着跑，否则点一个上月的格子月份会跟着跳。
   month: null,
+  // 总览那张孩子详情卡看的是谁。跟打分页的 S.target 分开存 ——
+  // 在总览切一下人，不该顺手把打分页正在打的那个也换掉。
+  homeKid: null,
 };
 const KIDS = () => S.members.filter(m => m.role === 'child');
 const PARENTS = () => S.members.filter(m => m.role !== 'child');
@@ -1550,16 +1553,21 @@ function boxLadderHTML(tiers, snap) {
   }).join('') + '</div>';
 }
 
-function cycleCard(c) {
+function cycleCard(c, dayFull) {
+  // 分母是「本周期满分」= 要打分的天数 × 每天固定分（全勤 = 49），跟总览那条
+  // 进度条同一个口径。以前这里放的是 c.tier.threshold，那是当前那一档的门槛，
+  // 不是这一周的满分 —— 周期才过两天能量 16，分母写 14，看着像已经超了。
+  const full = (c.countable_days || 7) * (dayFull || 7);
+  const pct = full ? Math.min(100, Math.round(c.energy * 100 / full)) : 0;
   let h = '<div class="card pad">' +
-    '<div class="row between"><div><div class="big">' + c.energy +
-    '<span class="muted" style="font-size:13px"> / ' + (c.tier ? c.tier.threshold : 49) + '</span></div>' +
-    '<div class="muted">周能量　固定分 ' + c.fixed_score + '　额外 +' + c.bonus_energy + '</div></div>' +
+    '<div class="row between"><div><div class="big">' + num(c.energy) +
+    '<span class="muted" style="font-size:13px"> / ' + num(full) + '</span></div>' +
+    '<div class="muted">周能量　固定分 ' + num(c.fixed_score) + '　额外 +' + num(c.bonus_energy) + '</div></div>' +
     '<div style="text-align:right">' +
     (c.tier ? '<div class="tag gold">' + esc(c.tier.name) + '</div>' : '<div class="muted">还没到第一档</div>') +
     '</div></div>';
   h += '<div class="bar" style="margin-top:10px"><i class="gold" style="width:' +
-    Math.min(100, Math.round(c.energy / (49 * (c.ratio || 1)) * 100)) + '%"></i></div>';
+    pct + '%"></i></div>';
   if (c.tiers && c.tiers.length) h += boxLadderHTML(c.tiers, c);
   if (c.next_tier) h += '<div class="muted" style="margin-top:8px">再拿 ' + c.next_tier.need + ' 分就到' +
     esc(c.next_tier.name) + '</div>';
@@ -1930,7 +1938,7 @@ function wishNewSheet() {
    v24 起保底卡可能不止一张（完美箱是普 + 稀 + 传），所以从 cards 列表读，
    老接口只给 card_rarity 的时候退回单张的写法。
    v25：商店那一份（t.purchased）不写概率。买来的箱子本来就不出随机件
-   —— 后端把它的 random_rate 直接给 0 了，这里再明说一句：
+   —— 后端把它的 random_rate 直接给 0 了，这里再明说一句： */
 
 function confirmBuyBox(tier, price) {
   sheet('<h3>直购宝箱</h3><p class="muted">花 ' + price + ' 星尘买第 ' + tier +
@@ -3053,9 +3061,12 @@ async function pTodoData() {
     pg('/api/tickets/fulfill', { items: [] }),
     // 心愿的条件到了、还没给他。同一张兑现清单，第三类（v44）
     pg('/api/wishes/to-fulfil', { items: [] }),
+    // 校准申诉（v45）。孩子对一次罚款 / 扣券提了异议，48 小时内得有人回他。
+    pg('/api/calibration/appeals', { items: [] }),
   ]);
   const tasks = r[0], ot = r[1], hlp = r[2], tk = r[3], rdm = r[4];
   const pendW = r[5], cash = r[6], subs = r[7], calib = r[8], fl = r[9], wfl = r[10];
+  const appeals = r[11];
   const items = [];
 
   // 券核销：时效最强（申请有 TTL，过期自动作废），排最上面
@@ -3071,8 +3082,11 @@ async function pTodoData() {
       title: x.who + ' 想用 ' + num(x.qty) + ' 张' + x.item,
       l1: (x.minutes ? num(x.minutes) + ' 分钟 · ' : '') +
         String(x.ts || '').slice(11, 16) + ' 提交 · ' + miniLeft(x.expire_at),
-      l2: x.can_now ? '券还在他手上，你点头才真扣' +
-        (tkWait ? '，点完先给他 ' + tkWait + ' 准备才计时' : '')
+      l2: x.can_now
+        ? (x.minutes
+          ? '券还在他手上，你点头才真扣' +
+            (tkWait ? '，点完先给他 ' + tkWait + ' 准备才计时' : '')
+          : '券还在他手上，你点头只是答应了；真办完还要到「兑现清单」里点一下')
         : '现在过不了闸门了：' + x.block_reason + '（点同意也会自动拒掉）',
       btn: { t: 'tk-ok', id: x.id, label: '同意' },
       alt: { t: 'tk-no', id: x.id, label: '拒绝' },
@@ -3211,6 +3225,19 @@ async function pTodoData() {
         : { t: x.kind === 'tk' ? 'fl-no' : 'rd-no', id: x.id, label: '这次没办' },
     });
   });
+  // 校准申诉（v45）。孩子对一次罚 / 扣提了异议，球在他手上时他喊了一声，
+  // 现在球在这儿。理由原话摆出来 —— 家长判的是「他那句话成不成立」，
+  // 看不到原话就只能凭印象，那这道申诉等于白设。
+  appeals.items.forEach(x => {
+    items.push({
+      key: 'appeal', ico: 'i-fix', tone: 'var(--purple)', id: x.calibration_id,
+      title: x.who + '对一次校准提了申诉',
+      l1: '因为：' + x.title + '（' + (x.effect_text || '') + '）',
+      l2: '他说：' + (x.appeal_reason || ''),
+      btn: { t: 'ap-ok', id: x.calibration_id, label: '同意，还给他' },
+      alt: { t: 'ap-no', id: x.calibration_id, label: '不同意' },
+    });
+  });
   // 设置改动待确认
   if (dash.todo && dash.todo.settings) {
     items.push({
@@ -3222,7 +3249,8 @@ async function pTodoData() {
     });
   }
   return { dash: dash, items: items, tasks: tasks, calib: calib, pendW: pendW,
-    cash: cash, ot: ot, hlp: hlp, rdm: rdm, subs: subs, tk: tk, fulfil: fulfil };
+    cash: cash, ot: ot, hlp: hlp, rdm: rdm, subs: subs, tk: tk, fulfil: fulfil,
+    ap: appeals };
 }
 
 /* 待办卡的分类词。首页那张「待审核」的副标就从这同一串 item 上数出来 ——
@@ -3230,7 +3258,21 @@ async function pTodoData() {
 const TODO_LABEL = {
   tk: '券', fix: '修复', claim: '心愿', task: '任务', wish: '心愿',
   ot: '加时', cash: '零花钱', help: '求助', fulfil: '兑现', set: '设置',
+  appeal: '申诉',
 };
+
+/* 「等你点头」的六栏（v45）。合并口径：把「球在谁手上、要不要动手」相同的并一栏 ——
+   任务与修复都是「他交了活，等你点头」；心愿那两条都是心愿上的事；
+   加时与零花钱都是「花他自己的星尘」；求助与申诉都是「他主动找你说了一句话」。
+   栏序 = 时效，最急的最上；空栏不渲染。 */
+const TODO_GROUPS = [
+  { t: '券和卡', keys: ['tk'] },
+  { t: '任务', keys: ['task', 'fix'] },
+  { t: '心愿', keys: ['claim', 'wish'] },
+  { t: '花星尘', keys: ['ot', 'cash'] },
+  { t: '他找你说的事', keys: ['help', 'appeal'] },
+  { t: '设置', keys: ['set'] },
+];
 function pTodoBreakdown(TD) {
   const cnt = {};
   TD.items.forEach(x => {
@@ -3280,7 +3322,8 @@ function pRejectSheet(o) {
 function tkRejectSheet(id) {
   pRejectSheet({
     title: '不同意这次核销',
-    hint: '拒绝必须写理由，孩子能看到。别只写「不行」，写清楚为什么，他下次才知道怎么才行。',
+    hint: '拒绝必须写理由，你写的这句他那边会看到全文。别只写「不行」，' +
+      '说清为什么，他下次才知道怎么才行。',
     placeholder: '例如：今天作业还没写完，写完再说', ok: '拒绝',
     path: '/api/tickets/resolve', body: { request_id: id, approve: false }, toast: '拒了',
   });
@@ -3431,9 +3474,12 @@ function bindTodoActions(TD) {
         return askSheet({
           title: (x.who || '') + ' 想用 ' + num(x.qty) + ' 张' + (x.item || ''),
           line: oldNote, warn: !!oldNote,
-          hint: wait
-            ? '点完先给他 ' + wait + ' 准备，之后才开始计时，这段时间不算在券里。'
-            : '点完这 ' + num(x.qty) + ' 张券立刻生效，倒计时开始走。',
+          hint: '你点完他那边会看到「爸爸妈妈 · 几点同意的」。' +
+            (x.minutes
+              ? (wait ? '然后还有 ' + wait + ' 准备，才真正开始计时，这段时间不算在券里。'
+                : '紧接着开始计时。')
+              : '　陪伴 / 独处 / 好友这几种券不一样：批了只是你答应了，' +
+                '还得真腾出时间去做，办完回到「兑现清单」里点一下才算数。'),
           ok: oldNote
             ? '同意，按老的 ' + num(x.minutes_then) + ' 分钟/券'
             : '同意，扣他 ' + num(x.qty) + ' 张券',
@@ -3525,95 +3571,155 @@ function bindTodoActions(TD) {
           closeSheet(); await done('记下了，等他说收到');
         });
       }
+      // 校准申诉裁决（v45）。孩子对一次罚 / 扣提了异议，球踢到这儿。
+      // 判的是「他写的那句理由成不成立」，所以两边的弹层都要把孩子原话再摆一遍 ——
+      // 弹层一盖住待办卡，家长就看不见理由了，只凭印象点「不同意」最伤人的是他。
+      if (t === 'ap-ok') {
+        const x = ((TD.ap || {}).items || []).filter(y => y.calibration_id === id)[0] || {};
+        return askSheet({
+          title: '同意申诉 · ' + (x.who || ''),
+          line: '他说：' + (x.appeal_reason || '（没写理由）'),
+          hint: '这次扣下的一并还给他（星尘、欠款、券、券欠账、做不完的补活）。' +
+            '许愿池里那笔罚款留在池子里不动。',
+          ok: '同意，把扣的还给他',
+        }, async () => {
+          const r = await api('POST', '/api/calibration/' + id + '/appeal', { agree: true });
+          closeSheet();
+          return done((r.refund && r.refund.text) || '还回去了');
+        });
+      }
+      if (t === 'ap-no') {
+        const x = ((TD.ap || {}).items || []).filter(y => y.calibration_id === id)[0] || {};
+        return askSheet({
+          title: '不同意 · ' + (x.who || ''),
+          line: '他说：' + (x.appeal_reason || '（没写理由）'),
+          hint: '他那边会收到一句「申诉没通过」，这条照旧。点一下「知道了」' +
+            '才算结掉，一直不点也没关系。',
+          ok: '不同意，照旧',
+        }, async () => {
+          await api('POST', '/api/calibration/' + id + '/appeal', { agree: false });
+          closeSheet(); await done('回他了');
+        });
+      }
       if (t === 'set-look') return openQA('settings');
     } catch (e) { err(e); }
   }));
 }
 
 /* ================================================================== 家长端 · 总览 */
-/* 家长打开这一页要回答三件事：现在正在发生什么、今晚我还要办几件、
-   两个孩子各自怎么样。顺序就按这个来，「最近发生」压在最下面。
-   家长端不显示星球等级 —— 等级只在孩子端出现，这里一个数字都不给。 */
+/* 家长打开这一页要回答三件事：现在正在发生什么、今天我还要办几件、
+   那个孩子这一周怎么样。顺序就按这个来，「最近发生」压在最下面。
+   家长端不在这一屏摆星球等级 —— 等级去孩子详情页看。 */
 async function renderAdminHome(v) {
   const TD = await pTodoData();
   const r = await Promise.all([
     pg('/api/kids/overview', { items: [] }),
     pg('/api/tickets/playing', { items: [] }),
-    pg('/api/feed?limit=10&recent=6', { items: [], recent: [], total: 0 }),
+    pg('/api/feed?limit=10&recent=8', { items: [], recent: [], total: 0 }),
   ]);
   const ov = r[0], pl = r[1], fd = r[2];
   const kids = (ov.items || []);
   const n = TD.items.length;
 
-  // 还没打分的孩子。首页那句「今天还没给小满打分」和速览里的「未打」说的是同一件事，
-  // 说法必须一样 —— 一个写「还没打」、一个写「0/7」，家长会以为孩子真的拿了 0 分。
-  // 「0 分」和「没打分」在规则里本来就是两件事。
+  // 还没打分的孩子。「0 分」和「没打分」在规则里是两件事：没打分是大人漏了，
+  // 不该写成孩子一分没得。这个数只在下面那张卡的橙带上报一次 —— 页头副标、
+  // 右上角铃铛角标、卡片原来各说一遍，同一件事在一屏里说了三遍。
   const unscored = kids.filter(k => k.today && !k.today.scored && !k.today.transition);
 
+  // 总览盯的是哪一个孩子。切它只换下面那张详情卡 —— 正在玩 / 今天要办的事 /
+  // 最近发生都是全家的事，跟着人换会让人以为「这会儿只剩他要管」。
+  const cur = kids.filter(k => k.member_id === S.homeKid)[0] || kids[0] || null;
+
+  // 右上角原来挂通知铃铛。撤掉，位置让给切孩子（跟打分页右上角同一枚组件）。
   let h = '<div class="page-head">' +
     '<div class="left"><div class="head-line">' +
     '<span class="heading-page">' + esc(pHello()) + '</span>' +
     '<span class="badge-pilot">领航员</span></div>' +
-    '<span class="caption--warm">' + esc(pDayLine()) + ' · ' +
-    (unscored.length
-      ? '今天还没给' + unscored.map(k => esc(k.name)).join('、') + '打分'
-      : '今天的分都记上了') + '</span></div>' +
-    '<button class="bell" type="button" data-go="review">' + pic('i-bell', 20) +
-    (n ? '<span class="dot">' + n + '</span>' : '') + '</button>' +
+    '<span class="caption--warm">' + esc(pDayLine()) + '</span></div>' +
+    (kids.length > 1
+      ? '<div class="right">' + pKidSwitch(cur ? cur.member_id : null) + '</div>'
+      : '') +
     '</div>';
 
   // 正在玩：有时效，家长晚看两分钟那一段就过去了，所以排在最前面
   h += playingHTML(pl.items);
 
-  h += '<div class="stack"><div class="sec-head"><span class="sec-title">今晚要办的事</span>' +
+  // 今天要办的事。这个区从来不只关晚上 —— 白天交上来的任务也落在这里，
+  // 写「今晚」是错的。两张卡并排，状态词压在实心橙带上。
+  h += '<div class="stack"><div class="sec-head"><span class="sec-title">今天要办的事</span>' +
     '<span class="sec-link" data-go="review">全部 ' + n + ' 件</span></div>' +
-    '<div class="grid2">' +
-    '<div class="card" style="cursor:pointer" data-go="score">' +
-    '<div class="kv" style="margin-bottom:6px">' + pic('i-card-a', 15, '', 'var(--orange)') +
-    '<span class="caption--warm" style="font-size:11px">今日打分</span></div>' +
-    '<div class="num num--sm">' + (unscored.length ? '还没打' : '都打过') + '</div>' +
-    '<div class="caption" style="margin-top:4px">' +
-    (unscored.length ? unscored.map(k => esc(k.name)).join('、') + ' · 点一下就能打'
+    '<div class="ask-row">' +
+    '<div class="ask-card" data-go="score">' +
+    '<div class="ask-band"><span class="ask-band-l">' + pic('i-card-a', 14, '', '#fff') +
+    '<span>今日打分</span></span><b>' + (unscored.length ? '还没打' : '都打过') + '</b></div>' +
+    '<div class="ask-body">' +
+    (unscored.length
+      ? esc(unscored.map(k => k.name).join('、')) + ' · 点一下就能打'
       : '今天没有再要打的了') + '</div></div>' +
-    '<div class="card" style="cursor:pointer" data-go="review">' +
-    '<div class="kv" style="margin-bottom:6px">' + pic('i-card-b', 15, '', 'var(--orange)') +
-    '<span class="caption--warm" style="font-size:11px">待审核</span></div>' +
-    '<div class="num num--sm">' + n + ' 件</div>' +
-    '<div class="caption" style="margin-top:4px">' + esc(pTodoBreakdown(TD)) + '</div></div>' +
+    '<div class="ask-card" data-go="review">' +
+    '<div class="ask-band"><span class="ask-band-l">' + pic('i-card-b', 14, '', '#fff') +
+    '<span>待审核</span></span><b>' + num(n) + ' 件</b></div>' +
+    '<div class="ask-body">' + esc(pTodoBreakdown(TD)) + '</div></div>' +
     '</div></div>';
 
-  // 孩子速览：一人一行，永远列全，不受「现在看的是谁」影响 ——
-  // 家长想扫一眼「今天俩孩子各自怎么样」，不该还得先切两次人。
-  h += '<div class="stack"><div class="sec-head"><span class="sec-title">孩子速览</span>' +
-    '<span class="sec-link" data-go="family">全部 ' + kids.length + ' 位</span></div>' +
-    '<div class="card" style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">';
-  if (!kids.length) h += '<div class="empty">还没有孩子账号</div>';
-  kids.forEach((k, i) => {
-    const cyc = k.cycle;
-    const full = cyc && cyc.tier ? cyc.tier.threshold : 49;
-    h += '<div style="display:flex;align-items:center;gap:12px;cursor:pointer" data-kid="' +
-      k.member_id + '"' +
-      (i ? ';' : '') + '>' +
-      pAvatar(k, 44, i) +
+  // 选中的那个孩子这一周：拿了多少、够哪一档、差多少升档、手上有多少东西。
+  // 标题只留名字，卡里的数字全来自 /api/kids/overview，不另开接口。
+  if (!cur) {
+    h += '<div class="stack"><div class="card"><div class="empty">还没有孩子账号</div></div></div>';
+  } else {
+    const cyc = cur.cycle;
+    // 进度条的本周满格 = 要打分的天数 × 每天固定分（全勤 7 天 × 7 = 49，假期周
+    // 由后端的 countable_days 算出来，别写死）。
+    // 不能用 cycle.fixed_score 当满格 —— 那是「到今天为止已经拿到的固定分」，
+    // 周期才过两天它就只等于 14，进度条会一上来就顶格、还看不出差多少升档。
+    const dayFull = (cur.today && cur.today.full) || 7;
+    const full = cyc ? (cyc.countable_days || 7) * dayFull : 49;
+    const energy = cyc ? cyc.energy : 0;
+    const tier = cyc && cyc.tier;
+    const nt = cyc && cyc.next_tier;
+    const pct = full ? Math.min(100, Math.round(energy * 100 / full)) : 0;
+    // 下一档的门槛在整条进度条上的位置（能量门槛 = 箱门槛 × 出勤系数）
+    const mark = (nt && full)
+      ? Math.min(100, Math.round(nt.threshold * (cyc.ratio || 1) * 100 / full)) : 0;
+    const tl = (cur.holdings && cur.holdings.ticket_list) || [];
+    const cl = (cur.holdings && cur.holdings.card_list) || [];
+    // 娱乐券 = 娱乐券那张券的量。道具 = 其余几种券 + 所有卡（WW先生 2026-09-27 定）。
+    const fun = tl.filter(t => t.code === 'ticket_fun').reduce((a, b) => a + b.qty, 0);
+    const prop = tl.filter(t => t.code !== 'ticket_fun').reduce((a, b) => a + b.qty, 0) +
+      cl.reduce((a, b) => a + b.qty, 0);
+
+    h += '<div class="stack"><div class="sec-head">' +
+      '<span class="sec-title">' + esc(cur.name) + '</span>' +
+      '<span class="sec-link" data-kiddetail="' + cur.member_id + '">看明细 ›</span></div>' +
+      '<div class="card">' +
+      '<div style="display:flex;align-items:center;gap:11px">' +
+      // kids_overview 的每一项不带 role，补一个再交给人像出口，
+      // 否则它按「不是孩子」挑图，两个孩子会顶同一张家长头像。
+      pAvatar(Object.assign({ role: 'child' }, cur), 44, kids.indexOf(cur)) +
       '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">' +
       '<span style="font-size:16px;font-weight:700;color:var(--ink-title)">' +
-      esc(k.name) + '</span>' +
-      '<span class="caption--warm">本周能量 ' + num(cyc ? cyc.energy : 0) + '/' + num(full) +
-      ' · 星尘 ' + num(k.stardust) + '</span></div>' +
-      '<div style="text-align:right;flex:none">' +
-      (k.today && k.today.transition
-        ? '<div class="num--state" style="color:var(--ink-3)">过渡日</div>'
-        : (k.today && k.today.scored
-          ? '<div class="num num--lg" style="font-size:17px">' + num(k.today.score) + '/' +
-            num(k.today.full) + '</div>'
-          : '<div class="num--state">未打</div>')) +
-      '<div class="caption">今天</div></div></div>';
-  });
-  h += '</div></div>';
+      esc(cur.name) + '</span>' +
+      '<span class="caption--warm">本周能量 ' + num(energy) + ' 分</span></div>' +
+      '<div style="flex:none;display:flex;flex-direction:column;align-items:center;gap:2px">' +
+      (tier ? glyph(tier.icon, 'box', 34) : '') +
+      '<span class="caption--warm">' + esc(tier ? tier.name : '还没到') + '</span></div></div>' +
+      '<div class="home-bar"><i style="width:' + pct + '%"></i>' +
+      (mark ? '<span class="home-mark" style="left:' + mark + '%"></span>' : '') + '</div>' +
+      '<div class="home-bar-note">' +
+      (tier ? '已够「' + esc(tier.name) + '」' : '还没到第一档') +
+      (nt ? ' · 差 ' + num(nt.need) + ' 分升「' + esc(nt.name) + '」' : ' · 已经是最高一档') +
+      '</div>' +
+      '<div class="kstats">' +
+      '<div><span>星尘</span><strong>' + num(cur.stardust) + '</strong></div>' +
+      '<div><span>娱乐券</span><strong>' + num(fun) + '</strong></div>' +
+      '<div><span>道具</span><strong>' + num(prop) + '</strong></div>' +
+      '<div><span>在做</span><strong>' + num(cur.doing) + '</strong></div>' +
+      '</div></div></div>';
+  }
 
-  // 最近发生：只放两条，其余的点进日志页。首页要的是「看一眼有事没事」，
-  // 而不是把账本摊在第一屏上。
-  const recent = (fd.recent || []).slice(0, 2);
+  // 最近发生：放五条。首页要的是「看一眼今天怎么了」，再多就成摊账本了。
+  // 接口那边 recent 也提到 8，不然凑不满五条真数据。
+  const recent = (fd.recent || []).slice(0, 5);
   h += '<div class="stack"><div class="sec-head"><span class="sec-title">最近发生</span>' +
     '<span style="display:flex;align-items:center;gap:8px">' +
     '<span class="pill" style="font-size:11px;color:var(--orange-deep);cursor:pointer" ' +
@@ -3632,8 +3738,12 @@ async function renderAdminHome(v) {
   v.innerHTML = h;
   bindTodoActions(TD);
   $$('#view [data-go]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.go)));
-  $$('#view [data-kid]').forEach(el => el.addEventListener('click', () => {
-    S.kidId = +el.dataset.kid; pGo('kid');
+  // 切孩子只重画这一屏。别碰 S.target —— 那是打分页正在打的人。
+  $$('#view .kid-switch button[data-kid]').forEach(el => el.addEventListener('click', () => {
+    S.homeKid = +el.dataset.kid; render();
+  }));
+  $$('#view [data-kiddetail]').forEach(el => el.addEventListener('click', () => {
+    S.kidId = +el.dataset.kiddetail; pGo('kid');
   }));
 }
 
@@ -3667,7 +3777,7 @@ async function renderAdminReview(v) {
   let h = '<div class="page-head" style="flex-direction:column;gap:0">' +
     '<div style="display:flex;align-items:flex-start;justify-content:space-between;width:100%">' +
     '<div class="left"><span class="heading-page">审核</span>' +
-    '<span class="caption--warm">' + n + ' 件等你点头 · 最急的排在最上面</span></div>' +
+    '<span class="caption--warm">' + n + ' 件等你点头 · 按类别分栏，栏内最急的在上面</span></div>' +
     '<span class="pill pill--orange" style="font-size:13px">' + n + ' 件</span></div></div>';
 
   h += playingHTML(pl.items);
@@ -3677,24 +3787,28 @@ async function renderAdminReview(v) {
   // 兑现卡不摆在这儿：它们要的不是点头，是「真的去办」，收在下面那张兑现清单里。
   // 同一件事在两个地方各有一个按钮，家长会以为得点两次。
   const asks = TD.items.filter(x => x.key !== 'fulfil');
-  if (!asks.length) h += '<div class="card"><div class="empty">这会儿没有要点头的</div></div>';
-  asks.forEach(it => { h += pTodoCard(it); });
-  h += '</div>';
-
-  // 回执（v42）。家长这端原来缺的就是这一格：点了同意，弹个 toast 就从待办里
-  // 消失，他不知道那句话孩子看不看得见、接下来会发生什么。
-  if (TD.tk.items.length) {
-    const sec0 = +(TD.tk.start_delay || 0);
-    const wait0 = sec0 <= 0 ? ''
-      : (sec0 >= 60 ? num(sec0 / 60) + ' 分钟' : num(sec0) + ' 秒');
-    const anyChore = TD.tk.items.some(x => !x.minutes);
-    h += '<div class="notice ok"><b>回执</b> · 你点「同意」之后，他那边会看到「' +
-      '爸爸妈妈 · 几点同意的」' +
-      (wait0 ? '，然后还有 ' + wait0 + ' 准备，到点自己开始倒计时。' : '，紧接着开始计时。') +
-      '点「拒绝」必须写一句理由，他那边会看到全文。' +
-      (anyChore ? '　陪伴 / 独处 / 好友这几种不一样：批了只是你「答应」了，' +
-        '还要真的腾出时间去做，办完在下面那张清单里点掉。' : '') + '</div>';
+  if (!asks.length) {
+    h += '<div class="card"><div class="empty">这会儿没有要点头的</div></div>';
+  } else {
+    // 按类别分栏（v45）。原来十来件混成串，家长得从头扫到尾才知道有没有
+    // 自己要办的那一类；现在同类并到一栏，栏内还是原来那套「最急的在上面」。
+    TODO_GROUPS.forEach(g => {
+      const list = asks.filter(x => g.keys.indexOf(x.key) >= 0);
+      if (!list.length) return;
+      h += '<div class="sec-mini"><span class="sec-mini-t">' + esc(g.t) + '</span>' +
+        '<span class="sec-mini-c">' + list.length + ' 件</span></div>';
+      list.forEach(it => { h += pTodoCard(it); });
+    });
+    // 兜底：以后加了新类别忘了归类，卡不能凭空消失。
+    const known = TODO_GROUPS.reduce((a, g) => a.concat(g.keys), []);
+    const rest = asks.filter(x => known.indexOf(x.key) < 0);
+    if (rest.length) {
+      h += '<div class="sec-mini"><span class="sec-mini-t">其他</span>' +
+        '<span class="sec-mini-c">' + rest.length + ' 件</span></div>';
+      rest.forEach(it => { h += pTodoCard(it); });
+    }
   }
+  h += '</div>';
 
   // 兑现清单（v42）：答应了、还没办的两类并成一张单子，等得久的排前面。
   // 它是这一页上唯一「不催你立刻点、但你不点它就一直挂着」的一块。
@@ -3723,9 +3837,6 @@ async function renderAdminReview(v) {
           (x.kind === 'tk' ? 'fl-no' : 'rd-no') + '" data-id="' + x.id + '">这次没办</button>') +
         '</div></div></div>';
     });
-    h += '<div class="notice">券和卡：「办好了」要写一句办的是什么（例如「周六下午陪你搭乐高」），' +
-      '这句会出现在他那边的存档里。划掉的卡不退回 —— 但他能看到你点过。' +
-      '心愿那一条不一样：办完点「已经给他了」，他那边点过「我收到了」才算完。</div>';
   }
   h += '</div>';
 
@@ -3820,7 +3931,10 @@ async function renderKidDetail(v) {
   const d = await api('GET', '/api/kids/' + mid + '/detail');
   const ev = await api('GET', '/api/events?member_id=' + mid);
   const lv = d.level;
-  let h = backBar('home', d.name, lv ? 'LV ' + lv.level + '　' + lv.title : '');
+  // 哪来哪回：从总览「看明细」进来就退回总览，从设置 · 家庭和账号点进来就退回那儿。
+  // pGo 每跳一次都把来路记进 P_FROM，这里查它，别再写死一个目标 ——
+  // 写死 'home' 的话，家长从「家庭和账号」点进孩子，点返回会莫名其妙落到总览。
+  let h = backBar(pBack('kid'), d.name, lv ? 'LV ' + lv.level + '　' + lv.title : '');
 
   // 头部：等级、星尘、欠款
   h += '<div class="sec"><div class="card pad">' +
@@ -3855,7 +3969,7 @@ async function renderKidDetail(v) {
   if (d.cycle) {
     h += '<div class="sec"><div class="sec-h"><h2>这个周期</h2>' +
       '<span class="sub">' + esc(d.cycle.start_date) + ' 到 ' + esc(d.cycle.end_date) + '</span></div>' +
-      cycleCard(d.cycle) + '</div>';
+      cycleCard(d.cycle, d.today && d.today.full) + '</div>';
   }
 
   // 这一周
@@ -5658,7 +5772,7 @@ async function renderAdminRulesTicket(v) {
     ? rar('common').renew_cost_pct : 20;
   const renewDays = pCfg(sett, 'card.renew_days', 90);
   const sameCycle = pCfg(sett, 'card.same_cycle_limit', 1);
-  const warnDays = pCfg(sett, 'notify.card_expire_days', 14);
+  const warnDays = pCfg(sett, 'push.expire_warn_days', 14);
   const delayMax = pCfg(sett, 'holiday.delay_max_per_year', 2);
   const dailyFull = pCfg(sett, 'score.daily_full', 7);
 
@@ -7051,7 +7165,12 @@ async function renderAdminSettings(v) {
   }));
   $$('#view button[data-edit]').forEach(b => b.addEventListener('click', () => {
     const key = b.dataset.edit, cur = b.dataset.v;
-    pEditSheet(key, cur, () => render());
+    // 枚举项的可选值随按钮带过来（pSetItem 里 encodeURIComponent 过的），
+    // 拿不到就当普通数值项走手输那条路。
+    let opts = [];
+    try { opts = JSON.parse(decodeURIComponent(b.dataset.opts || '')) || []; }
+    catch (e) { opts = []; }
+    pEditSheet(key, cur, () => render(), opts);
   }));
 }
 
@@ -7083,17 +7202,40 @@ function pSetItem(it) {
     } else if (it.vtype === 'json') {
       h += '<span class="muted">' + (Array.isArray(it.value) ? it.value.length + ' 条' : 'JSON') +
         '</span>';
+    } else if (it.options && it.options.length) {
+      // v45：枚举项按钮上显示人话（「稀有」），不显示底下的 rare ——
+      // 家长看到的应该就是他能选的那几个词。
+      const hit = it.options.filter(o => String(o[0]) === String(val))[0];
+      h += '<button class="btn sm line" data-edit="' + it.key + '" data-v="' + esc(String(val)) +
+        '" data-opts="' + esc(encodeURIComponent(JSON.stringify(it.options))) + '">' +
+        esc((hit ? hit[1] : String(val)).slice(0, 12)) + '</button>';
     } else {
       h += '<button class="btn sm line" data-edit="' + it.key + '" data-v="' + esc(String(val)) +
-        '">' + esc(String(val).slice(0, 10)) + '</button>';
+        '" data-opts="">' + esc(String(val).slice(0, 10)) + '</button>';
     }
   }
   return h + '</div>';
 }
 
 /* 改一个数。原来写在设置弹层的回调里，现在弹层与页面都要用它，
-   抽出来 —— 两处各写一遍，改数值的地方迟早会对不上。 */
-function pEditSheet(key, cur, after) {
+   抽出来 —— 两处各写一遍，改数值的地方迟早会对不上。
+   枚举项（opts 非空）走选项那一路：不给人手打英文串，打错了后端会静默
+   退回默认值，家长看到「已更新」但功能没变。 */
+function pEditSheet(key, cur, after, opts) {
+  if (opts && opts.length) {
+    sheet('<h3>选一个</h3>' + opts.map(o =>
+      '<button class="btn wide' + (String(o[0]) === String(cur) ? '' : ' line') +
+      '" data-opt="' + esc(String(o[0])) + '">' + esc(o[1]) + '</button>').join(''),
+      b2 => {
+        $$('[data-opt]', b2).forEach(b => b.addEventListener('click', async () => {
+          try {
+            const r = await api('POST', '/api/settings', { key: key, value: b.dataset.opt });
+            closeSheet(); toast(r.message); after();
+          } catch (e) { err(e); }
+        }));
+      });
+    return;
+  }
   sheet('<h3>改一个数</h3><div class="field"><label>' + esc(key) + '</label>' +
     '<input id="nv" value="' + esc(cur) + '"></div><button class="btn wide" id="go">提交</button>',
     b2 => {

@@ -73,6 +73,24 @@ def list_calibration(ctx):
     return {"items": out}
 
 
+@route("GET", "/api/calibration/appeals")
+def list_calibration_appeals(ctx):
+    """等家长裁的申诉（v45）。带孩子的原话和这次扣了什么，不用再翻一遍。"""
+    ctx.as_parent()
+    return E.calibration_appeals()
+
+
+@route("POST", "/api/calibration/:id/appeal")
+def decide_calibration_appeal(ctx):
+    """裁决一条申诉。agree=1 同意（把这次扣的还回去），agree=0 拒绝。"""
+    me = ctx.as_parent()
+    cid = ctx.id_path("id", "校准 id")
+    r = E.decide_calibration_appeal(cid, ctx.truthy("agree", False), me["id"])
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "没裁成"))
+    return r
+
+
 # ---------------------------------------------------------------------------
 # 任务清单
 # ---------------------------------------------------------------------------

@@ -187,6 +187,10 @@ def _seed(conn, verbose: bool = False):
     for (k, v, t, g, l, note, s, lk) in seed_data.SETTINGS:
         if k in have:
             continue
+        if k in seed_data.HIDDEN_SETTINGS:
+            # v45：从设置页撤下的项不再种进新库。老库里已有的值不删，
+            # 由 GET /api/settings 过滤掉（见 HIDDEN_SETTINGS 的注释）。
+            continue
         if v == seed_data.BOOT_DATE_SENTINEL:
             v = _builtin_start_date(conn)     # 起用日默认落在建库那天
         conn.execute(
@@ -240,6 +244,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v42(conn)
     _migrate_v43(conn)
     _migrate_v44(conn)
+    _migrate_v45(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -580,6 +585,52 @@ def _needs_double_confirm():
     return int(n or 0) >= 2
 
 
+def _check_setting(key, vtype, value):
+    """校验一个设置值，返回 (ok, 说明)。
+
+    v45 补这一道。以前值是原样落库的：枚举项写成 stardust 之外的串、
+    时间写成 25:00、比例写成 300，后端一声不吭 —— 读取的时候静默退回默认值，
+    家长那头显示「已更新」，功能一点没变。这种「改了没反应」最难查，
+    不如在写入口就拦下来，把话说清楚。
+    """
+    opts = seed_data.SETTING_OPTIONS.get(key)
+    if opts:
+        allowed = [v for v, _ in opts]
+        if value not in allowed:
+            return False, "只能选 " + " / ".join(allowed)
+        return True, ""
+    fmt = seed_data.SETTING_FMT.get(key)
+    if fmt == "time":
+        if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", str(value or "")):
+            return False, "时间写成 20:30 这样"
+        return True, ""
+    if fmt == "date":
+        try:
+            datetime.strptime(str(value)[:10], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return False, "日期写成 2026-09-01 这样"
+        return True, ""
+    if vtype in ("int", "float"):
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            return False, "这一项要填数字"
+        if n != n or n in (float("inf"), float("-inf")):
+            return False, "这一项要填个数"
+        if n < 0:
+            return False, "不能填负数"
+        if n > 10000000:
+            return False, "这个数太大了"
+        if vtype == "int" and abs(n - round(n)) > 1e-9:
+            return False, "这一项要填整数"
+        if "pct" in key and n > 100:
+            return False, "这项是百分比，最多 100"
+        return True, ""
+    if vtype == "list" and not isinstance(value, list):
+        return False, "这一项要填一组值"
+    return True, ""
+
+
 def set_setting(key: str, value, actor_id=None, approve=False):
     """写设置。locked 的项拒绝写入。返回 (ok, message)。"""
     row = query_one("SELECT * FROM setting WHERE key=?", (key,))
@@ -589,6 +640,9 @@ def set_setting(key: str, value, actor_id=None, approve=False):
         return False, "这是红线项，改不了"
     if not row["editable"]:
         return False, "这一项不可修改"
+    ok, why = _check_setting(key, row["vtype"], value)
+    if not ok:
+        return False, why
     new_val = json.dumps(value, ensure_ascii=False)
     if row["value"] == new_val:
         return True, "值未变化"
@@ -1203,6 +1257,47 @@ def _shift_day(day: str, days: int) -> str:
         return d.strftime("%Y-%m-%d")
     except ValueError:
         return day[:10]
+
+
+def _migrate_v45(conn):
+    """v45：校准卡 —— 每条有后果的校准都要孩子回话（认了 / 申诉）。
+
+    以前校准只在家长端记一笔：孩子那头只有在「任务记录」里看到一行「修复」，
+    罚款和扣券连那一行都没有，他唯一能问的「凭什么」没有地方可说。
+
+    加八列，不动任何存量数据：
+
+      due_at         48 小时认罚期限。超时按「知道了」了结，不挂定时器，
+                     读写时惰性结算（engine.settle_due_calibrations）。
+      settled_at     空 = 还没了结，孩子端「在做」按它筛。
+      settle_kind    ack 认了 / timeout 超时 / granted 申诉通过。
+      appeal_status  none|pending|granted|rejected|expired。
+      appeal_reason  孩子写的理由原话，家长裁决时要看到这句。
+      appeal_at / appeal_by / decided_at  申诉与裁决的时刻、是谁点的。
+
+    存量校准一律当已了结（settled_at 补成它自己的 ts）：升级前它们没有卡，
+    也不该凭这一版突然冒出几十张待办砸到孩子脸上。
+
+    这句回填**只在真从老库升上来的那一次**做。迁移链每次 init_db 都全跑一遍，
+    而 init_db 每次起服务都会走一次 —— 不加这道门的话，「还没了结」的校准
+    每重启一次就被当成存量数据标掉一次，孩子端那几张卡一重启就没了。
+    判据用 _ensure_column 的返回值：列是新加的，才说明这次是真的在升级。
+    """
+    newly = False
+    for col, decl in (
+        ("due_at", "TEXT NOT NULL DEFAULT ''"),
+        ("settled_at", "TEXT NOT NULL DEFAULT ''"),
+        ("settle_kind", "TEXT NOT NULL DEFAULT ''"),
+        ("appeal_status", "TEXT NOT NULL DEFAULT 'none'"),
+        ("appeal_reason", "TEXT NOT NULL DEFAULT ''"),
+        ("appeal_at", "TEXT NOT NULL DEFAULT ''"),
+        ("appeal_by", "INTEGER"),
+        ("decided_at", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if _ensure_column(conn, "calibration", col, decl):
+            newly = True
+    if newly:
+        conn.execute("UPDATE calibration SET settled_at=ts WHERE settled_at=''")
 
 
 if __name__ == "__main__":
