@@ -6368,6 +6368,24 @@ async function renderParentWish(v) {
     (p.known ? pWishConds(w) : '<span class="caption">条件还没定，进度还算不了</span>') +
     '</div></div>';
 
+  // 条件到了，球在家长这边：去把事情办了，办完点这一颗。接口与话术跟审核页
+  // 那张兑现清单同一个（`data-td="wi-ok"`）—— 那边是「今天要办的事」列表，
+  // 这边是这条心愿自己的页，从哪儿点进来都能顺手办掉，不必再退回去找。
+  if (w.status === 'achieved') {
+    h += '<div class="card" style="display:flex;flex-direction:column;gap:10px">' +
+      '<span class="caption--warm" style="font-size:11px">条件够了。把东西买回来、' +
+      '约好时间、带他去办，办完点下面这一颗告诉他。</span>' +
+      '<div class="act-row">' +
+      '<button class="btn btn--primary" style="flex:1" data-wdeliver="' + w.id +
+      '">已经给他了</button></div></div>';
+  } else if (w.status === 'delivered') {
+    // 说过了，球在孩子那边。这一下只有他本人能点（接口不认大人），
+    // 所以这里只报状态、不给按钮 —— 给了家长会以为还得再点一次。
+    h += '<div class="card card--soft"><span class="caption--warm" style="font-size:11px">' +
+      '已经跟他说了（' + esc(String(w.delivered_at || '').slice(0, 10)) +
+      '），等他点一下「我收到了」这条才算完。他不点，它就一直挂在他那边。</span></div>';
+  }
+
   // 他交上来的那一条：确认和驳回是同一件事的两面，摆在一起
   claims.forEach(c => {
     h += '<div class="card" style="display:flex;flex-direction:column;gap:10px">' +
@@ -6398,6 +6416,21 @@ async function renderParentWish(v) {
   $$('#view [data-back]').forEach(el => el.addEventListener('click', () => {
     if (el.dataset.back === 'wish') { S.wishId = null; render(); return; }
     pGo(el.dataset.back);
+  }));
+  $$('#view button[data-wdeliver]').forEach(b => b.addEventListener('click', () => {
+    askSheet({
+      title: '已经给他了 · ' + (w.title || ''),
+      hint: '他那边会收到一句「爸爸妈妈说已经给你了」，等他点一下「我收到了」，' +
+        '这条心愿才算完。他不点，它就一直挂在他那边。',
+      ok: '记下，告诉他',
+    }, async () => {
+      try {
+        await api('POST', '/api/wishes/' + b.dataset.wdeliver + '/status',
+          { status: 'delivered' });
+        closeSheet(); toast('记下了，等他说收到');
+        await render();
+      } catch (e) { err(e); }
+    });
   }));
   $$('#view button[data-wclaim-ok]').forEach(b => b.addEventListener('click', async () => {
     askSheet({
@@ -6711,17 +6744,17 @@ async function wishSheet() {
   }
 
   // 条件到了，球在家长这边：去把事情办了。这一栏只报状态 —— 动作在审核页
-  // 那张兑现清单里（跟券、卡同一条口子），这儿再给一颗按钮，家长会以为
-  // 得点两次。
+  // 那张兑现清单里（跟券、卡同一条口子），心愿页点开那一条也有同一颗。
+  // 在这一层（弹层）里再给一颗，家长会以为得点两次。
   if (achieved.length) {
     h += '<div class="card" style="margin-top:10px"><div class="pad wband"><b>等你去满足</b>' +
-      '<span class="muted">条件到了 · 在审核页的兑现清单里办</span></div>' +
+      '<span class="muted">条件到了 · 在审核页兑现清单或心愿页点开这一条办</span></div>' +
       achieved.map(x => '<div class="item">' + glyph(x.icon, 'wish', 30) +
         '<div class="txt"><div class="nm">' + esc(x.title) +
         ' <span class="tag ok">已达成</span></div>' +
         '<div class="ds">条件　' + esc(wishCondText(x)) + '</div>' +
         '<div class="ds muted">' + esc(String(x.achieved_at || '').slice(0, 10)) +
-        ' 达成。办了以后在审核页点「已经给他了」，他那边才知道' +
+        ' 达成。办了以后点「已经给他了」，他那边才知道' +
         '</div></div></div>').join('') + '</div>';
   }
 

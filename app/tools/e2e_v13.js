@@ -2432,6 +2432,76 @@ async function walkTabs(page, tag) {
       }
     }
   }
+
+  /* v1.17：心愿详情页补的那颗「已经给他了」。以前这一屏只有文案，家长要办它
+     得退回审核页那张兑现清单去找。这条真点一次 —— 「界面在、按钮在、点了没
+     动静」是这一页栽过的跟头（`bindTaskPage` 那次），只查存在查不出来。
+     从接口挑一条真的 `achieved`，别写死标题：标题随时可能被改，接口不会。 */
+  const toDeliver = await page.evaluate(async () => {
+    const b = await (await fetch('/api/bootstrap', { credentials: 'same-origin' })).json();
+    for (const m of (b.members || [])) {
+      if (m.role !== 'child') continue;
+      const j = await (await fetch('/api/wishes?member_id=' + m.id,
+        { credentials: 'same-origin' })).json();
+      const w = ((j && j.items) || []).filter(x => x.status === 'achieved')[0];
+      if (w) return { name: m.name, id: w.id, title: w.title };
+    }
+    return null;
+  });
+  if (!toDeliver) {
+    bad('[v1.17] 演示库里没有「已达成」的心愿，心愿详情那颗「已经给他了」验不到');
+  } else {
+    await tabTo(page, '我的');
+    await page.waitForTimeout(700);
+    await clickSel(page, '#view [data-go="wish"]', '我的 → 心愿与许愿池');
+    const kb = page.locator('#view .kid-switch button')
+      .filter({ hasText: toDeliver.name }).first();
+    if (await kb.count()) { await kb.click(); await page.waitForTimeout(900); }
+    const wcard = page.locator('#view [data-wish="' + toDeliver.id + '"]').first();
+    if (!(await wcard.count())) {
+      bad('[v1.17] 心愿页上看不到那条已达成的心愿「' + toDeliver.title + '」');
+    } else {
+      await wcard.click();
+      await page.waitForTimeout(1000);
+      const dbtn = page.locator('#view button[data-wdeliver="' + toDeliver.id + '"]');
+      say('   已达成的心愿详情 · 「已经给他了」按钮 ' + (await dbtn.count()) + ' 颗');
+      if (!(await dbtn.count())) {
+        bad('[v1.17] 已达成的心愿详情里没有「已经给他了」那颗按钮');
+      } else {
+        await dbtn.first().click();
+        await page.waitForTimeout(700);
+        const okTxt = flat(await page.locator('#sheetBody #askGo').innerText());
+        say('   确认弹层主按钮: ' + okTxt);
+        if (okTxt.indexOf('记下') < 0) {
+          bad('[v1.17] 「已经给他了」确认弹层的主按钮文案不对：' + okTxt);
+        }
+        await page.locator('#sheetBody #askGo').click();
+        await page.waitForTimeout(1400);
+        const nowStatus = await page.evaluate(async id => {
+          const b = await (await fetch('/api/bootstrap', { credentials: 'same-origin' })).json();
+          for (const m of (b.members || [])) {
+            if (m.role !== 'child') continue;
+            const j = await (await fetch('/api/wishes?member_id=' + m.id,
+              { credentials: 'same-origin' })).json();
+            const w = (((j && j.items) || []).filter(x => x.id === id))[0];
+            if (w) return w.status;
+          }
+          return '(找不到这条)';
+        }, toDeliver.id);
+        say('   点过之后这条心愿的状态: ' + nowStatus);
+        if (nowStatus !== 'delivered') {
+          bad('[v1.17] 点了「已经给他了」但状态没走到 delivered，是 ' + nowStatus);
+        }
+        const det2 = flat(await page.locator('#view').innerText());
+        if (det2.indexOf('我收到了') < 0) {
+          bad('[v1.17] 交付之后详情页没写「等他点『我收到了』」');
+        }
+        if (await page.locator('#view button[data-wdeliver]').count()) {
+          bad('[v1.17] 交付之后那颗按钮还留着，应该换成一句说明 —— 收尾只有孩子本人能点');
+        }
+      }
+    }
+  }
   if (!pendSeen) bad('[v17] 演示库里没有挂起的心愿，这条路径没被验到');
   await page.screenshot({ path: path.join(SHOT, 'dad-wish-list.png'), fullPage: true });
 
