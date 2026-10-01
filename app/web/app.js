@@ -3874,14 +3874,17 @@ async function renderAdminReview(v) {
   //     「达成」，条件没到按下去挨的是红条，那颗按钮就是误导的来源；
   //   · 靠人判的那种等他把「我做到了」交上来，球才回到家长这边
   //     （那一条在「等你点头」里，不在这儿再给一次）。
-  // 撤心愿收进区块头那一颗：撤是低频动作，每行复制一遍的话，三行叠着
-  // 最右边就出现三颗一样的按钮，家长扫列表的落点正好压在它上面。
+  // 区块头右侧只留一颗「心愿单」，它是**进入心愿总台**的入口（定条件 / 驳回 /
+  // 你直接定一个都在那边），不是撤心愿的入口：
+  // 撤心愿只认发起人 —— 心愿只能是他自己许的，所以撤得掉的只有他本人，
+  // 家长这一侧一颗撤的按钮都不给（接口那边 active 阶段也是这么卡的）。
+  // 这颗以前写的就是「撤心愿」，点进去却压根没有撤的动作，纯误导。
   const wActive = (wishes.items || []).filter(w => w.status === 'active');
   h += '<div class="stack"><div class="sec-head"><span class="sec-title">还在攒的心愿</span>' +
     '<span style="display:flex;align-items:center;gap:8px;margin-left:auto">' +
     '<span class="sec-count">' + esc(mid ? memberName(mid) : '还没有孩子账号') +
     '　最多 ' + num(wishes.limit || 0) + ' 个</span>' +
-    '<button class="btn btn--ghost btn--sm" id="wManage">撤心愿</button></span></div>' +
+    '<button class="btn btn--ghost btn--sm" id="wManage">心愿单</button></span></div>' +
     '<div class="card">' +
     (wActive.length ? wActive.map(w => {
       const p = w.progress || {};
@@ -3922,8 +3925,11 @@ async function renderAdminReview(v) {
   // 事实，不该由谁按一下按钮才成立；家长在这条链路上的动作只有两个 ——
   // 条件到了去办（兑现清单里的「已经给他了」）、他交了作业式的说法时点头
   //（「等你点头」里的那条）。
-  // 撤心愿的入口收在区块头那一颗，点开的是心愿总台（wishSheet），
-  // 那边每条进行中的心愿都挂着一颗「撤掉这个心愿」。同一个动作只有一套文案。
+  // 区块头那颗开的是心愿总台（wishSheet），那边：
+  //   · 待定栏挂着「给它定条件」和「驳回」—— 条件还没定时家长可以说不，
+  //     这是「我不接这个愿」，要写理由、他看得见；
+  //   · 进行中那一栏没有「撤掉这个心愿」：心愿是他发起的，撤不撤他说了算，
+  //     家长在旁边按一下撤销等于把他的东西随手划掉（v1.18 摘的）。
   const wm = $('#wManage');
   if (wm) wm.addEventListener('click', () => wishSheet());
 }

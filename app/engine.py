@@ -1049,16 +1049,27 @@ def _settle_ticket_request(request_id, operator_id=None):
     # 还债方式。不销的话欠账会永远挂着（周期结算那套「达标清零」已经撤掉）。
     if it and it["code"] == FUN_CODE and r["minutes"]:
         try:
-            per_then = float((json.loads(r["gate"] or "{}").get("state") or {})
-                             .get("minutes") or 0)
-        except (TypeError, ValueError):
+            # gate 这一列存的就是申请那一刻的 state 本身（见 request_ticket 里
+            # json.dumps(g["state"])），不是「包着 state 的那一整包」。以前在这里
+            # 又剥一层 .get("state")，取到 None → per_then=0 → 下面那句的
+            # max(0, 0-实际时长) 恒为 0 → 欠账一笔都抵不掉：券每次照样扣短，
+            # 欠的分钟却永远挂着（扣 80 挂 20，之后每张券都再扣 20）。
+            # 同一份 gate 在 _minutes_change 里是直读的，两处写法不一致才漏的。
+            gate = json.loads(r["gate"] or "{}") or {}
+            if isinstance(gate.get("state"), dict):     # 兼容万一存了整包的形状
+                gate = gate["state"]
+            per_then = float(gate.get("minutes") or 0)
+        except (TypeError, ValueError, AttributeError):
             per_then = 0.0
         qty_now = float(r["qty"] or 1) or 1.0
         play_then = float(r["minutes"]) / qty_now
         paid = round(min(minutes_debt(r["member_id"]),
                          qty_now * max(0.0, per_then - play_then)), 2)
         if paid > 0:
-            add_ledger(r["member_id"], "fine", minutes=paid,
+            # day 一定要给：minutes_balance 按「day<=今天」逐天滚，day 是 NULL 的
+            # 行在这个比较里永远是 NULL、整行被丢掉 —— 还了也等于没还。
+            # （全项目写分钟账一共七处，只有这一处原来没带 day。）
+            add_ledger(r["member_id"], "fine", day=r["day"], minutes=paid,
                        note="用券时抵掉欠账 %g 分钟" % paid,
                        operator_id=operator_id or r["member_id"])
     # 什么时候开始跑：先按「现在 + 准备时间」。家长点头那一刻孩子不一定

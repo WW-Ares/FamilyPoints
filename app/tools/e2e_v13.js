@@ -1296,7 +1296,12 @@ async function walkTabs(page, tag) {
     ' #view .kcal-cell[data-kcd].is-zero');
   const nDays = await dayBtns.count();
   say('   月历可点的天: ' + nDays);
-  if (nDays < 5) bad('[v13] 月历里能点的天太少，是 ' + nDays + '（演示库这月打过分十几天）');
+  // 可点的天数上限就是「今天是这个月第几天」—— 演示库只能造到今天，
+  // 每月 1 号来收口时全月只有 1 天，写死 5 会在每个月初报假错。
+  const domNow = new Date().getDate();
+  if (nDays < Math.min(5, domNow)) {
+    bad('[v13] 月历里能点的天太少，是 ' + nDays + '（今天 ' + domNow + ' 号，上限就是它）');
+  }
   if (nDays) {
     await dayBtns.first().click();
     await page.waitForTimeout(600);
@@ -1455,8 +1460,9 @@ async function walkTabs(page, tag) {
   if (rev.indexOf('已发放的零花钱') < 0) bad('[v24] 审核页没有「已发放的零花钱」那一栏');
   // v44：心愿那一栏只报进度，一颗按钮都不给 —— 条件够了由 check_wish_ready
   // 当场落成「已达成」，它就从这儿消失、转到上面那张兑现清单里。以前每行挂一颗
-  // 「达成」，条件没到按下去挨的是红条，那颗按钮正是误导的来源。撤心愿照旧
-  // 收进区块头那一颗，不跟着每行复制（三行叠着最右边就是三颗一样的按钮）。
+  // 「达成」，条件没到按下去挨的是红条，那颗按钮正是误导的来源。
+  // 区块头那颗是**进心愿总台**的入口（定条件 / 驳回 / 你直接定一个），
+  // 不是撤心愿 —— 撤只认发起人，心愿只能是他自己许的，家长这边不给撤的口子。
   const wOk = await page.locator('#view button[data-wok]').count();
   const wNo = await page.locator('#view button[data-wx]').count();
   const wiOk = await page.locator('#view button[data-td="wi-ok"]').count();
@@ -1464,11 +1470,18 @@ async function walkTabs(page, tag) {
     ' 颗 · 兑现清单里的心愿 ' + wiOk + ' 条');
   if (rev.indexOf('还在攒的心愿') < 0) bad('[v44] 审核页没有「还在攒的心愿」那一栏');
   if (wOk) bad('[v44] 心愿列表还挂着「达成」按钮 —— 达成由系统判定，不该有人按');
-  if (wNo) bad('[v17] 心愿列表行还留着「取消」按钮，撤心愿该走区块头那颗');
+  if (wNo) bad('[v17] 心愿列表行还留着「取消」按钮，撤心愿不该出现在家长端');
   if (!wiOk) bad('[v44] 条件到了的心愿没进兑现清单');
   if (wiOk && rev.indexOf('已经给他了') < 0) bad('[v44] 兑现清单里没写「已经给他了」');
   if (await page.locator('#view #wManage').count() !== 1) {
-    bad('[v17] 心愿区块头没有「撤心愿」这一颗入口');
+    bad('[v17] 心愿区块头没有进心愿单那一颗入口');
+  }
+  /* v1.18：那颗按钮以前写着「撤心愿」，点进去却根本没有撤的动作 —— 撤只认
+     发起人，心愿只能是他自己许的。文案改成「心愿单」之后这里顺手卡一道：
+     谁再把它改回「撤」，e2e 当场报错。 */
+  const wmTxt = await page.locator('#view #wManage').first().innerText().catch(() => '');
+  if (wmTxt.indexOf('撤') >= 0) {
+    bad('[v1.18] 心愿区块头那颗写着「' + wmTxt + '」—— 家长端不该有撤心愿的口子');
   }
   /* v44：「最近的校准」那颗灰标签原来恒显「记录」—— 它读的是 c.effect.type，
      而存进去的 effect 里从来没有 type 这个键（罚款存 stardust/cash/debt/kept，
@@ -2240,7 +2253,10 @@ async function walkTabs(page, tag) {
   }
   if (!calCells) bad('[月度统计] 没有日历格子');
   // 当月只有到今天为止的日子能点。别写死 20，那是「今天几号」的函数。
-  if (calDays < 15) bad('[月度统计] 可点的日子太少：' + calDays);
+  // 同上：15 这个数在月初是到不了的，按今天是几号收口。
+  if (calDays < Math.min(15, new Date().getDate())) {
+    bad('[月度统计] 可点的日子太少：' + calDays + '（今天 ' + new Date().getDate() + ' 号）');
+  }
   const fullN = await page.locator('#view .cal-cell.is-full').count();
   if (!fullN && !(await page.locator('#view .cal-cell.is-part').count())) {
     bad('[月度统计] 演示库有整周打分，日历上却没有一个填了色的格子');
