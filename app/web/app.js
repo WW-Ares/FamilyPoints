@@ -3160,6 +3160,10 @@ async function pTodoData() {
     });
   });
   // 求助
+  //
+  // 次按钮（v1.20 补）：这张卡以前只有「核实发星尘」一颗，是全部待办卡里
+  // 唯一没有退路的。孩子误点一次，那条就永远挂着，而且求助的额度锁也跟着
+  // 卡住（引擎里「上一条还没核实就不许记新的」），他这一周再也求助不了。
   hlp.items.filter(x => !x.verified_at).forEach(x => {
     items.push({
       key: 'help', ico: 'i-check-circle', tone: 'var(--purple)', id: x.id,
@@ -3167,6 +3171,7 @@ async function pTodoData() {
       l1: x.detail,
       l2: '核实了发 1 星尘 —— 说「我卡住了」本身就值得记一笔',
       btn: { t: 'help-ok', id: x.id, label: '核实发星尘' },
+      alt: { t: 'help-no', id: x.id, label: '误点了，不算' },
     });
   });
   // 兑现清单：答应了、还没办的两类东西并成一张单子。
@@ -3356,6 +3361,21 @@ function cashRejectSheet(id) {
     path: '/api/cash/requests/' + id + '/resolve', body: { approve: false }, toast: '记下了',
   });
 }
+/* 求助以前没有这颗按钮，卡上只有「核实发星尘」——孩子误点一次，那条就
+   一直挂在待办里，而求助的额度锁也跟着卡住（引擎里「上一条还没核实就
+   不许记新的」），他这一周再也求助不了。
+   拒绝必须写理由，口径跟加时申请一样：不写理由就点不下去，孩子误点这种
+   小事本来就不该被当成「他不会」。 */
+function helpRejectSheet(id, x) {
+  x = x || {};
+  pRejectSheet({
+    title: '误点了，不算' + (x.name ? ' · ' + x.name : ''),
+    hint: '他原话说的是：' + (x.detail || '（没写）') +
+      '。写一句为什么不算，他那边会看到。他下次才知道什么样的求助算数。',
+    placeholder: '例如：按错了，他刚才在做数学卷子', ok: '销掉这条',
+    path: '/api/help/' + id + '/verify', body: { approved: false }, toast: '销掉了',
+  });
+}
 /* 「办好了」那一句必须写。孩子等的不是状态从「等安排」翻成「已兑现」——
    翻个状态他看不出自己等到了什么。一句「周六下午陪你搭乐高」才是回音，
    也是他下次还愿意攒券的理由。所以这个弹层没有「不写也能点」这条路。
@@ -3538,6 +3558,9 @@ function bindTodoActions(TD) {
           closeSheet();
           return done('批了 ' + num(r.cash) + ' 元，把现金给他');
         });
+      }
+      if (t === 'help-no') {
+        return helpRejectSheet(id, TD.hlp.items.filter(y => y.id === id)[0]);
       }
       if (t === 'help-ok') {
         const x = TD.hlp.items.filter(y => y.id === id)[0] || {};
@@ -5816,8 +5839,8 @@ async function renderAdminRulesTicket(v) {
     + ' 分钟，算同一轮</div>' +
     '<div class="gd-li">一轮上限：白天 ' + num(s.single_max || 3) + ' 张 / 晚间 '
     + num(s.evening_max || 2) + ' 张，加时各 +1</div>' +
-    '<div class="gd-li">硬停止判的是结束时间：上学日 ' + esc(s.curfew_school || '21:30')
-    + '，不用上学的日子 ' + esc(s.curfew_weekend || '22:00') + '</div>' +
+    '<div class="gd-li">硬停止判的是结束时间：明天要上学 ' + esc(s.curfew_school || '21:30')
+    + '，明天不用上学 ' + esc(s.curfew_weekend || '22:00') + '</div>' +
     '<div class="gd-li">一轮结束休息 ' + num(s.cooldown_minutes || 60)
     + ' 分钟；续费窗口看提交时刻，时段看此刻</div>' +
     '</div></div>';

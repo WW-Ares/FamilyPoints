@@ -1432,6 +1432,28 @@ async function walkTabs(page, tag) {
   }
   await page.screenshot({ path: path.join(SHOT, 'dad-review-ticket.png'), fullPage: true });
 
+  // v1.20：求助卡也有两颗按钮了 —— 主按钮「核实发星尘」，退路「误点了，不算」。
+  // 以前这张卡只有主按钮，孩子误点一次就一直挂着，还把他本周的求助额度锁死
+  // （引擎里「上一条还没核实就不许记新的」）。退路点开必须有写理由的地方：
+  // 拒绝必填，而且那句话孩子看得到。
+  const helpRows = await page.locator('#view [data-tdid="help"]').count();
+  const helpOk = await page.locator('#view button[data-td="help-ok"]').count();
+  const helpNo = await page.locator('#view button[data-td="help-no"]').count();
+  say('   求助待办: ' + helpRows + ' 条, 核实按钮 ' + helpOk + ', 退路按钮 ' + helpNo);
+  if (!helpRows) bad('[v1.20] 演示库里那条待核实的求助没出现在审核页');
+  if (helpOk !== helpNo) bad('[v1.20] 求助卡核实/退路按钮数量对不上：' + helpOk + ' vs ' + helpNo);
+  if (helpNo) {
+    await page.locator('#view button[data-td="help-no"]').first().click();
+    await page.waitForTimeout(500);
+    const helpSheet = flat(await page.locator('#sheetBody').innerText().catch(() => ''));
+    if (!/误点|不算/.test(helpSheet)) bad('[v1.20] 求助退路点开没弹出「误点了，不算」的弹层');
+    if (!(await page.locator('#sheet.on textarea, #sheet.on input').count())) {
+      bad('[v1.20] 求助退路弹层里没有写理由的地方');
+    }
+    await page.locator('#sheet').click({ position: { x: 5, y: 5 } });
+    await page.waitForTimeout(350);
+  }
+
   // v29：孩子交上来的那一条。以前「我做到了」是一个整条心愿的按钮，
   // 家长在审核页只看到「他说他做到了」，不知道指的是哪一条 —— 只能去问。
   const claimRows = await page.locator('#view [data-tdid="claim"]').count();

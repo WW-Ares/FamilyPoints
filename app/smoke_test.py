@@ -297,7 +297,33 @@ def main():
     fun = E.item_by_code("ticket_fun")
     fun_id = fun["id"]
     d0 = E.today()
-    sat = E.fmt(E.parse_day(d0) + timedelta(days=(5 - E.parse_day(d0).weekday()) % 7 or 7))
+    # 硬停止看的是**明天**（v47）。这一整组闸门用例都用 d0，所以先把「d0 的
+    # 明天」钉成要上学，否则同一份代码周五跑是 22:00、周日跑是 21:30，
+    # 「21:40 该被拒」这种断言在某些日子会自己翻掉。is_off=0 就是日历上
+    # 「明天调休上班」那种情形，优先级在周末之上。
+    db.execute("INSERT OR REPLACE INTO calendar_day (day, is_off, name, year, updated_at)"
+               " VALUES (?,0,'',?,?)",
+               (E.day_after(d0), int(E.day_after(d0)[:4]), E.now()))
+    # 下面按「明天身份」挑天的时候也要干净：除了上面钉死的那一天，
+    # holiday 表和 calendar_day 表都是空的（测试库刚建），is_off_day 一路
+    # 退到「只看周六周日」，判的就是规则本身。要是哪天测试开始造假期数据，
+    # 这里得跟着改成显式插 calendar_day 行。
+    def _find_day(want_off):
+        for i in range(1, 15):
+            d = E.fmt(E.parse_day(d0) + timedelta(days=i))
+            if E.is_off_day(E.day_after(d)) == want_off:
+                return d
+        return d0
+    school_soon = _find_day(False)   # 明天要上学 → 21:30
+    off_soon = _find_day(True)       # 明天不用上学 → 22:00
+
+    def _find_day_where(pred, span=22):
+        """往后找一天满足 pred。找不到返回 None —— 由断言去报，不在这里静默跳过。"""
+        for i in range(0, span):
+            d = E.fmt(E.parse_day(d0) + timedelta(days=i))
+            if pred(d):
+                return d
+        return None
     saved = {}
     for k in ("ticket.curfew_school", "ticket.curfew_weekend", "ticket.evening_after",
               "ticket.cooldown_minutes", "ticket.single_max", "ticket.evening_max",
@@ -462,9 +488,23 @@ def main():
     check("⑤ 硬停止：21:10 只够 1 张，要 2 张拒",
           _gate(2, "21:10")["code"] == "curfew", _gate(2, "21:10")["msg"])
     check("⑤ 硬停止：21:00 要 1 张放行", _gate(1, "21:00")["ok"], _gate(1, "21:00")["msg"])
-    check("⑤ 硬停止：上学日 21:30、周末 22:00 是两档",
-          (E.curfew_text(d0), E.curfew_text(sat)) == ("21:30", "22:00"),
-          (E.curfew_text(d0), E.curfew_text(sat)))
+    check("⑤ 硬停止：明天要上学 21:30、明天不用上学 22:00 是两档",
+          (E.curfew_text(school_soon), E.curfew_text(off_soon)) == ("21:30", "22:00"),
+          (school_soon, off_soon, E.curfew_text(school_soon), E.curfew_text(off_soon)))
+    # 判的是明天不是今天：周五明天周六不上学 → 22:00，周日本来放假但明天
+    # 周一要上学 → 21:30。这两条钉死「看的是哪一天」，只看两档值测不出来。
+    _fri = _find_day_where(lambda d: E.parse_day(d).weekday() == 4
+                           and E.is_off_day(E.day_after(d)))
+    _sun = _find_day_where(lambda d: E.parse_day(d).weekday() == 6
+                           and not E.is_off_day(E.day_after(d)))
+    if _fri and _sun:
+        check("⑤ 硬停止看的是明天：周五（明天周六不上学）放宽到 22:00",
+              E.curfew_text(_fri) == "22:00", (_fri, E.curfew_text(_fri)))
+        check("⑤ 硬停止看的是明天：周日（明天周一要上学）收到 21:30",
+              E.curfew_text(_sun) == "21:30", (_sun, E.curfew_text(_sun)))
+    else:
+        check("⑤ 硬停止看的是明天：找得到周五与周日（判定没退化成看今天）", False,
+              (_fri, _sun))
 
     # ⑥ 加时只放宽单次与晚间，不放宽硬停止，也不放宽前置
     _wipe()

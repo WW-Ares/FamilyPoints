@@ -246,6 +246,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v44(conn)
     _migrate_v45(conn)
     _migrate_v46(conn)
+    _migrate_v47(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -1364,6 +1365,65 @@ def _migrate_v46(conn):
     for key, old_note, note in renote:
         conn.execute(
             "UPDATE setting SET note=? WHERE key=? AND note=?", (note, key, old_note))
+
+
+def _migrate_v47(conn):
+    """v47：硬停止改看「明天」，求助加一条「误点了不算」的退路。
+
+    一、**硬停止判的是明天上不上学**（engine.curfew_of）。
+
+    原来判的是当天：今天周五要上学 → 21:30，哪怕明天周六不上学。今晚几点
+    收工，该由明天要不要早起上学决定，不由今天本身决定 —— 判据从
+    `is_off_day(day)` 换成 `is_off_day(day + 1 天)`。
+
+    换口径之后一周里两天会变：周五（明天周六不上学）从 21:30 放宽到 22:00，
+    周日（明天周一要上学）从 22:00 收到 21:30。调休上班的周六自动跟着走：
+    那天要上学，它前一天的周五就回到 21:30。
+
+    **翻倍不动**（engine.weekend_double_on 仍看当天）。翻倍回答的是
+    「今天值不值得多玩」，硬停止回答的是「今晚几点得睡」，两件事。
+    同理 ticket_use_state 的 `relaxed` 仍看当天：它是面值变化提示
+    （_minutes_change 判「这天的身份变了没有」）用的，跟着改会让周五到周六
+    把一次正常的状态变化误报成身份变了。
+
+    两个设置项的名字和说明跟着换口径，否则设置页写着「上学日」、代码按
+    「明天上学」判，家长改的时候不知道自己在改什么。下面这几段新文案与
+    seed_data.SETTINGS 里的一字不差，改一处就得改另一处。
+
+    二、**help_request 加 reject_note 列**（schema.sql 里已加，DDL 幂等）。
+
+    求助以前只有「核实发星尘」一颗按钮，没有退路。孩子误点一次，这条就一直
+    挂在待办里，而 engine.request_help 里「上一条还没核实就不许记新的」那道
+    锁也跟着卡住 —— 他这一周再也求助不了。verify_help 的 approved=False 分支
+    早就写好了（不发星尘、销掉记录），只是没人调它；调它的前提是家长得能说
+    出一句话来，所以要存理由（孩子看得见，口径同加时申请）。
+
+    老库里被拒的记录 reject_note 是空串 —— 那会儿就没这个字段，没有理由可补。
+    这不影响任何判定：拒绝时必填是在 verify_help 里新加的校验，只对往后新拒
+    的那些生效。
+    """
+    # 加列。SQLite 加不了 NOT NULL DEFAULT 的列在这张老表上是允许的，
+    # 但为了「老库里每一行都读得出这个键」（dict(r) 会带出它），
+    # DEFAULT '' 必须给，不然老行会是 NULL，判据那里要写两套。
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(help_request)")}
+    if "reject_note" not in cols:
+        conn.execute(
+            "ALTER TABLE help_request ADD COLUMN reject_note TEXT NOT NULL DEFAULT ''")
+
+    relabel = [
+        # key, 旧名, 新名, 新说明
+        ("ticket.curfew_school", "硬停止（上学日）", "硬停止（明天要上学）",
+         "今天之后的明天要上学，就在这个点之前收工。判的是明天：周五明天周六"
+         "不上学，按 22:00 收工；周日本身放假，但明天周一要上学，所以 21:30 收工。"
+         "加时申请也突破不了这条线。"),
+        ("ticket.curfew_weekend", "硬停止（不用上学的日子）", "硬停止（明天不用上学）",
+         "今天之后的明天不用上学（周末、国家法定假日、家长填的寒暑假），"
+         "用这个，可以比明天要上学那条放宽一点。调休上班的周末算要上学。"),
+    ]
+    for key, old_label, label, note in relabel:
+        conn.execute(
+            "UPDATE setting SET label=?, note=? WHERE key=? AND label=?",
+            (label, note, key, old_label))
 
 
 if __name__ == "__main__":

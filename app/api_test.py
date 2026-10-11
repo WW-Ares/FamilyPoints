@@ -968,6 +968,23 @@ def main():
     call("POST", "/api/help", {"member_id": GIRL, "detail": "数学第 8 题卡住了，不会列方程"}, actor=girl)
     call("GET", "/api/help", actor=dad)
     call("POST", "/api/help/1/verify", {"approved": True}, actor=dad)
+    # v47：求助多一条退路「误点了，不算」。以前这张待办卡只有「核实发星尘」，
+    # 孩子误点一次就永久卡住（引擎里「上一条还没核实就不许记新的」）。
+    # 拒绝必须写理由，跟加时申请一个口径 —— 孩子看得到。
+    call("POST", "/api/help", {"member_id": GIRL, "detail": "按错了"}, actor=girl)
+    call("POST", "/api/help/2/verify", {"approved": False}, actor=dad, expect_error=True)
+    call("POST", "/api/help/2/verify", {"approved": False, "reject_note": ""}, actor=dad,
+         expect_error=True)
+    call("POST", "/api/help/2/verify", {"approved": False, "reject_note": "按错了，他刚才在做卷子"},
+         actor=dad)
+    help2 = call("GET", "/api/help", actor=girl)
+    row2 = [x for x in (help2 or {}).get("items", []) if x.get("id") == 2]
+    check("销掉的那条不给星尘，理由留在记录里",
+          row2 and not row2[0]["stardust"] and row2[0]["reject_note"] == "按错了，他刚才在做卷子",
+          row2)
+    # 销掉之后「等他核实」那道锁要解开：孩子能重新记一条（以前被这条卡住）
+    r3 = call("POST", "/api/help", {"member_id": GIRL, "detail": "英语第 3 单元还没背"}, actor=girl)
+    check("锁解开：销掉一条之后孩子还能再记一条", r3 and r3.get("ok") and r3.get("request_id"), r3)
 
     print("\n--- 假期 ---")
     call("GET", "/api/holidays", actor=dad)

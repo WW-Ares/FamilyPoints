@@ -598,7 +598,10 @@ def post_help(ctx):
 def verify_help(ctx):
     me = ctx.as_parent()
     rid = ctx.id_path()
-    r = E.verify_help(rid, operator_id=me["id"], approved=ctx.truthy("approved", True))
+    # 拒绝要带理由，跟加时申请同一条口径（approved=False 时必填，
+    # 校验在 engine.verify_help 里；孩子能翻到这句话）。
+    r = E.verify_help(rid, operator_id=me["id"], approved=ctx.truthy("approved", True),
+                      reject_note=ctx.p("reject_note", ""))
     if not r.get("ok"):
         raise ApiError(r.get("msg", "核实不了"))
     return r

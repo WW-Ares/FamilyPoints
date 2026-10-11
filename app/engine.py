@@ -587,6 +587,11 @@ def is_off_day(day):
 
     券面值翻倍和硬停止两处都只认这一个函数 —— 分开判的话，改口径
     迟早只改掉一半，那天的账就又说不清了。
+
+    两处问的是不同的那一天：翻倍问「今天」（weekend_double_on 传 day），
+    硬停止问「明天」（curfew_of 传 day_after(day)）。函数是同一个，
+    问哪天是各 caller 自己的事 —— 所以节假日、调休、手填的假期在三处
+    都不会走样。
     """
     if not day:
         return False
@@ -632,16 +637,41 @@ def _minutes_between(a, b):
         return None
 
 
-def curfew_of(day, member_id=None):
-    """这天的硬停止时间（当天第几分钟）。上学日和不用上学的日子分开。
+def day_after(day):
+    """后一天（'YYYY-MM-DD'）。给「明天上不上学」这类判定用。
 
-    「不用上学」怎么判，全在 is_off_day() 里，跟券翻倍共用同一把尺子。
+    走 parse_day/fmt 而不是字符串加一天：跨月、跨年、闰年二月都由
+    datetime 处理，写死 +1 天会在 1 月 31 号那天算错。
+    """
+    try:
+        return fmt(parse_day(day) + timedelta(days=1))
+    except (TypeError, ValueError):
+        return ""
+
+
+def curfew_of(day, member_id=None):
+    """这天的硬停止时间（当天第几分钟）。
+
+    判的是**明天上不上学**，不是今天。今晚几点得睡，取决于明天要不要早起；
+    拿今天本身判的话，周五明明明天不上学却按 21:30 收工，周日本来放假却
+    因为明天周一要上学还放到 22:00 —— 两头都别扭。
+
+    「明天不用上学」怎么判，仍然全在 is_off_day() 里（家长填的假期 →
+    国家日历说放假 → 国家日历说调休上班 → 周六周日），节假日、调休、
+    手填的寒暑假全都自动跟着走，代码里不写死任何一天。
+
+    注意跟另外两处分清：
+      · 券面值翻不翻倍（weekend_double_on）看**当天** —— 那是「今天值
+        不值得多玩」。
+      · ticket_use_state 的 `relaxed` 也看**当天** —— 它是面值变化提示
+        （_minutes_change 判「这天的身份变了没有」）用的，跟着改会让
+        周五到周六把一次正常的状态变化误报成身份变了。
 
     晚睡卡在这里加进去：它是唯一一张能把这条线往后挪的卡，
     而且给孩子之前就已经限定了 30 分钟额度，红线（不碰安全与健康）
     仍然成立 —— 挪动的是家长自己设的那条线，不是孩子的睡眠。
     """
-    relaxed = is_off_day(day)
+    relaxed = is_off_day(day_after(day))
     key, dflt = ("ticket.curfew_weekend", "22:00") if relaxed else ("ticket.curfew_school", "21:30")
     base = _hhmm(db.cfg(key, dflt), _hhmm(dflt))
     if member_id:
@@ -7060,15 +7090,37 @@ def request_help(member_id, detail, day=None, operator_id=None):
     return {"ok": True, "request_id": rid, "left": cap - done, "note": "家长核实后发放"}
 
 
-def verify_help(request_id, operator_id=None, approved=True):
+def verify_help(request_id, operator_id=None, approved=True, reject_note=""):
+    """核实（发星尘）或者判为「误点了，不算」（销掉这条）。
+
+    以前没有第二条路：家长端那张待办卡上只有「核实发星尘」一颗按钮。孩子
+    误点一次，这条就一直挂在待办里，而 request_help 里「上一条还没核实就
+    不许记新的」那道锁也跟着卡住 —— 他这一周再也求助不了。
+
+    拒绝必须写理由，而且孩子看得见，口径跟加时申请一个：
+    「不是他不会」和「他按错了」是两件事，分开记着，第二次你才知道该
+    怎么跟他说话。写不出理由，就说明不该拒。
+
+    不给星尘（stardust=0），也不占本周的求助次数 —— 上限只数发了星尘的那些
+    （见 request_help 的 done 口径），所以这一条销掉之后他还能重新记。
+    销掉的同时那道「等他核实」的锁也解开了。
+    """
     r = db.query_one("SELECT * FROM help_request WHERE id=?", (request_id,))
     if not r:
         return {"ok": False, "msg": "记录不存在"}
     if r["verified_at"]:
         return {"ok": False, "msg": "已经核实过了"}
     if not approved:
-        db.execute("UPDATE help_request SET verified_by=?, verified_at=?, stardust=0 WHERE id=?",
-                   (operator_id, now(), request_id))
+        note = (reject_note or "").strip()
+        if not note:
+            return {"ok": False, "msg": "拒绝必须写理由，而且孩子能看到"}
+        db.execute(
+            "UPDATE help_request SET verified_by=?, verified_at=?, stardust=0,"
+            " reject_note=? WHERE id=?",
+            (operator_id, now(), note, request_id))
+        # 孩子按了「说一声」，结果得让他知道。闷掉他不知道的是哪一类：
+        # 他会一直以为那条还挂着，下一次就不敢按了。
+        push_notify(r["member_id"], "help", "这条求助没算", note)
         return {"ok": True, "stardust": 0}
     amt = float(db.cfg("help.stardust", 1))
     add_ledger(r["member_id"], "help", day=r["day"], stardust=amt,

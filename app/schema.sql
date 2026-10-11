@@ -480,6 +480,7 @@ CREATE TABLE IF NOT EXISTS help_request (
   day         TEXT    NOT NULL,
   week_key    TEXT    NOT NULL,
   detail      TEXT    NOT NULL,
+  reject_note TEXT    NOT NULL DEFAULT '',  -- 拒绝必填且孩子可见（同加时申请）
   verified_by INTEGER,
   verified_at TEXT,
   stardust    REAL    NOT NULL DEFAULT 1,
