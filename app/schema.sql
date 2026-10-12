@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS wish_pool_entry (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   pool_id   INTEGER NOT NULL,
   member_id INTEGER,
-  source    TEXT    NOT NULL,   -- fine|selfpay|task|penalty
+  source    TEXT    NOT NULL,   -- fine|selfpay|task|penalty|boost
   stardust  REAL    NOT NULL DEFAULT 0,
   cash      REAL    NOT NULL DEFAULT 0,
   note      TEXT    NOT NULL DEFAULT '',
@@ -372,7 +372,9 @@ CREATE TABLE IF NOT EXISTS wish_pool_entry (
 -- 光有一条 wish_pool_entry 不够：那里只有金额，说不清是哪一天漏了、
 -- 漏的是哪个孩子、条数几条。这一张表专门记那几句话。
 --
---   kind   penalty = 全家忘打卡的惩罚注入（当前只有这一种）
+--   kind   penalty = 全家忘打卡的惩罚注入（进池后按家长人数平摊，一人一条）
+--          fine    = 家长在「写校准」里发的罚款（记在被罚的孩子名下）
+--          boost   = 许愿加速卡（孩子选了爸爸或妈妈出资，记在那一方名下）
 --   day    触发日：被漏打的那一天，按自然日归属
 --   member_id  责任人；系统判定的写 NULL，由具体人承担的才写 id
 --   counted    这一笔算不算进目标进度（进度 = 所有 entry 求和，所以默认算）

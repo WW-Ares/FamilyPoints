@@ -482,7 +482,11 @@ def get_pool(ctx):
         logs = db.to_dicts(db.query(
             "SELECT * FROM wish_pool_log WHERE counted=0 AND COALESCE(stardust,0)>0"
             " ORDER BY id DESC LIMIT 20"))
+    # by_member 是「家里每个人各投了多少」。孩子是自己掏星尘投的，爸爸妈妈
+    # 那两格来自许愿加速卡（选了谁出资）和忘打卡罚款（平摊到两人头上）。
+    # 池子进度条下面那一排名字就取这里，前端不用自己再归一遍堆。
     return {"pool": p, "entries": entries, "logs": logs,
+            "by_member": (p or {}).get("by_member") or [],
             "templates": E.pool_templates()}
 
 

@@ -423,8 +423,10 @@ def use_item(ctx):
     me = ctx.as_member()
     mid = ctx.target_child()
     note = ctx.p("note", "")
+    # parent_id 只有许愿加速卡用得上：孩子当场点「由爸爸出资」还是「由妈妈出资」。
+    # 别的卡传了也不认 —— 那张卡没有出资方这回事。
     r = E.use_card(mid, str(ctx.need("code")), operator_id=me["id"], note=note,
-                   qty=ctx.f("qty", 1))
+                   qty=ctx.f("qty", 1), parent_id=ctx.i("parent_id"))
     if not r.get("ok"):
         raise ApiError(r.get("msg", "用不了"), 409)
     return r

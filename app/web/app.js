@@ -154,6 +154,18 @@ function shiftDay(day, n) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
     String(d.getDate()).padStart(2, '0');
 }
+/* 日期 / 时刻各自取一段。发任务那儿的「接取时限」要的是完整时刻
+   （「今天内」= 今晚 23:59:59，「24 小时」= 这一刻往后推一天），
+   光给一个日期在后端看来是当天 00:00。 */
+function dayOf(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+function timeOf(d) {
+  return String(d.getHours()).padStart(2, '0') + ':' +
+    String(d.getMinutes()).padStart(2, '0') + ':' +
+    String(d.getSeconds()).padStart(2, '0');
+}
 const WD = ['日', '一', '二', '三', '四', '五', '六'];
 function wd(day) { const p = day.split('-').map(Number); return WD[new Date(p[0], p[1] - 1, p[2]).getDay()]; }
 function memberName(id) {
@@ -2250,16 +2262,43 @@ function kReceipt(o) {
 }
 
 function useItemSheet(effect, holdingId, icon, name) {
+  /* 许愿加速卡是家里唯一一张「孩子发起、大人掏钱」的卡：卡上那 30 元是爸爸
+     妈妈真掏的，所以用它之前先定「这笔钱记在谁头上」。这一下由孩子来选 ——
+     这是他这张卡唯一的决定权，也是许愿池「每人投了多少」那两格的来处。
+     空着手点确认会被挡在这一层，卡不会被扣掉。 */
+  const needParent = effect === 'wish_accelerate';
+  const ps = needParent ? PARENTS() : [];
   sheet('<h3>用「' + esc(name || '这张卡') + '」</h3>' +
     '<p class="muted">用了就收不回来。有没有做到，家里人看得见。</p>' +
+    (needParent
+      ? '<div class="field"><label>这笔钱记在谁头上</label><div class="chips">' +
+        ps.map(m => '<button type="button" class="chip" data-pid="' + m.id + '">' +
+          esc(m.name) + '</button>').join('') + '</div>' +
+        '<p class="muted" style="margin:6px 0 0">' + (ps.length
+          ? '这 30 元是爸爸妈妈真出的，选谁就记在谁名下，许愿池里看得见。'
+          : '家里还没有爸爸妈妈的账号，这张卡现在用不了。') + '</p></div>'
+      : '') +
     '<div class="field"><label>用在哪件事上（可选）</label><input id="note" placeholder="例如：今晚的作业"></div>' +
     '<button class="btn wide" id="go">确认使用</button>', box => {
+      let pid = 0;
+      $$('.chip[data-pid]', box).forEach(c => c.addEventListener('click', () => {
+        pid = +c.dataset.pid;
+        $$('.chip[data-pid]', box).forEach(x => x.classList.remove('on'));
+        c.classList.add('on');
+      }));
       $('#go', box).addEventListener('click', async () => {
         const btn = $('#go', box);
+        // 没选出资人就别往后端发：先扣卡再被挡回来，孩子会以为卡没了
+        if (needParent && !pid) {
+          return err({ message: ps.length ? '先选一位出资的家长（爸爸或妈妈）'
+            : '家里还没有爸爸妈妈的账号，这张卡现在用不了' });
+        }
         btn.disabled = true;
         try {
-          const r = await api('POST', '/api/items/use', { member_id: S.me.id,
-            code: effectCode(effect), note: $('#note', box).value });
+          const body = { member_id: S.me.id, code: effectCode(effect),
+            note: $('#note', box).value };
+          if (needParent) body.parent_id = pid;
+          const r = await api('POST', '/api/items/use', body);
           closeSheet();
           kReceipt({
             k: r.status === 'pending' ? '交给他们了' : '用上了',
@@ -4326,7 +4365,7 @@ async function renderAdminPublish(v) {
     h += '<div class="pub-foot">' +
       '<button class="btn btn--primary btn--block" id="pSend">发出去</button>' +
       '<p class="caption" id="pFootTip" style="text-align:center">挂出去就进任务大厅 · ' +
-      '时限内没人接会自动下线，不罚任何人</p></div>';
+      '到点没人接也不会自己下线，撤不撤你来点</p></div>';
 
     v.innerHTML = h;
     bindPublishForm();
@@ -4446,7 +4485,7 @@ function bindPublishForm() {
     const hall = to === 'hall';
     $('#pHallOnly').style.display = hall ? '' : 'none';
     // 底部那句也得跟着换：派给孩子的任务不进大厅、没时限，原话就说错了
-    tip('#pFootTip', hall ? '挂出去就进任务大厅 · 时限内没人接会自动下线，不罚任何人'
+    tip('#pFootTip', hall ? '挂出去就进任务大厅 · 到点没人接也不会自己下线，撤不撤你来点'
                           : '直接派到他任务上 · 他做完你确认时发分');
   }));
   $$('#view .chip[data-s]').forEach(c => c.addEventListener('click', () => {
@@ -4471,7 +4510,11 @@ function bindPublishForm() {
       body.open_to_all = true; body.slots = slots;
       // 不限时（dl 0）传空串，后端存 NULL，它就不进那条过期清理；
       // 别的两档给一个具体的日子。
-      body.deadline = dl === 1 ? todayStr() : dl === 2 ? shiftDay(todayStr(), 1) : '';
+      // 后端拿它跟 now() 比的是时刻，只给一个日期等于当天 00:00 ——
+      // 选「今天内」发出去的那一刻它就已经过期了。
+      body.deadline = dl === 1 ? todayStr() + ' 23:59:59'
+        : dl === 2 ? dayOf(new Date(Date.now() + 864e5)) + ' ' + timeOf(new Date())
+        : '';
     } else {
       body.assignee_id = +to;
     }
@@ -6058,6 +6101,35 @@ async function renderParentKidGuide(v) {
   $$('#view [data-back]').forEach(el => el.addEventListener('click', () => pGo(el.dataset.back)));
 }
 
+/* 许愿池「每人投了多少」那一排。家里四口人都可能出现：孩子是自己掏星尘投的，
+   爸爸妈妈那两格来自许愿加速卡（孩子点名谁出资）和忘打卡罚款（平摊到两人头上）。
+   没有归属的老账归到「全家」那一格，不让它凭空消失。
+   孩子端心愿屋和家庭页用的是同一个，所以写成一个函数 —— 两处口径必须一致，
+   不然「爸爸投了多少」在两头的屏幕上会是两个数。
+
+   样式一律写行内：这一块同时出现在家长端（body.grown）和孩子端（body.kid），
+   而 .h / .g8 / .grow / .t-3 那几个排版类只在 body.kid 下才有定义，
+   搬过去家长端那一栏会散成一列。 */
+function poolByMemberHTML(list, rate) {
+  const rows = (list || []).filter(x => (+x.stardust || 0) > 0 || (+x.cash || 0) > 0);
+  if (!rows.length) return '';
+  const r = rate || 0.5;
+  return '<div style="margin-top:10px;padding-top:8px;' +
+    'border-top:1px dashed rgba(139,107,255,.3)">' +
+    '<div class="caption" style="margin-bottom:6px">每人投了多少</div>' +
+    rows.map(x => {
+      const m = x.member_id ? memberOf(x.member_id) : null;
+      const cash = (+x.cash || 0) || (+x.stardust || 0) * r;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">' +
+        (m ? avatarHTML(m, 26) : '<span class="av-tx" style="width:26px;height:26px;' +
+          'font-size:10px">' + esc(x.name || '全家') + '</span>') +
+        '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:600">' +
+        esc((m && m.name) || x.name || '全家') + '</span>' +
+        '<span style="font-size:11px;color:var(--ink-3)">' + num(x.stardust) + ' 星尘 · ¥' +
+        num(Math.round(cash * 100) / 100) + '</span></div>';
+    }).join('') + '</div>';
+}
+
 /* ================================================================== 家长端 · 家庭和账号 */
 /* 「家庭页」和「家人账号」合成的一屏。原来分两处：一处看全家攒了多少、
    一处开通行和改密码 —— 家里有谁、他们能不能进来，本来是一件事的两面，
@@ -6114,7 +6186,7 @@ async function renderFamily(v) {
       src[e.source] = (src[e.source] || 0) + ((e.cash || 0) || (e.stardust || 0) * rate);
     });
     const logs = (pool.logs || []).reduce((a, x) => a + (x.counted ? (x.stardust || 0) * rate : 0), 0);
-    const nameOf = { fine: '违约金', selfpay: '孩子投币', task: '任务扣款', penalty: '忘打卡注入' };
+    const nameOf = { fine: '违约金', selfpay: '孩子投币', task: '任务扣款', penalty: '忘打卡注入', boost: '许愿加速' };
     const parts = Object.keys(src).map(k => (nameOf[k] || k) + ' ¥' + num(Math.round(src[k] * 100) / 100));
     if (logs) parts.push('忘打卡注入 ¥' + num(Math.round(logs * 100) / 100));
     h += '<div class="bar bar--orange" style="margin-top:12px"><i style="width:' +
@@ -6123,8 +6195,10 @@ async function renderFamily(v) {
       num(Math.round(saved * 100) / 100) + ' · 还差 ¥' +
       num(Math.round(Math.max(0, target - saved) * 100) / 100) + '</span>' +
       '<p class="caption" style="margin:8px 0 0">' +
-      (parts.length ? '来源 · ' + esc(parts.join(' ＋ ')) : '还没有进账') +
-      '　（不清零、不退回）</p>';
+      (parts.length ? '来源 · ' + esc(parts.join(' ＋ ')) : '还没有进账') + '　（不清零、不退回）</p>' +
+      // 每人各投了多少：孩子动的是自己的星尘，爸爸妈妈那两格来自许愿加速卡
+      // （孩子点名谁出资）和忘打卡罚款（平摊到两人头上）。
+      poolByMemberHTML(pool.by_member, rate);
   } else {
     h += '<div class="empty">还没有全家目标</div>' +
       '<button class="btn btn--ghost wide" id="pPool">去设一个</button>';

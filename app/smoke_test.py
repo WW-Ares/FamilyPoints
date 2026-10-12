@@ -1541,9 +1541,21 @@ def main():
     check("日志里写着是哪两个孩子", "女儿" in log["kids_json"] and "儿子" in log["kids_json"],
           log and log["kids_json"])
     check("日志写着注入额", log["stardust"] == 100, log and log["stardust"])
-    entry = db.query_one("SELECT * FROM wish_pool_entry WHERE source='penalty'"
-                         " ORDER BY id DESC LIMIT 1")
-    check("池子流水那条标着 penalty", entry is not None and entry["stardust"] == 100, entry)
+    # v1.21：这笔罚款进池后按家长人数平摊，爸爸一条、妈妈一条（各 50 星尘 = 各 25 元）。
+    # 记成一条总账的话，「许愿池里每个人投了多少」这句话就说不出来。
+    ents = db.query("SELECT e.*, m.name FROM wish_pool_entry e LEFT JOIN member m"
+                    " ON m.id=e.member_id WHERE e.source='penalty'"
+                    " ORDER BY e.id DESC LIMIT 2")
+    check("池子流水标着 penalty 且拆成两条", len(ents) == 2, ents)
+    check("两条分别记在爸爸、妈妈名下",
+          sorted([(e["name"] or "") for e in ents]) == ["妈妈", "爸爸"],
+          [(e["name"], e["stardust"]) for e in ents])
+    check("两条各 50 星尘（合计仍 100）",
+          all(e["stardust"] == 50 for e in ents) and
+          sum(e["stardust"] for e in ents) == 100,
+          [(e["name"], e["stardust"]) for e in ents])
+    bm = {x["name"]: x["stardust"] for x in E.pool_progress()["by_member"]}
+    check("进度里看得到爸爸、妈妈各投了多少", bm.get("爸爸") == 50 and bm.get("妈妈") == 50, bm)
 
     again = E.ensure_missed_scores(day="2026-03-04", lookback_days=1)
     check("再跑一次不重复补", not again["filled"], again["filled"])

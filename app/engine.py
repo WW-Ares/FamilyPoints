@@ -2271,6 +2271,16 @@ def _kids():
     return db.query("SELECT * FROM member WHERE active=1 AND role='child' ORDER BY sort")
 
 
+def _parents():
+    """家里出钱的那两个人。
+
+    只在两处用到它：「许愿加速卡由谁出资」，以及「全家忘打卡的罚款记在谁
+    名下」。爸爸妈妈自己没有星尘账 —— 愿望达成时掏的是真钱，这里要的只是
+    把这笔出资落在谁头上，好让许愿池里能看见「爸爸投了多少、妈妈投了多少」。
+    """
+    return db.query("SELECT * FROM member WHERE active=1 AND role='parent' ORDER BY sort")
+
+
 def _day_snapshot(member_id, day):
     """某一天拿到了多少分、满分多少。没打过分也照样给数，前端好画空格子。"""
     dims = dimensions(day_mode(day))
@@ -2633,7 +2643,8 @@ def _feed_calibrations(member_id=None):
                 "effect_type": "debt", "effect_text": "欠 %g 星尘" % d,
                 "appeal_status": "none", "appeal_reason": "", "appeal_used": True,
                 "deadline": "", "hours_left": None,
-                "detail": "欠 %g 星尘。周期末先从星尘里抵扣，扣不完的滚一期就免掉，不会变成负数" % d,
+                "detail": "欠 %g 星尘。周期结算时先从到手的星尘里扣，扣不完的继续挂着（不会变成负数），" \
+                 "到赛季末才一笔清掉" % d,
                 "step": None, "steps": [], "percent": None, "text": "",
                 "rank": 4, "ts": last["ts"] if last else "",
             })
@@ -6718,8 +6729,14 @@ def _flush_pending_penalty(pool_id):
     v44：校准罚款（kind='fine'，家长在「发布·写校准」里发的）也走这条路，
     跟忘打卡那条（kind='penalty'）一起捞。元数一并汇总，池子那个「一共收了
     多少元」才不偏少。
+
+    v1.21：许愿加速卡（kind='boost'）也走这条路，而且补投时**不再并成一条
+    member_id=NULL 的总账**。并成一条的代价是「谁投的」这件事在池子里永远
+    查不出来 —— 忘打卡那 100 星尘是爸妈平摊的，加速卡那 30 元是孩子当场点
+    了某一个人的名字。分人入池之后，进度条下面那句「爸爸 50 / 妈妈 50 /
+    女儿 10」才说得出来。
     """
-    rows = db.query("SELECT * FROM wish_pool_log WHERE kind IN ('penalty','fine')"
+    rows = db.query("SELECT * FROM wish_pool_log WHERE kind IN ('penalty','fine','boost')"
                     " AND counted=0 AND COALESCE(stardust,0)>0 ORDER BY day, id")
     if not rows:
         return 0.0
@@ -6728,12 +6745,55 @@ def _flush_pending_penalty(pool_id):
         return 0.0
     cash = round(sum(float(r["cash"] or 0) for r in rows), 2)
     days = "、".join(r["day"] for r in rows)
-    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
-               " note, ts) VALUES (?,NULL,'penalty',?,?,?,?)",
-               (pool_id, total, cash, "欠着的罚款补投：%s" % days, now()))
     for r in rows:
+        _replay_pending_entry(pool_id, r)
         db.execute("UPDATE wish_pool_log SET pool_id=?, counted=1 WHERE id=?", (pool_id, r["id"]))
     return total
+
+
+def _replay_pending_entry(pool_id, log_row):
+    """把一条「先记着」的日志按它原本的归属重投一次。
+
+    penalty 是全家那笔，记在爸爸、妈妈名下各一半（他们平摊这次疏忽的代价，
+    池子里才看得出这笔不是凭空来的）；fine 与 boost 本来就有责任人，
+    原样落在那个人身上。
+    """
+    kind = log_row["kind"]
+    sd = round(float(log_row["stardust"] or 0), 2)
+    cash = round(float(log_row["cash"] or 0), 2)
+    if sd <= 0:
+        return
+    note = "欠着的钱补投：%s" % log_row["day"]
+    if kind == "penalty":
+        ps = _parents()
+        if len(ps) < 2:
+            db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust,"
+                       " cash, note, ts) VALUES (?,NULL,'penalty',?,?,?,?)",
+                       (pool_id, sd, cash, note, now()))
+            return
+        each_sd = round(sd / len(ps), 2)
+        each_cash = round(cash / len(ps), 2)
+        for p in ps:
+            db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust,"
+                       " cash, note, ts) VALUES (?,?,'penalty',?,?,?,?)",
+                       (pool_id, p["id"], each_sd, each_cash,
+                        "%s（忘打卡，%d 人平摊）" % (note, len(ps)), now()))
+        return
+    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
+               " note, ts) VALUES (?,?,?,?,?,?,?)",
+               (pool_id, log_row["member_id"], kind, sd, cash, note, now()))
+
+
+def _role_of(member_id):
+    """这个人是什么角色。查不到（id 为空、或人已停用）就落到「全家」那一格。
+
+    单独抽出来，是因为 db.query_one 回的是 sqlite3.Row：它没有 dict 的 .get，
+    `(row or {}).get(...)` 在真有一行的时候反而炸，而空结果又正好绕开它，
+    所以那句在自测里看不出毛病，一上真数据就挂。
+    """
+    r = db.query_one("SELECT role FROM member WHERE id=?", (member_id,)) \
+        if member_id else None
+    return (r["role"] if r else None) or "family"
 
 
 def pool_progress(pool_id=None):
@@ -6746,6 +6806,21 @@ def pool_progress(pool_id=None):
     d["collected_stardust"] = s["s"]
     d["collected_cash"] = s["c"]
     d["percent"] = round(s["s"] / p["target_stardust"] * 100, 1) if p["target_stardust"] else 0
+    # 每个人投了多少。家里四口人都可能出现在这一栏里：孩子是动自己星尘投的，
+    # 爸爸妈妈是「许愿加速卡选了谁」和「忘打卡罚款算在谁头上」这两笔。
+    # 没有 member_id 的那几条（老数据）归到「全家」那一格，不让它凭空消失。
+    d["by_member"] = []
+    for m in db.query("SELECT e.member_id mid, COALESCE(SUM(e.stardust),0) sd,"
+                      " COALESCE(SUM(e.cash),0) c FROM wish_pool_entry e WHERE e.pool_id=?"
+                      " GROUP BY e.member_id ORDER BY sd DESC", (p["id"],)):
+        d["by_member"].append({
+            "member_id": m["mid"], "name": member_name_of(m["mid"]) if m["mid"] else "全家",
+            # db.query_one 回的是 sqlite3.Row，没有 dict 的 .get —— 写成
+            # (row or {}).get() 在真查到一行的时候反而炸（只有 member_id 为空、
+            # 压根走不到这句时才碰不到）。池子里一有人名，GET /api/pool 就 500。
+            "role": _role_of(m["mid"]),
+            "stardust": round(float(m["sd"]), 2), "cash": round(float(m["c"]), 2),
+        })
     return d
 
 
@@ -6765,6 +6840,61 @@ def deposit_pool(member_id, stardust, pool_id=None, operator_id=None):
     db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, note, ts)"
                " VALUES (?,?,'selfpay',?,?,?)", (p["id"], member_id, stardust, "主动投币", now()))
     return {"ok": True, "pool": pool_progress(p["id"])}
+
+
+def _wish_boost_deposit(member_id, it, fx, parent_id, operator_id=None):
+    """许愿加速卡落地：把卡上那份钱投进许愿池，记在选中的家长名下。
+
+    这张卡是家里唯一一笔「孩子发起、大人掏钱」的账：30 元是爸爸妈妈真出的，
+    按 1 元 = calib.fine_per_yuan 星尘折成 60 星尘，砸进全家那个共同愿望。
+    孩子手上不会多一分星尘，爸妈账上也不会少 —— 他们本来就没有星尘账，
+    这笔钱的意义是「这个愿望往前走了 60」，不是一次结算。
+
+    所以它的状态直接是 done，不进兑现单：真金白银的事已经发生在体外，
+    再挂一条「等爸爸妈妈去办」的兑现单，是让家长为一个已经付过的动作再点一次。
+
+    没设目标时跟罚款那条路一样：先记 wish_pool_log（counted=0），
+    等立了池子由 _flush_pending_penalty 一并补投。记下来的钱不会丢。
+    """
+    cash = round(float(fx.get("cash", 0) or 0), 2)
+    if cash <= 0:
+        cash = round(float(db.cfg("calib.fine_amount", 5) or 0), 2)
+    per = float(db.cfg("calib.fine_per_yuan", 2) or 0)
+    sd = round(cash * per, 2)
+    who = member_name_of(parent_id)
+    kid = member_name_of(member_id)
+    pool = active_pool()
+
+    if not pool:
+        db.execute(
+            "INSERT INTO wish_pool_log (pool_id, kind, day, member_id, stardust, cash,"
+            " counted, note, ts) VALUES (NULL,'boost',?,?,?,?,0,?,?)",
+            (today(), parent_id, sd, cash,
+             "%s 用了许愿加速卡，%s 出资 %g 元（%g 星尘）先记着" % (kid, who, cash, sd), now()))
+        push_notify(member_id, "card", "许愿加速卡生效了",
+                    "%s 出资 %g 元（%g 星尘）已经记下来，等爸爸妈妈定了全家目标一起投进去。"
+                    % (who, cash, sd))
+        push_notify(None, "card", "%s 用了许愿加速卡" % kid,
+                    "由 %s 出资 %g 元（%g 星尘）。还没设全家目标，这笔先记着。"
+                    % (who, cash, sd))
+        return "%s 出资 %g 元（%g 星尘）已经记下来，等定了全家目标一起投进去" % (who, cash, sd)
+
+    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
+               " note, ts) VALUES (?,?,'boost',?,?,?,?)",
+               (pool["id"], parent_id, sd, cash,
+                "%s 用许愿加速卡，%s 出资" % (kid, who), now()))
+    db.execute(
+        "INSERT INTO wish_pool_log (pool_id, kind, day, member_id, stardust, cash,"
+        " counted, note, ts) VALUES (?,?,?,?,?,?,1,?,?)",
+        (pool["id"], "boost", today(), parent_id, sd, cash,
+         "%s 用了许愿加速卡，%s 出资 %g 元（%g 星尘）投进「%s」"
+         % (kid, who, cash, sd, pool["title"]), now()))
+    push_notify(member_id, "card", "许愿加速卡生效了",
+                "%s 出资 %g 元（%g 星尘），已经投进「%s」。" % (who, cash, sd, pool["title"]))
+    push_notify(None, "card", "%s 用了许愿加速卡" % kid,
+                "由 %s 出资 %g 元（%g 星尘），投进「%s」。记得真掏这笔钱。"
+                % (who, cash, sd, pool["title"]))
+    return "%s 出资 %g 元（%g 星尘），已经投进「%s」" % (who, cash, sd, pool["title"])
 
 
 # ---------------------------------------------------------------------------
@@ -6883,12 +7013,47 @@ def _fill_missed_day(kid, day):
     check_wish_ready(mid)
 
 
+def _split_penalty_entry(pool_id, amount, day, note=""):
+    """把忘打卡这笔罚款按家长人数平摊入池，一人一条。
+
+    爸爸妈妈自己没有星尘账，这笔钱最后是家长真掏的，所以按人平摊而不是
+    挂在某一个人身上 —— 100 星尘就是爸爸 50、妈妈 50（各 25 元）。
+    家里只有一个家长账号时退回到一条「全家」的账，不为了分人凭空造一个人。
+    """
+    ps = _parents()
+    amount = round(float(amount or 0), 2)
+    if amount <= 0:
+        return 0.0
+    per = float(db.cfg("calib.fine_per_yuan", 2) or 0)
+    total_cash = round(amount / per, 2) if per else 0.0
+    txt = note or "全家忘打卡罚款入池：%s" % day
+    if len(ps) < 2:
+        db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
+                   " note, ts) VALUES (?,NULL,'penalty',?,?,?,?)",
+                   (pool_id, amount, total_cash, txt, now()))
+        return amount
+    each_sd = round(amount / len(ps), 2)
+    each_cash = round(total_cash / len(ps), 2)
+    for p in ps:
+        db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, cash,"
+                   " note, ts) VALUES (?,?,'penalty',?,?,?,?)",
+                   (pool_id, p["id"], each_sd, each_cash,
+                    "%s（%s 那一份）" % (txt, p["name"]), now()))
+    return round(each_sd * len(ps), 2)
+
+
 def _missed_pool_penalty(day, kids):
     """全家忘打卡的罚款入池。一天一笔，几个孩子都漏也是这一笔。
 
     判据放在 wish_pool_log 而不是 wish_pool_entry 上：那张表按「哪一天」
     归属，正好是这里的口径，而且它还记着「漏的是哪几个孩子」，
     这是罚款本身说不清的事。
+
+    进了池子之后这笔要**拆成爸爸、妈妈两条**（各一半，默认 100 星尘就是
+    各 50 星尘 = 各 25 元）。记成一条 member_id=NULL 的总账，池子里就永远
+    查不出「爸爸投了多少」；而「许愿池里每个人投了多少」这句话是家里要
+    看见的东西 —— 忘打卡是大人自己的疏忽，那笔钱也得算在他们头上，
+    跟孩子自己掏星尘投币、跟加速卡选了谁出资，摆在同一栏里才对得上账。
     """
     if db.query_one("SELECT id FROM wish_pool_log WHERE kind='penalty' AND day=?", (day,)):
         return None
@@ -6915,9 +7080,7 @@ def _missed_pool_penalty(day, kids):
                     "罚 %g 星尘先记着，等设了许愿池目标一起投进去。" % ("、".join(names), amount))
         return amount
 
-    db.execute("INSERT INTO wish_pool_entry (pool_id, member_id, source, stardust, note, ts)"
-               " VALUES (?,NULL,'penalty',?,?,?)",
-               (pool["id"], amount, "全家忘打卡罚款入池：%s" % day, now()))
+    _split_penalty_entry(pool["id"], amount, day)
     db.execute(
         "INSERT INTO wish_pool_log (pool_id, kind, day, member_id, kids_json, kids_days,"
         " stardust, counted, note, ts) VALUES (?,?,?,NULL,?,?,?,1,?,?)",
@@ -7522,7 +7685,7 @@ ARMED_DONE_TEXT = {
 }
 
 
-def use_card(member_id, code, *, operator_id=None, note="", qty=1.0):
+def use_card(member_id, code, *, operator_id=None, note="", qty=1.0, parent_id=None):
     """用一张卡。真正出口只有一个，前端拿到的反馈也是这里给的。
 
     返回 {'ok': True, 'status': ..., 'message': ...}。message 是给孩子看的，
@@ -7563,6 +7726,15 @@ def use_card(member_id, code, *, operator_id=None, note="", qty=1.0):
             return {"ok": False, "msg": "现在没有欠着的分钟，" + it["name"] + "留着以后用"}
     if key in FLAG_EFFECTS and card_flag(member_id, key, day):
         return {"ok": False, "msg": "今天的「%s」已经在生效了" % it["name"]}
+    # 许愿加速卡要先定「这笔钱记在谁头上」。选不出来就该当场说清楚，
+    # 而不是先把卡扣掉、留一条没人认领的兑现单 —— 那笔出资就没有主人了。
+    if key == "wish_accelerate":
+        if not parent_id:
+            return {"ok": False, "msg": "先选一位出资的家长（爸爸或妈妈）"}
+        prow = db.query_one("SELECT id, name FROM member WHERE id=? AND role='parent'",
+                            (int(parent_id),))
+        if not prow:
+            return {"ok": False, "msg": "出资的只能是爸爸或妈妈"}
 
     # --- 扣库存 ---
     got = consume_item(member_id, it["id"], qty, kind="card_use",
@@ -7594,6 +7766,9 @@ def use_card(member_id, code, *, operator_id=None, note="", qty=1.0):
                        ref_id=it["id"], operator_id=operator_id,
                        note="%s：抵消 %g 分钟欠账" % (it["name"], m))
         msg = "抵消了 %g 分钟欠账" % m
+    elif key == "wish_accelerate":
+        status = "done"
+        msg = _wish_boost_deposit(member_id, it, fx, parent_id, operator_id=operator_id)
     elif key == "double_stardust_week":
         cyc = current_cycle(member_id)
         status = "done"

@@ -2371,7 +2371,11 @@ async function kScreenWish() {
       (p.target_stardust > p.collected_stardust
         ? '还差 ' + num(p.target_stardust - p.collected_stardust) + ' 星尘'
         : '攒够了，等爸爸妈妈安排') + '　攒满就出发</div>' +
-      '<button class="btn btn--sm" id="kDep" style="margin-top:11px">把我的星尘投进去</button>';
+      '<button class="btn btn--sm" id="kDep" style="margin-top:11px">把我的星尘投进去</button>' +
+      // 每人投了多少：他自己掏的星尘在这排里，爸爸妈妈那两格是
+      // 「许愿加速卡点名谁出资」和「忘打卡罚款平摊」—— 那两笔也是
+      // 大人为这个愿望真掏的钱，摆在一起他才知道这个家一起走了多远。
+      poolByMemberHTML(pool && pool.by_member, 0.5);
     const es = (pool.entries || []).slice(0, 6);
     if (es.length) {
       h += '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed rgba(139,107,255,.3)">' +
@@ -3031,7 +3035,9 @@ async function kScreenFamily() {
       '%"></i></div>' +
       '<div class="t-2" style="font-size:10px;line-height:1.6;margin-top:10px">' +
       (p.target_desc ? esc(p.target_desc) + '　' : '') +
-      '全家一起攒 · 攒满就出发</div>';
+      '全家一起攒 · 攒满就出发</div>' +
+      // 跟心愿屋那一块同一个函数、同一份数据：爸爸投了多少在两处必须是一个数
+      poolByMemberHTML(pool && pool.by_member, 0.5);
   }
   h += '</div>';
 
