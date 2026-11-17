@@ -1,5 +1,5 @@
 -- 家庭积分工程 · 数据库结构
--- 规则真值以最新的《项目当前开发文档》为准（当前 schema v46），结构变更都带 _migrate_vNN 迁移。
+-- 规则真值以最新的《项目当前开发文档》为准（当前 schema v48），结构变更都带 _migrate_vNN 迁移。
 --
 -- 两条贯穿全库的约定：
 --   1. 所有余额都由流水求和得出，不存冗余余额字段（项目原则 6）。
@@ -569,6 +569,7 @@ CREATE TABLE IF NOT EXISTS push_target (
   kind       TEXT    NOT NULL DEFAULT 'bark',   -- 先只支持 bark
   server     TEXT    NOT NULL DEFAULT 'https://api.day.app',
   target     TEXT    NOT NULL,
+  secret     TEXT    NOT NULL DEFAULT '',   -- v48：ntfy 访问令牌；Bark 留空
   label      TEXT    NOT NULL DEFAULT '',
   enabled    INTEGER NOT NULL DEFAULT 1,
   created_at TEXT    NOT NULL,
@@ -589,6 +590,17 @@ CREATE TABLE IF NOT EXISTS session (
 );
 -- 每个请求都要按 token 查一行；没索引时它跟着会话表长度走
 CREATE INDEX IF NOT EXISTS ix_session_member ON session (member_id);
+
+-- v48：登录失败记录。5 次失败锁 30 秒，之后指数退避；只留最近 30 天。
+CREATE TABLE IF NOT EXISTS login_attempt (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id INTEGER,
+  ip        TEXT    NOT NULL DEFAULT '',
+  ok        INTEGER NOT NULL DEFAULT 0,
+  ts        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_login_attempt_member_ts ON login_attempt (member_id, ts);
+CREATE INDEX IF NOT EXISTS ix_login_attempt_ip_ts ON login_attempt (ip, ts);
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

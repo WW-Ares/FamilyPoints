@@ -15,6 +15,12 @@ import json
 import hashlib
 from datetime import timedelta
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 _TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "test")
 os.environ["FAMILY_DATA_DIR"] = _TEST_DIR
 os.environ["FAMILY_DB"] = os.path.join(_TEST_DIR, "family.db")

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """把网页里的通知推到手机上。
 
-为什么是 Bark：这是唯一一条「不用自建、不用装中间服务、iPhone 上当天能用」的路。
-安卓那边 Web Push 背后是 Google 的 FCM，国内到不了，浏览器厂商也把口子关了；
-微信生态的推送在收紧，公众号消息被折叠之后属于「能用但不保证长久」。
-Bark 走的是苹果 APNs，一台手机填一个 device key 就通。
+为什么是 Bark + ntfy：Bark 是 iPhone 上「不用自建、不用装中间服务、当天能用」的路，
+走苹果 APNs，一台手机填一个 device key 就通；ntfy 补安卓和自建，手机订阅一个 topic
+就能收，不依赖 Google 的 FCM，也不经过微信生态。
 
 三条设计上的取舍：
 
@@ -24,7 +23,8 @@ Bark 走的是苹果 APNs，一台手机填一个 device key 就通。
 只用标准库。发送目标是 HTTP POST 一个 JSON，没有签名也没有加密 ——
 Bark 支持 AES 加密推送，但标准库没有 AES，要么引 cryptography、
 要么每次 fork 一个 openssl。为一条推送通道破掉「零依赖」，不值。
-代价是通知标题和正文会经过 api.day.app 和苹果 APNs，这一点得写清楚。
+代价是 Bark 的标题和正文会经过 api.day.app 和苹果 APNs，ntfy 会经过你填的服务器；
+这一点得写清楚。
 """
 import json
 import os
@@ -248,8 +248,13 @@ def _deliver(items, now_dt):
     ok_any = False
     last_err = ""
     for t in targets:
-        ok, err = send_bark(t["server"], t["target"], title, body, url=url,
-                            level=level, group="家庭积分", icon=icon)
+        if t["kind"] == "ntfy":
+            ok, err = send_ntfy(t["server"], t["target"], title, body, url=url,
+                                token=_row_secret(t),
+                                priority=4 if level == "timeSensitive" else 3)
+        else:
+            ok, err = send_bark(t["server"], t["target"], title, body, url=url,
+                                level=level, group="家庭积分", icon=icon)
         if ok:
             ok_any = True
             db.execute("UPDATE push_target SET fail_count=0, last_ok_at=?, last_err='' WHERE id=?",
@@ -409,6 +414,52 @@ def send_bark(server, device_key, title, body, url=None, level="active", group="
     return True, ""
 
 
+def send_ntfy(server, topic, title, body, url=None, token="", priority=3):
+    """POST {server}（ntfy 的 JSON 发布口）。返回 (是否成功, 错误说明)。
+
+    topic 是频道名，谁订阅谁就能收；自建 ntfy 开了认证的话，token 填在
+    push_target.secret 里。这里不把 token 写进日志，也不回显。
+    """
+    server = str(server or "").strip().rstrip("/")
+    topic = str(topic or "").strip()
+    if not server or not topic:
+        return False, "服务器或 topic 是空的"
+    if not server.startswith("http"):
+        return False, "服务器地址要以 http 开头"
+    payload = {"topic": topic, "title": title, "message": body,
+               "priority": int(priority), "tags": ["bell"]}
+    if url:
+        payload["click"] = url
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(server, data=data, method="POST")
+    req.add_header("Content-Type", "application/json; charset=utf-8")
+    if token:
+        req.add_header("Authorization", "Bearer " + str(token).strip())
+    try:
+        with _opener().open(req, timeout=HTTP_TIMEOUT) as resp:
+            resp.read()
+            if resp.status != 200:
+                return False, "服务器返回 %s" % resp.status
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return False, "ntfy 认证没通过（%s），检查访问令牌" % e.code
+        if e.code == 400:
+            return False, "ntfy 说请求不对（400），检查 topic 和服务器地址"
+        if e.code == 429:
+            return False, "ntfy 限流了（429），等一会儿再试"
+        return False, "服务器返回 %s" % e.code
+    except Exception as e:
+        return False, _why(e)
+    return True, ""
+
+
+def _row_secret(t):
+    try:
+        return t["secret"] or ""
+    except (IndexError, KeyError):
+        return ""
+
+
 def _why(e):
     """把异常翻成一句人能看懂的话。
 
@@ -428,6 +479,11 @@ def _why(e):
 
 def send_test(target_row):
     """设置页那个「发一条测试」按钮。同步发，好让错误当场显示出来。"""
+    if target_row["kind"] == "ntfy":
+        return send_ntfy(target_row["server"], target_row["target"],
+                         "测试通知", "能看到这条，说明这台设备配好了。",
+                         url=_link_for("test"), token=_row_secret(target_row),
+                         priority=3)
     return send_bark(target_row["server"], target_row["target"],
                      "测试通知", "能看到这条，说明这台设备配好了。",
                      url=_link_for("test"), level="active", group="家庭积分",
@@ -524,20 +580,89 @@ def _sched_season(now_dt):
                 % (snap["idx"], snap["end_date"]))
 
 
+def _meta_json(key, default):
+    row = db.query_one("SELECT value FROM meta WHERE key=?", (key,))
+    if not row:
+        return dict(default)
+    try:
+        v = json.loads(row["value"])
+        return v if isinstance(v, dict) else dict(default)
+    except (TypeError, ValueError):
+        return dict(default)
+
+
+def _meta_set_json(key, obj):
+    db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+               (key, json.dumps(obj, ensure_ascii=False)))
+
+
 def _sched_daily_score(now_dt):
-    """到点还没给某个孩子打分，提醒对应家长。"""
-    at = _hhmm(db.cfg("push.daily_score_at", "20:30"))
-    if at is None or (now_dt.hour * 60 + now_dt.minute) < at:
+    """到点还没给某个孩子打分，提醒家长；次数和间隔都可以设。
+
+    状态按天放在 meta 里：{count, last, done}。
+    - count 是今天已经发了几次；
+    - last 是最后一次发送的 HH:MM，用来算下一次到期；
+    - done 是「今天不用再提醒了」：次数用完，或者所有孩子都打完了。
+
+    只提醒当天。过了 23:59 日期键就变了，不会把昨天没发完的次数补到今天早上。
+    """
+    start = _hhmm(db.cfg("push.daily_score_at", "20:30"))
+    try:
+        times = int(db.cfg("push.daily_score_times", 1))
+    except (TypeError, ValueError):
+        times = 1
+    times = max(0, min(10, times))
+    try:
+        gap = int(db.cfg("push.daily_score_interval_min", 30))
+    except (TypeError, ValueError):
+        gap = 30
+    gap = max(5, min(240, gap))
+    if start is None or times <= 0:
         return
-    if not _once_today("push.sched.daily_score", now_dt):
+    now_min = now_dt.hour * 60 + now_dt.minute
+    if now_min < start:
         return
-    import engine as E
+    # 免打扰时段里不发，也不攒。否则 22:00 之后的三条会一起堆到 07:00。
+    if _in_quiet(now_dt):
+        return
+
     day = now_dt.strftime("%Y-%m-%d")
+    key = "push.sched.daily_score." + day
+    rec = _meta_json(key, {"count": 0, "last": "", "done": False})
+    if rec.get("done"):
+        return
+    count = int(rec.get("count") or 0)
+    if count > 0:
+        last = _hhmm(rec.get("last") or "")
+        if last is None or now_min < last + gap:
+            return
+
+    import engine as E
+    names = []
     for k in E.kids_overview():
-        if k["today"]["scored"]:
+        td = k["today"]
+        if td.get("scored") or td.get("transition"):
             continue
-        _notify(None, "daily_score", "今天还没打分",
-                "%s 今天的分还没打，睡之前补一下。" % k["name"])
+        names.append(k["name"])
+    if not names:
+        rec["done"] = True
+        _meta_set_json(key, rec)
+        return
+
+    n = count + 1
+    who = "、".join(names)
+    if n == 1:
+        title = "今天还没打分"
+        body = "%s今天的分还没打，睡之前补一下。" % who
+    else:
+        title = "还没打分（第 %d/%d 次）" % (n, times)
+        body = "第 %d/%d 次提醒：%s今天的分还没打。" % (n, times, who)
+    _notify(None, "daily_score", title, body)
+    rec["count"] = n
+    rec["last"] = now_dt.strftime("%H:%M")
+    if n >= times:
+        rec["done"] = True
+    _meta_set_json(key, rec)
 
 
 def _sched_settle(now_dt):
@@ -570,6 +695,12 @@ def _sched_snapshot(now_dt):
         return
     try:
         db.snapshot(int(db.cfg("ops.snapshot_keep_days", 30)))
+    except Exception:
+        traceback.print_exc()
+    # 登录失败记录只留 30 天，别让限速表跟着年份长大。
+    try:
+        cutoff = (now_dt - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        db.execute("DELETE FROM login_attempt WHERE ts < ?", (cutoff,))
     except Exception:
         traceback.print_exc()
 

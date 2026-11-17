@@ -152,7 +152,7 @@ sudo docker compose logs -f
 
 不需要 HTTPS，局域网 http 直接能用。
 
-想把推送弄到手机上（Bark，仅 iPhone），在设置页里填 device key，具体在 README 的推送那一节。
+想把推送弄到手机上：iPhone 用 Bark 填 device key，安卓/自建用 ntfy 填 topic；具体在 README 的推送那一节。
 
 ## 八、数据在哪，怎么备份
 

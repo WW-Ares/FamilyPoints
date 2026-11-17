@@ -2,6 +2,7 @@
 """会话、成员、设置、运维。"""
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -19,6 +20,126 @@ PWD_MIN = 4
 PWD_MAX = 64
 PBKDF2_ROUNDS = 120000
 PIN_LEN = 4
+
+# 登录限速：15 分钟窗口，5 次失败开始锁，30 秒起、指数退避到 15 分钟。
+LOGIN_WINDOW_MIN = 15
+LOGIN_MAX_FAILS = 5
+LOGIN_LOCK_BASE = 30
+LOGIN_LOCK_MAX = 900
+SETUP_TOKEN_KEY = "setup.token"
+
+
+def _client_ip(ctx):
+    raw = getattr(ctx, "raw", None)
+    if raw is None:
+        return ""
+    try:
+        return str(raw.client_address[0] or "")[:64]
+    except (AttributeError, IndexError, TypeError):
+        return ""
+
+
+def _secure_cookie(ctx=None):
+    v = str(os.environ.get("FAMILY_SECURE_COOKIE", "")).strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    h = getattr(getattr(ctx, "raw", None), "headers", None)
+    return bool(h and (h.get("X-Forwarded-Proto") or "").lower() == "https")
+
+
+def _cookie(token, max_age=None, ctx=None):
+    c = "fam_token=" + token + "; Path=/; HttpOnly; SameSite=Lax"
+    if max_age:
+        c += "; Max-Age=%d" % int(max_age)
+    if _secure_cookie(ctx):
+        c += "; Secure"
+    return c
+
+
+def _clear_cookie(ctx=None):
+    c = "fam_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+    if _secure_cookie(ctx):
+        c += "; Secure"
+    return c
+
+
+def _login_fails(member_id, ip):
+    since = (datetime.now() - timedelta(minutes=LOGIN_WINDOW_MIN)).strftime(
+        "%Y-%m-%d %H:%M:%S")
+    if member_id:
+        row = db.query_one(
+            "SELECT COUNT(*) c, MAX(ts) last FROM login_attempt"
+            " WHERE member_id=? AND ok=0 AND ts>=?", (member_id, since))
+    else:
+        row = db.query_one(
+            "SELECT COUNT(*) c, MAX(ts) last FROM login_attempt"
+            " WHERE member_id IS NULL AND ip=? AND ok=0 AND ts>=?", (ip, since))
+    return int(row["c"] or 0), row["last"]
+
+
+def _login_lock(member_id, ip):
+    n, last = _login_fails(member_id, ip)
+    if n < LOGIN_MAX_FAILS or not last:
+        return 0
+    lock = min(LOGIN_LOCK_MAX, LOGIN_LOCK_BASE * (2 ** (n - LOGIN_MAX_FAILS)))
+    try:
+        elapsed = (datetime.now() - datetime.strptime(
+            last, "%Y-%m-%d %H:%M:%S")).total_seconds()
+    except (TypeError, ValueError):
+        elapsed = lock
+    return max(0, int(lock - elapsed))
+
+
+def _audit_login_lock(member_id, ip, lock):
+    db.execute("INSERT INTO audit_log (actor_id, action, target_type, target_id,"
+               " after_json, ts) VALUES (?,?,?,?,?,?)",
+               (member_id, "login.lock", "member", member_id,
+                json.dumps({"ip": ip, "lock": lock}, ensure_ascii=False), db.now()))
+
+
+def _record_login(member_id, ip, ok):
+    db.execute("INSERT INTO login_attempt (member_id, ip, ok, ts) VALUES (?,?,?,?)",
+               (member_id, ip, 1 if ok else 0, db.now()))
+    if ok and member_id:
+        db.execute("DELETE FROM login_attempt WHERE member_id=? AND ok=0", (member_id,))
+
+
+def _lock_error(lock):
+    return ApiError("试得有点多，等 %d 秒再试" % lock, 429,
+                    headers={"Retry-After": str(lock)})
+
+
+def ensure_setup_token():
+    """首次设置的一次性安装码。没有密码的库才生成，生成一次就打印到日志。"""
+    if not is_first_run():
+        return None
+    env = str(os.environ.get("FAMILY_SETUP_TOKEN", "")).strip()
+    if env:
+        print("[首次设置] 使用 FAMILY_SETUP_TOKEN 环境变量")
+        return env
+    row = db.query_one("SELECT value FROM meta WHERE key=?", (SETUP_TOKEN_KEY,))
+    if row and row["value"]:
+        return str(row["value"])
+    tok = secrets.token_urlsafe(12)
+    db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+               (SETUP_TOKEN_KEY, tok))
+    print("[首次设置] 安装码：%s" % tok)
+    return tok
+
+
+def _wanted_setup_token():
+    env = str(os.environ.get("FAMILY_SETUP_TOKEN", "")).strip()
+    if env:
+        return env
+    row = db.query_one("SELECT value FROM meta WHERE key=?", (SETUP_TOKEN_KEY,))
+    return str(row["value"]) if row else ""
+
+
+def check_setup_token(given):
+    want = _wanted_setup_token() or ensure_setup_token() or ""
+    if not want:
+        return False
+    return hmac.compare_digest(str(given or "").encode("utf-8"), want.encode("utf-8"))
 
 
 def hash_password(pwd, salt=None, rounds=PBKDF2_ROUNDS):
@@ -217,6 +338,7 @@ def login(ctx):
     """
     mid = ctx.i("member_id", 0)
     pwd = ctx.p("password", "")
+    ip = _client_ip(ctx)
     if mid:
         m = db.query_one("SELECT * FROM member WHERE id=? AND active=1", (mid,))
     else:
@@ -228,19 +350,33 @@ def login(ctx):
         m = db.query_one(
             "SELECT * FROM member WHERE username=? AND active=1 AND role<>'child'",
             (username,))
+    target_id = m["id"] if m else None
+    lock = _login_lock(target_id, ip)
+    if lock:
+        raise _lock_error(lock)
     if not m:
         # 不区分「没这个账号」和「密码不对」，免得外面能一个个试出谁有账号。
+        _record_login(None, ip, False)
+        lock = _login_lock(None, ip)
+        if lock:
+            _audit_login_lock(None, ip, lock)
+            raise _lock_error(lock)
         raise ApiError("账号或密码不对")
     if not m["password_hash"]:
         raise ApiError("这个账号还没设密码，让管理员在「家人账号」里开通一下")
     if not check_password(pwd, m["password_hash"]):
         # 点着头像进来的那条路，报「密码不对」比报「账号或密码不对」讲得通 ——
         # 他压根没填过账号。名字是登录页上就摆着的，这么说没多漏任何东西。
+        _record_login(m["id"], ip, False)
+        lock = _login_lock(m["id"], ip)
+        if lock:
+            _audit_login_lock(m["id"], ip, lock)
+            raise _lock_error(lock)
         raise ApiError("密码不对，再试一次" if mid else "账号或密码不对")
+    _record_login(m["id"], ip, True)
     token = make_session(m["id"])
-    cookie = "fam_token=" + token + "; Path=/; SameSite=Lax"
-    if ctx.p("remember", True):
-        cookie += "; Max-Age=%d" % (SESSION_DAYS * 86400)
+    remember = ctx.truthy("remember", True)
+    cookie = _cookie(token, SESSION_DAYS * 86400 if remember else None, ctx)
     return {"ok": True, "token": token, "member": member_public(m),
             "_set_cookie": cookie}
 
@@ -254,6 +390,8 @@ def setup_admin(ctx):
     """
     if not is_first_run():
         raise ApiError("已经设置过了，用账号密码登录")
+    if not check_setup_token(ctx.p("setup_token", "")):
+        raise ApiError("安装码不对。看容器启动日志里「首次设置」那一行")
     username = check_username(ctx.need("username"))
     pwd = ctx.need("password")
     check_pwd_rule(pwd)
@@ -277,11 +415,11 @@ def setup_admin(ctx):
     db.execute("UPDATE member SET is_admin=0 WHERE id!=?", (admin["id"],))
     db.execute("INSERT INTO audit_log (actor_id, action, target_type, target_id, ts)"
                " VALUES (?,'admin.setup','member',?,?)", (admin["id"], admin["id"], db.now()))
+    db.execute("DELETE FROM meta WHERE key=?", (SETUP_TOKEN_KEY,))
     token = make_session(admin["id"])
     m = db.query_one("SELECT * FROM member WHERE id=?", (admin["id"],))
     return {"ok": True, "token": token, "member": member_public(m),
-            "_set_cookie": "fam_token=" + token + "; Path=/; Max-Age=%d; SameSite=Lax"
-                           % (SESSION_DAYS * 86400)}
+            "_set_cookie": _cookie(token, SESSION_DAYS * 86400, ctx)}
 
 
 
@@ -289,7 +427,7 @@ def setup_admin(ctx):
 def logout(ctx):
     if getattr(ctx, "token", None):
         db.execute("DELETE FROM session WHERE token=?", (ctx.token,))
-    return {"ok": True, "_set_cookie": "fam_token=; Path=/; Max-Age=0"}
+    return {"ok": True, "_set_cookie": _clear_cookie(ctx)}
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +538,7 @@ def edit_member(ctx):
     if ctx.p("is_admin", None) is not None:
         if not me["is_admin"]:
             raise ApiError("只有管理员能转移管理员", 403)
-        if int(ctx.p("is_admin")):
+        if ctx.truthy("is_admin"):
             if m["role"] != "parent":
                 raise ApiError("管理员只能由家长担任")
             db.execute("UPDATE member SET is_admin=0")

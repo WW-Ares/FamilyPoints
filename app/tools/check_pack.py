@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -117,7 +118,14 @@ def main():
         print("  静态资源 7 项 %s" % ("全部 200" if not fails else "有问题"))
 
         if boot.get("needs_setup"):
-            body = json.dumps({"username": "爸爸", "password": "pack-check-1234"}).encode()
+            con = sqlite3.connect(str(WORK / "data" / "family.db"))
+            row = con.execute("SELECT value FROM meta WHERE key='setup.token'").fetchone()
+            con.close()
+            tok = row[0] if row else ""
+            if not tok:
+                fails.append("首次设置没有生成安装码")
+            body = json.dumps({"username": "爸爸", "password": "pack-check-1234",
+                               "setup_token": tok}).encode()
             rq = urllib.request.Request(BASE + "/api/setup/admin", data=body,
                                         headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(rq, timeout=5) as r:

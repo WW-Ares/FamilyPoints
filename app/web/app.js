@@ -1088,6 +1088,8 @@ function lgScreenSetup() {
     '<input id="lgP" type="password" autocomplete="new-password"></div></div>' +
     '<div class="lg-f"><label for="lgP2">再输一次</label><div class="lg-input">' +
     '<input id="lgP2" type="password" autocomplete="new-password"></div></div>' +
+    '<div class="lg-f"><label for="lgT">安装码</label><div class="lg-input">' +
+    '<input id="lgT" autocomplete="one-time-code" placeholder="看容器启动日志里那一行"></div></div>' +
     '<button type="button" class="lg-btn" id="lgGo">设好，进去</button>' +
     '</div>' +
     '<div class="lg-fill"></div>' +
@@ -1197,9 +1199,11 @@ function lgBindParent() {
 function lgBindSetup() {
   const go = async () => {
     const u = $('#lgU').value.trim(), p = $('#lgP').value, p2 = $('#lgP2').value;
+    const t = $('#lgT').value.trim();
     if (p !== p2) { err({ message: '两次输的密码不一样' }); return; }
     try {
-      const r = await api('POST', '/api/setup/admin', { username: u, password: p });
+      const r = await api('POST', '/api/setup/admin',
+        { username: u, password: p, setup_token: t });
       await lgEnter(r, '设好了');
     } catch (e) { err(e); }
   };
@@ -7404,6 +7408,12 @@ async function pushSheet() {
   let h = '<h3>通知与推送</h3><p class="muted">每一条通知都先落在网页上，再往手机推一份。' +
     '推送掉线只会让手机安静下来，不会漏事。</p>';
 
+  const failed = d.items.filter(x => x.last_err);
+  if (failed.length) {
+    h += '<div class="notice warn" style="margin-bottom:8px">有 ' + failed.length +
+      ' 台设备最近推送失败，点进「家人的手机」看原因。</div>';
+  }
+
   h += '<div class="card pad"><div class="row between"><div><div class="nm">推送总开关</div>' +
     '<div class="ds">' + (on ? '开着' : '关着。先把人的设备配上，再打开这里') + '</div></div>' +
     '<button class="btn sm ' + (on ? '' : 'line') + '" id="pen">' + (on ? '关掉' : '打开') +
@@ -7412,11 +7422,13 @@ async function pushSheet() {
   h += '<div class="sec"><div class="sec-h"><h2>家人的手机</h2>' +
     '<span class="sub">各推各的，互不打扰</span></div><div class="card">';
   d.members.forEach(m => {
-    const n = d.items.filter(x => x.member_id === m.id).length;
+    const mine = d.items.filter(x => x.member_id === m.id);
+    const bad = mine.filter(x => x.last_err).length;
     h += '<div class="item qa-cell" data-m="' + m.id + '"' +
       ' style="box-shadow:none;border:0;border-radius:0">' +
       '<span class="qi">' + avatarHTML(m, 22) + '</span><span class="qt"><b>' + esc(m.name) + '</b>' +
-      '<span>' + (n ? n + ' 台设备' : '还没配') + '</span></span></div>';
+      '<span>' + (mine.length ? mine.length + ' 台设备' : '还没配') +
+      (bad ? ' · ' + bad + ' 台失败' : '') + '</span></span></div>';
   });
   h += '</div></div>';
 
@@ -7472,23 +7484,28 @@ async function pushMemberSheet(mid) {
   const list = d.items.filter(x => x.member_id === mid);
 
   let h = '<h3>' + esc(m.name) + ' 的手机</h3>' +
-    '<p class="muted">手机上装一个 Bark，打开它会直接给你一段 device key。' +
-    '要是你手上是一整条链接（https://api.day.app/xxxx），整条粘进来也行，' +
-    '会自动把 key 拆出来。这段 key 等于「谁能往这台手机发通知」，跟密码一个级别，' +
-    '页面上只显示后四位。</p>';
+    '<p class="muted">Bark 和 ntfy 都行。Bark 适合 iPhone：装 App 后复制 device key。' +
+    'ntfy 适合安卓/自建：填一个 topic，手机装 ntfy 订阅同名 topic 就能收。' +
+    '这两样都等于「谁能往这台设备发通知」，页面上只显示后四位。</p>';
 
   if (!list.length) {
     h += '<div class="empty">还没配设备</div>';
   } else {
     list.forEach(t => {
+      const kind = t.kind === 'ntfy' ? 'ntfy' : 'Bark';
+      const ok = t.last_ok_at
+        ? '<div class="ds">最近成功：' + esc(t.last_ok_at) + '</div>'
+        : '<div class="ds muted">还没成功过</div>';
+      const bad = t.fail_count >= 3 ? '<span class="tag warn">可能配置有误</span>' : '';
       const state = t.last_err
-        ? '<div class="ds" style="color:var(--warn)">上次没发出去：' + esc(t.last_err) + '</div>'
-        : (t.last_ok_at ? '<div class="ds">上次发出去了：' + esc(t.last_ok_at) + '</div>' : '');
+        ? '<div class="ds" style="color:var(--warn)">最近失败：' + esc(t.last_err) +
+          (t.fail_count ? '（连续 ' + t.fail_count + ' 次）' : '') + '</div>'
+        : '';
       h += '<div class="card pad" style="margin-bottom:8px">' +
         '<div class="row between"><b>' + esc(t.label || '设备') + '</b>' +
-        '<span class="tag">' + esc(t.masked) + '</span>' +
-        (t.enabled ? '' : '<span class="tag warn">停用中</span>') + '</div>' +
-        '<div class="ds" style="margin-top:4px">' + esc(t.server) + '</div>' + state +
+        '<span class="tag">' + kind + '</span><span class="tag">' + esc(t.masked) + '</span>' +
+        bad + (t.enabled ? '' : '<span class="tag warn">停用中</span>') + '</div>' +
+        '<div class="ds" style="margin-top:4px">' + esc(t.server) + '</div>' + ok + state +
         '<div class="row" style="margin-top:10px;gap:8px">' +
         '<button class="btn sm line" data-test="' + t.id + '">测一下</button>' +
         '<button class="btn sm line" data-tog="' + t.id + '" data-on="' + (t.enabled ? 1 : 0) +
@@ -7498,14 +7515,20 @@ async function pushMemberSheet(mid) {
     });
   }
 
-  const def = d.globals['push.bark_server'] || 'https://api.day.app';
+  const defBark = d.globals['push.bark_server'] || 'https://api.day.app';
+  const defNtfy = d.globals['push.ntfy_server'] || 'https://ntfy.sh';
   h += '<div class="hr"></div>' +
-    '<div class="field"><label>device key</label>' +
+    '<div class="field"><label>通道</label><select id="pkind">' +
+    '<option value="bark">Bark（iPhone）</option>' +
+    '<option value="ntfy">ntfy（公共或自建）</option></select></div>' +
+    '<div class="field"><label id="pkl">device key</label>' +
     '<input id="pk" placeholder="device key，或整条 https://api.day.app/xxxx 链接"></div>' +
+    '<div class="field" id="ptw" style="display:none"><label>访问令牌（可选）</label>' +
+    '<input id="pt" placeholder="自建 ntfy 开了认证才填"></div>' +
     '<div class="field"><label>叫什么（只你自己看得见）</label>' +
     '<input id="pl" placeholder="例如：' + esc(m.name) + '的手机"></div>' +
-    '<details><summary class="muted" style="cursor:pointer">服务器地址（默认就行，别在后面接 key）</summary>' +
-    '<div class="field"><input id="ps" value="' + esc(def) + '"></div></details>' +
+    '<details><summary class="muted" style="cursor:pointer">服务器地址（默认就行）</summary>' +
+    '<div class="field"><input id="ps" value="' + esc(defBark) + '"></div></details>' +
     '<button class="btn wide" id="add">先测一下，通了就加上</button>' +
     '<div class="muted" id="perr" style="margin-top:8px;display:none"></div>';
 
@@ -7516,6 +7539,17 @@ async function pushMemberSheet(mid) {
       el.style.display = msg ? '' : 'none';
       el.innerHTML = msg ? '<span class="no-t">' + esc(msg) + '</span>' : '';
     }
+
+    const kindSel = $('#pkind', box);
+    function syncKind() {
+      const k = kindSel.value;
+      $('#pkl', box).textContent = k === 'ntfy' ? 'topic' : 'device key';
+      $('#pk', box).placeholder = k === 'ntfy'
+        ? '例如：family-ww' : 'device key，或整条 https://api.day.app/xxxx 链接';
+      $('#ptw', box).style.display = k === 'ntfy' ? '' : 'none';
+      $('#ps', box).value = k === 'ntfy' ? defNtfy : defBark;
+    }
+    kindSel.addEventListener('change', syncKind);
 
     $$('[data-test]', box).forEach(b => b.addEventListener('click', async () => {
       b.disabled = true; b.textContent = '发着呢…';
@@ -7542,27 +7576,34 @@ async function pushMemberSheet(mid) {
     }));
 
     $('#add', box).addEventListener('click', async () => {
+      const kind = $('#pkind', box).value;
       const key = $('#pk', box).value.trim();
-      const server = $('#ps', box).value.trim() || def;
+      const server = $('#ps', box).value.trim() || (kind === 'ntfy' ? defNtfy : defBark);
+      const secret = kind === 'ntfy' ? $('#pt', box).value.trim() : '';
       const label = $('#pl', box).value.trim();
-      if (key.length < 8) return toast('device key 太短了，再检查一下');
+      if (kind === 'bark' && key.length < 8) return toast('device key 太短了，再检查一下');
+      if (kind === 'ntfy' && !/^[A-Za-z0-9_-]{1,64}$/.test(key))
+        return toast('topic 只能是字母、数字、下划线、短横线，1–64 位');
       const btn = $('#add', box);
       showErr('');
       btn.disabled = true; btn.textContent = '先试发一条…';
       try {
-        // 先测后存：key 抄错一个字符的表现是「一直收不到」，
+        // 先测后存：key/topic 抄错一个字符的表现是「一直收不到」，
         // 那种事在手机上没法自查，不如加进来之前就验一次。
-        const r = await api('POST', '/api/push/test', { target: key, server: server });
+        const r = await api('POST', '/api/push/test',
+          { kind: kind, target: key, server: server, secret: secret });
         if (!r.ok) {
           btn.disabled = false; btn.textContent = '先测一下，通了就加上';
-          showErr(r.error || '检查一下 key 和服务器');
-          return toast('发不出去：' + (r.error || '检查一下 key 和服务器'));
+          showErr(r.error || '检查一下 key/topic 和服务器');
+          return toast('发不出去：' + (r.error || '检查一下 key/topic 和服务器'));
         }
         const sv = await api('POST', '/api/push/target',
-          { member_id: mid, target: key, server: server, label: label });
+          { member_id: mid, kind: kind, target: key, server: server,
+            secret: secret, label: label });
         toast(sv.from_url
           ? '加上了。整条链接我拆成了 ' + sv.server + ' + ' + sv.masked
-          : '加上了，手机上应该已经收到一条');
+          : (kind === 'ntfy' ? '加上了，去 ntfy 里订阅这个 topic'
+                             : '加上了，手机上应该已经收到一条'));
         pushMemberSheet(mid);
       } catch (e) {
         btn.disabled = false; btn.textContent = '先测一下，通了就加上';

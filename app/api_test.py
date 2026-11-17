@@ -10,6 +10,12 @@ import sys
 import json
 from datetime import timedelta
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 _TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "test")
 os.environ["FAMILY_DATA_DIR"] = _TEST_DIR
 os.environ["FAMILY_DB"] = os.path.join(_TEST_DIR, "family.db")
@@ -1115,13 +1121,21 @@ def main():
     # 把库退回「谁都没设过密码」，模拟升级后第一次打开
     db.execute("UPDATE member SET password_hash=''")
     check("回到首次运行状态", A.is_first_run())
-    call("POST", "/api/setup/admin", {"username": "老爸", "password": "12"}, expect_error=True)
-    call("POST", "/api/setup/admin", {"username": "妈", "password": "abcd"}, expect_error=True)
-    call("POST", "/api/setup/admin", {"username": "妈妈", "password": "abcd"},
+    tok = A.ensure_setup_token()
+    check("首次设置生成安装码", bool(tok))
+    call("POST", "/api/setup/admin", {"username": "老爸", "password": "12",
+                                      "setup_token": tok}, expect_error=True)
+    call("POST", "/api/setup/admin", {"username": "妈", "password": "abcd",
+                                      "setup_token": tok}, expect_error=True)
+    call("POST", "/api/setup/admin", {"username": "妈妈", "password": "abcd",
+                                      "setup_token": tok},
          expect_error=True)                      # 别人的账号名，不能用
+    call("POST", "/api/setup/admin", {"username": "爸爸", "password": "abcd",
+                                      "setup_token": "错的"}, expect_error=True)
     # 用自己的现有名字（迁移填的那个）必须能过。
     # 早先这里把「自己」也算成重名，表现是点「设好，进去」永远 400。
-    r = call("POST", "/api/setup/admin", {"username": "爸爸", "password": "abcd"})
+    r = call("POST", "/api/setup/admin", {"username": "爸爸", "password": "abcd",
+                                          "setup_token": tok})
     check("首次设置拿到 token", bool(r and r.get("token")))
     check("设完就不再是首次运行", not A.is_first_run())
     a2 = db.query_one("SELECT * FROM member WHERE id=?", (DAD,))

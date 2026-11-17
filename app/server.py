@@ -7,6 +7,7 @@ HTTP 服务入口。
 """
 import json
 import os
+import secrets
 import sys
 import traceback
 import urllib.parse
@@ -22,6 +23,7 @@ from api.auth import resolve_session
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
+MAX_BODY = 1000000
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -57,17 +59,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; img-src 'self' data:;"
+                         " style-src 'self' 'unsafe-inline';"
+                         " script-src 'self' 'unsafe-inline';"
+                         " connect-src 'self'; manifest-src 'self';"
+                         " base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, obj, code=200, set_cookie=None):
-        headers = {}
+    def _json(self, obj, code=200, set_cookie=None, headers=None):
+        h = dict(headers or {})
         if set_cookie:
-            headers["Set-Cookie"] = set_cookie
-        self._send(code, json.dumps(obj, ensure_ascii=False, default=str), headers=headers)
+            h["Set-Cookie"] = set_cookie
+        self._send(code, json.dumps(obj, ensure_ascii=False, default=str), headers=h)
 
     # --- 入口 ---------------------------------------------------------------
     def do_GET(self):
@@ -108,15 +119,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api(method, path, query)
             return self._static(path)
         except Exception:
+            rid = secrets.token_hex(6)
             traceback.print_exc()
+            print("request_id=%s" % rid)
             try:
-                self._json({"error": "服务器内部错误"}, 500)
+                self._json({"error": "服务器内部错误", "request_id": rid}, 500)
             except Exception:
                 pass
 
     # --- API ---------------------------------------------------------------
     def _api(self, method, path, query):
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return self._json({"error": "请求头不对"}, 400)
+        if length < 0:
+            return self._json({"error": "请求头不对"}, 400)
+        if length > MAX_BODY:
+            return self._json({"error": "请求体太大"}, 413,
+                              headers={"Connection": "close"})
         body = {}
         if length:
             raw = self.rfile.read(length)
@@ -134,10 +155,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             result = api.dispatch(method, path, ctx)
         except ApiError as e:
-            return self._json({"error": e.message}, e.status)
-        except Exception as e:
+            return self._json({"error": e.message}, e.status, headers=e.headers)
+        except Exception:
+            rid = secrets.token_hex(6)
             traceback.print_exc()
-            return self._json({"error": "服务器出错：%s" % e}, 500)
+            print("request_id=%s" % rid)
+            return self._json({"error": "服务器内部错误", "request_id": rid}, 500)
         if result is None:
             return
         cookie = None
@@ -149,8 +172,12 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self, path):
         if path in ("/", ""):
             path = "/index.html"
-        full = os.path.normpath(os.path.join(WEB_DIR, path.lstrip("/")))
-        if not full.startswith(WEB_DIR):
+        try:
+            web = os.path.realpath(WEB_DIR)
+            full = os.path.realpath(os.path.join(web, path.lstrip("/")))
+            if os.path.commonpath([web, full]) != web:
+                return self._send(403, "forbidden", "text/plain; charset=utf-8")
+        except (ValueError, OSError):
             return self._send(403, "forbidden", "text/plain; charset=utf-8")
         if not os.path.isfile(full):
             # 单页应用，未命中的路径都回到首页
@@ -183,6 +210,11 @@ def main():
     host = os.environ.get("FAMILY_HOST", "0.0.0.0")
     db.init_db(verbose=True)
     n = api.load()
+    # 首次设置的一次性安装码。只在「一个密码都没设」的库上生成一次。
+    try:
+        api.auth.ensure_setup_token()
+    except Exception:
+        traceback.print_exc()
     # 推送线程。放在 init_db 之后：它一起来就会去查 notification 表和设置，
     # 表还没建出来的话第一轮必然报错。
     notify.start()

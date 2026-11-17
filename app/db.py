@@ -247,6 +247,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v45(conn)
     _migrate_v46(conn)
     _migrate_v47(conn)
+    _migrate_v48(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -625,6 +626,13 @@ def _check_setting(key, vtype, value):
             return False, "这个数太大了"
         if vtype == "int" and abs(n - round(n)) > 1e-9:
             return False, "这一项要填整数"
+        rng = seed_data.SETTING_RANGE.get(key)
+        if rng:
+            lo, hi, step = rng
+            if n < lo or n > hi:
+                return False, "这一项要在 %s–%s 之间" % (lo, hi)
+            if step and abs(n - lo) % step > 1e-9:
+                return False, "这一项要按 %s 递增" % step
         if "pct" in key and n > 100:
             return False, "这项是百分比，最多 100"
         return True, ""
@@ -1365,6 +1373,39 @@ def _migrate_v46(conn):
     for key, old_note, note in renote:
         conn.execute(
             "UPDATE setting SET note=? WHERE key=? AND note=?", (note, key, old_note))
+
+
+def _migrate_v48(conn):
+    """v48：登录失败记录，给登录限速用。"""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS login_attempt (
+             id        INTEGER PRIMARY KEY AUTOINCREMENT,
+             member_id INTEGER,
+             ip        TEXT    NOT NULL DEFAULT '',
+             ok        INTEGER NOT NULL DEFAULT 0,
+             ts        TEXT    NOT NULL
+           )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_login_attempt_member_ts"
+                 " ON login_attempt(member_id, ts)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_login_attempt_ip_ts"
+                 " ON login_attempt(ip, ts)")
+    # v48：ntfy 的访问令牌。Bark 不用，留空。
+    _ensure_column(conn, "push_target", "secret", "TEXT NOT NULL DEFAULT ''")
+    # 老库里的 label/note 是 v1.21 的写法；这两个字段由系统维护，跟着新口径刷。
+    conn.execute(
+        "UPDATE setting SET label=?, note=? WHERE key='push.daily_score_at'",
+        ("开始提醒时间", "到这个点还没给某个孩子打分，就开始提醒。格式 20:30；免打扰时段内不发。"))
+    conn.execute(
+        "UPDATE setting SET label=? WHERE key='push.bark_server'",
+        ("Bark 默认服务器",))
+    conn.execute(
+        "UPDATE setting SET note=? WHERE key='push.enabled'",
+        ("默认关。先在下面把每个人的 Bark key / ntfy topic 填好，再打开这里。",))
+    conn.execute(
+        "UPDATE setting SET note=? WHERE key='push.daily_score_interval_min'",
+        ("单位：分钟。5–240，按 5 分钟一档；只在次数大于 1 时生效。"
+         "后台每 5 分钟检查一次，实际发送可能晚 0–5 分钟；落在免打扰时段的那次不发。",))
 
 
 def _migrate_v47(conn):
