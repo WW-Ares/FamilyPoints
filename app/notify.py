@@ -694,9 +694,19 @@ def _sched_snapshot(now_dt):
     if not _once_today("ops.snapshot", now_dt):
         return
     try:
-        db.snapshot(int(db.cfg("ops.snapshot_keep_days", 30)))
+        snap = db.snapshot(int(db.cfg("ops.snapshot_keep_days", 30)))
     except Exception:
         traceback.print_exc()
+    else:
+        # 每天生成完立刻只读校验一次；打不开/损坏就写一条网页通知，别等真出事才发现。
+        v = db.verify_snapshot(snap)
+        if v.get("ok"):
+            _log("[备份] 校验通过：%s" % v.get("file"))
+        else:
+            _log("[备份] 校验失败：%s %s" % (v.get("file"), v.get("detail")))
+            _notify(None, "ops", "备份校验失败",
+                    "今天的快照没通过校验：%s。先别删旧快照，去看容器日志。"
+                    % v.get("detail"))
     # 登录失败记录只留 30 天，别让限速表跟着年份长大。
     try:
         cutoff = (now_dt - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")

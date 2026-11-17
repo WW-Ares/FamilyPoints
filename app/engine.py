@@ -438,7 +438,10 @@ def enforce_max_hold(member_id, item, operator_id=None):
         if h["source"] == "shop":      # 商店买的卡不拆（碎片只从打出来的重复卡里产生）
             continue
         take = min(h["qty"], left)
-        db.execute("UPDATE holding SET qty=qty-? WHERE id=?", (take, h["id"]))
+        n = db.execute_rowcount(
+            "UPDATE holding SET qty=qty-? WHERE id=? AND qty>=?", (take, h["id"], take))
+        if n != 1:
+            return -1
         left -= take
         collected += take
     if collected <= 0:
@@ -1051,6 +1054,7 @@ def expire_ticket_requests(when=None):
     return len(rows)
 
 
+@db.transactional
 def _settle_ticket_request(request_id, operator_id=None):
     """真正扣券，并把这一轮记成已用（start_at / end_at）。
 
@@ -1204,6 +1208,7 @@ def request_ticket(member_id, item_id, qty=1, note=""):
             "state": g["state"], "msg": "已经告诉爸爸妈妈了，等他们点一下"}
 
 
+@db.transactional
 def resolve_ticket_request(request_id, approve, operator_id=None, reject_note=""):
     """家长处理券核销申请。同意前再判一次闸门 —— 从申请到点头之间可能已经过点了。
 
@@ -1222,8 +1227,12 @@ def resolve_ticket_request(request_id, approve, operator_id=None, reject_note=""
     if not approve and not (reject_note or "").strip():
         return {"ok": False, "msg": "拒绝要写理由，而且孩子能看到"}
     if not approve:
-        db.execute("UPDATE ticket_request SET status='rejected', reject_note=?, operator_id=?,"
-                   " resolved_at=? WHERE id=?", (reject_note, operator_id, now(), request_id))
+        n = db.execute_rowcount(
+            "UPDATE ticket_request SET status='rejected', reject_note=?, operator_id=?,"
+            " resolved_at=? WHERE id=? AND status='pending'",
+            (reject_note, operator_id, now(), request_id))
+        if n != 1:
+            return {"ok": False, "msg": "这条已经处理过了"}
         push_notify(r["member_id"], "ticket", "这次没同意", reject_note)
         return {"ok": True, "approved": False}
 
@@ -1231,12 +1240,25 @@ def resolve_ticket_request(request_id, approve, operator_id=None, reject_note=""
                     submit_at=r["ts"], request_id=r["id"])
     if not g["ok"]:
         # 二次预检没过：替家长自动拒掉，并写明是哪一道闸门
-        db.execute("UPDATE ticket_request SET status='rejected', reject_note=?, operator_id=?,"
-                   " resolved_at=? WHERE id=?",
-                   ("（自动）现在已经用不了了：" + g["msg"], operator_id, now(), request_id))
+        n = db.execute_rowcount(
+            "UPDATE ticket_request SET status='rejected', reject_note=?, operator_id=?,"
+            " resolved_at=? WHERE id=? AND status='pending'",
+            ("（自动）现在已经用不了了：" + g["msg"], operator_id, now(), request_id))
+        if n != 1:
+            return {"ok": False, "msg": "这条已经处理过了"}
         push_notify(r["member_id"], "ticket", "这次没用上", g["msg"])
         return {"ok": False, "code": g["code"], "msg": "现在已经过不了闸门了：" + g["msg"]}
 
+    # 抢「处理中」之前先确认券还在。事务会拿写锁，进来之后余额不会再被别人改。
+    if item_balance(r["member_id"], r["item_id"]) < float(r["qty"] or 0):
+        return {"ok": False, "msg": "券不够了，核销没成"}
+
+    # 抢「处理中」：两个人同时点同意，只有一个能进来。
+    n = db.execute_rowcount(
+        "UPDATE ticket_request SET status='settling' WHERE id=? AND status='pending'",
+        (request_id,))
+    if n != 1:
+        return {"ok": False, "msg": "这条已经处理过了"}
     out = _settle_ticket_request(request_id, operator_id=operator_id)
     if not out.get("ok"):
         return out
@@ -1296,6 +1318,7 @@ def start_ticket_now(request_id, member_id=None):
             "minutes": r["minutes"]}
 
 
+@db.transactional
 def fulfill_ticket(request_id, operator_id=None, note="", done=True):
     """家长点「办好了」/「这次没办」。
 
@@ -1321,9 +1344,12 @@ def fulfill_ticket(request_id, operator_id=None, note="", done=True):
     note = (note or "").strip()
     if done and not note:
         return {"ok": False, "msg": "写一句办的是什么，孩子看得到"}
-    db.execute("UPDATE ticket_request SET fulfill_status=?, fulfill_note=?, fulfilled_at=?,"
-               " fulfilled_by=? WHERE id=?",
-               ("done" if done else "void", note, now(), operator_id, rid))
+    n = db.execute_rowcount(
+        "UPDATE ticket_request SET fulfill_status=?, fulfill_note=?, fulfilled_at=?,"
+        " fulfilled_by=? WHERE id=? AND fulfill_status='waiting'",
+        ("done" if done else "void", note, now(), operator_id, rid))
+    if n != 1:
+        return {"ok": False, "msg": "这条已经处理过了"}
     it = db.query_one("SELECT name FROM item WHERE id=?", (r["item_id"],))
     name = it["name"] if it else "券"
     who = member_name_of(operator_id) or "爸爸妈妈"
@@ -4249,6 +4275,7 @@ def issue_box(member_id, tier, *, cycle_id=None, source="free", operator_id=None
             "icon": t["icon"] or ""}
 
 
+@db.transactional
 def open_box(member_id, box_id, *, picks=None, operator_id=None, auto=False):
     """打开一只箱子：抽内容、发货。
 
@@ -4279,6 +4306,12 @@ def open_box(member_id, box_id, *, picks=None, operator_id=None, auto=False):
                     "source": b["source"], "given": [], "random": rnd0, "cost": b["cost"],
                     "need_pick": need, "resume": True, "icon": t["icon"] or ""}
         return {"ok": False, "msg": "这一箱已经开过了"}
+
+    # 先抢开箱标记，再发货；并发点两下只有一个能拿到。
+    if db.execute_rowcount(
+            "UPDATE box_open SET opened_at=? WHERE id=? AND opened_at IS NULL",
+            (now(), box_id)) != 1:
+        return {"ok": False, "msg": "这一箱已经被打开了，刷新看一下"}
 
     cycle_id = b["cycle_id"]
     free = (b["source"] == "free")
@@ -5469,15 +5502,21 @@ def submit_task(task_id, member_id=None):
     return {"ok": True, "task_id": task_id, "status": "submitted"}
 
 
+@db.transactional
 def confirm_task(task_id, operator_id=None, auto=False):
     t = db.query_one("SELECT * FROM task WHERE id=?", (task_id,))
     if not t:
         return {"ok": False, "msg": "任务不存在"}
     if t["status"] not in ("submitted", "pending", "claimed"):
         return {"ok": False, "msg": "这个任务现在的状态不能确认"}
+    # 先抢状态，再发奖。两个人同时点，只有一个能 UPDATE 到 1 行。
+    n = db.execute_rowcount(
+        "UPDATE task SET status='confirmed', confirmed_at=?"
+        " WHERE id=? AND status IN ('submitted','pending','claimed')",
+        (now(), task_id))
+    if n != 1:
+        return {"ok": False, "msg": "这个任务已经被处理过了"}
     given = _pay_task_reward(t, operator_id)
-    db.execute("UPDATE task SET status='confirmed', confirmed_at=? WHERE id=?",
-               (now(), task_id))
     # 这是从大厅领来的一份，回去把大厅那条的进度也刷一下
     if t["hall_id"]:
         _settle_hall(t["hall_id"])
@@ -6399,6 +6438,7 @@ def create_wish(member_id, title, cond_type="fixed", cond=None, reward_desc="", 
          clean_icon(icon), operator_id))}
 
 
+@db.transactional
 def pay_wish_selfpay(wish_id, operator_id=None):
     """把「星尘自付」那一步的星尘付掉。
 
@@ -6425,9 +6465,13 @@ def pay_wish_selfpay(wish_id, operator_id=None):
     bal = float(stardust_balance(w["member_id"]) or 0)
     if bal < need:
         return {"ok": False, "msg": "还差 %g 星尘" % (need - bal)}
+    n = db.execute_rowcount(
+        "UPDATE wish SET selfpay_stardust=? WHERE id=? AND status='active'"
+        " AND COALESCE(selfpay_stardust,0)=0", (need, wish_id))
+    if n != 1:
+        return {"ok": False, "msg": "这笔已经付过了，或者心愿状态变了"}
     add_ledger(w["member_id"], "pool_deposit", stardust=-need,
                note="心愿自付：" + w["title"], operator_id=operator_id)
-    db.execute("UPDATE wish SET selfpay_stardust=? WHERE id=?", (need, wish_id))
     return {"ok": True, "paid": need, "balance": stardust_balance(w["member_id"])}
 
 
@@ -6576,6 +6620,7 @@ def submit_wish_cond(wish_id, key, note="", operator_id=None):
     return {"ok": True, "claim_id": cid, "status": "pending"}
 
 
+@db.transactional
 def resolve_wish_claim(claim_id, approve, operator_id=None, reject_note=""):
     """家长确认孩子提交的那一条。通过就算这一条做到了。"""
     c = db.query_one("SELECT * FROM wish_claim WHERE id=?", (claim_id,))
@@ -6593,14 +6638,20 @@ def resolve_wish_claim(claim_id, approve, operator_id=None, reject_note=""):
         if not why:
             # 驳回理由对孩子可见，写不出理由的驳回等于「我说不行就不行」
             return {"ok": False, "msg": "不通过要写一句为什么，这句话孩子看得见"}
-        db.execute("UPDATE wish_claim SET status='rejected', reject_note=?,"
-                   " resolved_at=?, resolved_by=? WHERE id=?",
-                   (why, now(), operator_id, claim_id))
+        n = db.execute_rowcount(
+            "UPDATE wish_claim SET status='rejected', reject_note=?,"
+            " resolved_at=?, resolved_by=? WHERE id=? AND status='pending'",
+            (why, now(), operator_id, claim_id))
+        if n != 1:
+            return {"ok": False, "msg": "这条已经处理过了"}
         push_notify(w["member_id"], "wish_rejected", "这一条还没算",
                     "「%s」：%s" % (w["title"], why))
         return {"ok": True, "status": "rejected"}
-    db.execute("UPDATE wish_claim SET status='approved', resolved_at=?, resolved_by=?"
-               " WHERE id=?", (now(), operator_id, claim_id))
+    n = db.execute_rowcount(
+        "UPDATE wish_claim SET status='approved', resolved_at=?, resolved_by=?"
+        " WHERE id=? AND status='pending'", (now(), operator_id, claim_id))
+    if n != 1:
+        return {"ok": False, "msg": "这条已经处理过了"}
     # 通过后整条心愿够不够格是现算的：够了他会收到「心愿达成了」，
     # 不够说明还差别的条件，那就只是这一条记上了，心愿继续走。
     p = wish_progress(dict(w))
@@ -7401,6 +7452,7 @@ def apply_holiday_delay(member_id=None, operator_id=None):
 # ---------------------------------------------------------------------------
 # 碎片合成（只朝上换钻石级）
 # ---------------------------------------------------------------------------
+@db.transactional
 def exchange_fragments(member_id, mode="random", code=None, operator_id=None):
     """碎片合成：10 片随机一张钻石级，20 片自选一张（第 04 章）。
 
@@ -7685,6 +7737,7 @@ ARMED_DONE_TEXT = {
 }
 
 
+@db.transactional
 def use_card(member_id, code, *, operator_id=None, note="", qty=1.0, parent_id=None):
     """用一张卡。真正出口只有一个，前端拿到的反馈也是这里给的。
 
@@ -7859,8 +7912,11 @@ def consume_armed(member_id, effect_key):
                      " AND status='armed' ORDER BY id LIMIT 1", (member_id, effect_key))
     if not r:
         return None
-    db.execute("UPDATE card_redeem SET status='done', done_at=?, updated_at=? WHERE id=?",
-               (now(), now(), r["id"]))
+    n = db.execute_rowcount(
+        "UPDATE card_redeem SET status='done', done_at=?, updated_at=?"
+        " WHERE id=? AND status='armed'", (now(), now(), r["id"]))
+    if n != 1:
+        return None
     it = db.query_one("SELECT name FROM item WHERE id=?", (r["item_id"],))
     push_notify(member_id, "card", "「%s」用上了" % (it["name"] if it else "卡"),
                 ARMED_DONE_TEXT.get(effect_key, "这张卡生效了，这一次算在里面。"))
@@ -7886,6 +7942,7 @@ def pending_redeems(member_id=None, limit=100):
              "created_at": r["created_at"]} for r in rows]
 
 
+@db.transactional
 def finish_redeem(redeem_id, operator_id=None, note="", done=True):
     """家长点「做到了」/「这次没兑现」。
 
@@ -7898,9 +7955,12 @@ def finish_redeem(redeem_id, operator_id=None, note="", done=True):
         return {"ok": False, "msg": "没有这条兑现单"}
     if r["status"] != "pending":
         return {"ok": False, "msg": "这条已经处理过了"}
-    db.execute("UPDATE card_redeem SET status=?, done_at=?, updated_at=?, operator_id=?, note=?"
-               " WHERE id=?", ("done" if done else "void", now(), now(), operator_id,
-                               note or "", r["id"]))
+    n = db.execute_rowcount(
+        "UPDATE card_redeem SET status=?, done_at=?, updated_at=?, operator_id=?, note=?"
+        " WHERE id=? AND status='pending'",
+        ("done" if done else "void", now(), now(), operator_id, note or "", r["id"]))
+    if n != 1:
+        return {"ok": False, "msg": "这条已经处理过了"}
     it = db.query_one("SELECT name FROM item WHERE id=?", (r["item_id"],))
     if done:
         push_notify(r["member_id"], "card", "卡片兑现完成",

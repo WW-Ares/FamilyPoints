@@ -171,6 +171,29 @@ data/
 
 恢复：停掉容器，把 `data/` 换回去，再起。
 
+v1.23 起有专用工具，别再手工覆盖：
+
+```bash
+# 只读校验最新快照（容器里就有 python）
+sudo docker cp app/tools/verify_backup.py family-points:/srv/
+sudo docker exec family-points python /srv/verify_backup.py --against-live
+
+# 恢复：先停容器，再用一次性容器挂载 data 跑
+sudo docker compose down
+sudo docker run --rm -v /vol1/docker/family-points/data:/data -v /vol1/docker/family-points:/srv -e FAMILY_DATA_DIR=/data python:3.13-alpine python /srv/tools/restore_backup.py --db /data/snapshots/family-YYYY-MM-DD.db --apply --yes --allow-live
+sudo docker compose up -d
+```
+
+`restore_backup.py` 会先校验、和当前库比行数、自动做 `pre-restore-*.db`，再原子替换；不带 `--apply` 只预演。恢复不开放网页入口。
+
+管理员忘了密码：
+
+```bash
+sudo docker cp app/tools/reset_admin.py family-points:/srv/
+sudo docker exec -it family-points python /srv/reset_admin.py --list
+sudo docker exec -it family-points python /srv/reset_admin.py
+```
+
 ```bash
 cd /volume1/docker/family-points/family-points
 sudo docker compose down

@@ -1051,7 +1051,10 @@ def main():
     p = db.snapshot()
     check("生成了快照文件", p is not None, p)
     exp = db.export_json()
-    check("能整库导出", exp.get("member") and len(exp["member"]) == 4, len(exp.get("member", [])))
+    check("能整库导出", len(exp.get("tables", {}).get("member", [])) == 4,
+          len(exp.get("tables", {}).get("member", [])))
+    check("导出没有密码哈希",
+          all("password_hash" not in r for r in exp.get("tables", {}).get("member", [])))
 
     # ---------------------------------------------------------------- 20
     print("\n=== 20. 登录与账号（v19）===")

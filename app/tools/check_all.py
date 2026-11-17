@@ -27,6 +27,8 @@ def main():
         ("前端语法", ["node", "--check", "app/web/app.js"]),
         ("未定义标识符", [sys.executable, "app/tools/check_undef.py"]),
         ("未打分提醒", [sys.executable, "app/tools/test_unscored_reminder.py"]),
+        ("事务与并发", [sys.executable, "app/tools/test_transactions.py"]),
+        ("导出与恢复", [sys.executable, "app/tools/test_export_restore.py"]),
         ("引擎冒烟", [sys.executable, "app/smoke_test.py"]),
         ("接口巡检", [sys.executable, "app/api_test.py"]),
         ("开发文档", [sys.executable, "app/tools/verify_devdoc.py"]),

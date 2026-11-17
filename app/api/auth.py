@@ -696,24 +696,30 @@ def change_own_password(ctx):
 @route("POST", "/api/ops/snapshot")
 def op_snapshot(ctx):
     ctx.as_parent()
-    p = db.snapshot(int(db.cfg("ops.snapshot_keep_days", 30)))
-    return {"ok": bool(p), "path": os.path.basename(p) if p else None}
+    p = db.snapshot(int(db.cfg("ops.snapshot_keep_days", 30)), force=True)
+    v = db.verify_snapshot(p) if p else {"ok": False, "detail": "快照没生成"}
+    return {"ok": bool(p), "path": os.path.basename(p) if p else None,
+            "verify": v}
 
 
 @route("GET", "/api/ops/export")
 def op_export(ctx):
-    """整库导出，只给管理员。
+    """全量导出，只给管理员。
 
-    这份 JSON 里带着全家的 password_hash。就算是 pbkdf2 十二万轮，
-    把它递出去也等于把离线爆破的材料一并递出去 —— 备份要能还原的
-    从来不是密码，是分和账。所以顺手摘掉哈希，并标一句说明。
+    导出里不带 password_hash，也不带推送的 target/secret；会话和登录失败
+    记录不导。恢复要还原的是分和账，不是钥匙。
     """
     ctx.as_admin()
-    d = db.export_json()
-    for row in d.get("member", []):
-        row.pop("password_hash", None)
-    d["password_hash_omitted"] = True
-    return d
+    return db.export_json()
+
+
+@route("POST", "/api/ops/verify")
+def op_verify(ctx):
+    """只读校验一份快照。默认校验最新那份，也可以传 file 指定。"""
+    ctx.as_parent()
+    name = str(ctx.p("file", "") or "").strip()
+    path = os.path.join(db.SNAPSHOT_DIR, os.path.basename(name)) if name else None
+    return db.verify_snapshot(path, against_live=ctx.truthy("against_live", False))
 
 
 @route("GET", "/api/ops/snapshots")
@@ -721,9 +727,17 @@ def op_snapshots(ctx):
     ctx.as_parent()
     d = db.SNAPSHOT_DIR
     if not os.path.isdir(d):
-        return {"files": []}
-    files = sorted(os.listdir(d), reverse=True)
-    return {"files": [{"name": f, "size": os.path.getsize(os.path.join(d, f))} for f in files]}
+        return {"files": [], "latest": None}
+    files = []
+    for f in sorted(os.listdir(d), reverse=True):
+        if not f.endswith(".db"):
+            continue
+        p = os.path.join(d, f)
+        files.append({"name": f, "size": os.path.getsize(p),
+                      "mtime": datetime.fromtimestamp(os.path.getmtime(p)).strftime(
+                          "%Y-%m-%d %H:%M:%S")})
+    files.sort(key=lambda x: x["mtime"], reverse=True)
+    return {"files": files, "latest": files[0] if files else None}
 
 
 @route("GET", "/api/audit")

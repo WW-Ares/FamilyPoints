@@ -7614,30 +7614,57 @@ async function pushMemberSheet(mid) {
 }
 
 async function opsSheet() {
-  let snap = { files: [] };
+  let snap = { files: [], latest: null };
   try { snap = await api('GET', '/api/ops/snapshots'); } catch (e) { }
-  sheet('<h3>备份与导出</h3><p class="muted">数据库就是一个文件。每天自动存一份快照，保留 30 天。家庭记录丢了没法重建，隔段时间顺手导一份到别的地方。</p>' +
-    '<div class="kv"><span class="k">已有的快照</span><span class="v">' + snap.files.length + ' 份</span></div>' +
-    (snap.files.slice(0, 5).map(f => '<div class="kv"><span class="k">' + esc(f.name) + '</span><span class="v">' +
-      Math.round(f.size / 1024) + ' KB</span></div>').join('')) +
+  const latest = snap.latest;
+  let h = '<h3>备份与导出</h3><p class="muted">数据库就是一个文件。每天自动存一份快照，保留 30 天；生成后自动只读校验。恢复只走命令行，网页这里只做校验。</p>' +
+    '<div class="kv"><span class="k">已有的快照</span><span class="v">' + snap.files.length + ' 份</span></div>';
+  if (latest) {
+    h += '<div class="kv"><span class="k">最近一份</span><span class="v">' + esc(latest.name) +
+      ' · ' + Math.round(latest.size / 1024) + ' KB · ' + esc(latest.mtime) + '</span></div>';
+  }
+  h += (snap.files.slice(0, 5).map(f => '<div class="kv"><span class="k">' + esc(f.name) +
+        '</span><span class="v">' + Math.round(f.size / 1024) + ' KB</span></div>').join('')) +
     '<div class="hr"></div>' +
     '<button class="btn wide ghost" id="snapNow">现在存一份快照</button>' +
-    '<button class="btn wide line" id="exp" style="margin-top:8px">导出全部数据（JSON）</button>', box => {
-      $('#snapNow', box).addEventListener('click', async () => {
-        try { await api('POST', '/api/ops/snapshot'); closeSheet(); toast('存好了'); } catch (e) { err(e); }
-      });
-      $('#exp', box).addEventListener('click', async () => {
-        try {
-          const data = await api('GET', '/api/ops/export');
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'family-' + todayStr() + '.json';
-          a.click();
-          toast('导出好了');
-        } catch (e) { err(e); }
-      });
+    '<button class="btn wide line" id="verify" style="margin-top:8px">验证最近备份</button>' +
+    '<button class="btn wide line" id="exp" style="margin-top:8px">导出全部数据（JSON）</button>' +
+    '<div class="muted" id="opv" style="margin-top:8px"></div>';
+  sheet(h, box => {
+    const show = v => {
+      const el = $('#opv', box);
+      if (!el) return;
+      if (!v) { el.textContent = ''; return; }
+      el.innerHTML = v.ok
+        ? '<span>校验通过：' + esc(v.detail || 'ok') + ' · schema ' + esc(v.schema_version || '') +
+          ' · ledger ' + esc(String((v.counts || {}).ledger)) +
+          (v.match === false ? ' · 行数与当前库不一致' : '') + '</span>'
+        : '<span class="no-t">校验失败：' + esc(v.detail || '未知') + '</span>';
+    };
+    $('#snapNow', box).addEventListener('click', async () => {
+      try {
+        const r = await api('POST', '/api/ops/snapshot');
+        toast(r.ok ? '存好了' : '没存成');
+        closeSheet();
+        opsSheet();
+      } catch (e) { err(e); }
     });
+    $('#verify', box).addEventListener('click', async () => {
+      try { show(await api('POST', '/api/ops/verify', { against_live: true })); }
+      catch (e) { err(e); }
+    });
+    $('#exp', box).addEventListener('click', async () => {
+      try {
+        const data = await api('GET', '/api/ops/export');
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'family-' + todayStr() + '.json';
+        a.click();
+        toast('导出好了');
+      } catch (e) { err(e); }
+    });
+  });
 }
 
 /* ------------------------------------------------------------------ 启动 */

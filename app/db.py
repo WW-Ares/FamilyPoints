@@ -4,12 +4,15 @@
 
 单文件 SQLite，WAL 模式。所有连接按线程缓存（http.server 是多线程的）。
 """
+import functools
+import hashlib
 import json
 import os
 import re
 import shutil
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 import seed_data
@@ -48,6 +51,17 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def close_conn():
+    """关掉线程缓存的连接。恢复/替换库文件前必须调，Windows 上不关就 replace 不了。"""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
 def query(sql: str, args=()) -> list:
     cur = get_conn().execute(sql, args)
     rows = cur.fetchall()
@@ -60,19 +74,73 @@ def query_one(sql: str, args=()):
     return rows[0] if rows else None
 
 
+def _in_tx():
+    return bool(getattr(_local, "in_tx", False))
+
+
 def execute(sql: str, args=()) -> int:
     conn = get_conn()
     cur = conn.execute(sql, args)
-    conn.commit()
+    if not _in_tx():
+        conn.commit()
     lastrow = cur.lastrowid
     cur.close()
     return lastrow
 
 
+def execute_rowcount(sql: str, args=()) -> int:
+    """执行一条 DML，返回受影响行数；事务里不自动提交。"""
+    conn = get_conn()
+    cur = conn.execute(sql, args)
+    n = cur.rowcount
+    if not _in_tx():
+        conn.commit()
+    cur.close()
+    return n
+
+
 def executemany(sql: str, seq) -> None:
     conn = get_conn()
     conn.executemany(sql, seq)
-    conn.commit()
+    if not _in_tx():
+        conn.commit()
+
+
+@contextmanager
+def tx():
+    """写事务。嵌套调用复用外层事务，不重复 BEGIN。
+
+    BEGIN IMMEDIATE 会立刻拿写锁，两个家长同时点确认时只有一个能进来；
+    另一个等 busy_timeout，进来后条件 UPDATE 已经是 0 行，直接返回「已处理」。
+    """
+    if _in_tx():
+        yield get_conn()
+        return
+    conn = get_conn()
+    conn.execute("BEGIN IMMEDIATE")
+    _local.in_tx = True
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        # set_setting 会在事务里刷新设置缓存；回滚后必须再刷一次，别把没落库的值留在缓存里。
+        try:
+            settings_all(force=True)
+        except Exception:
+            pass
+        raise
+    finally:
+        _local.in_tx = False
+
+
+def transactional(fn):
+    """把整个函数包进一个写事务。函数里所有 db.execute 都不再单独 commit。"""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with tx():
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 def to_dicts(rows) -> list:
@@ -505,15 +573,25 @@ def _migrate_v21(conn):
 # ---------------------------------------------------------------------------
 # 备份
 # ---------------------------------------------------------------------------
-def snapshot(keep_days: int = 30):
-    """SQLite 在线备份，保留最近若干天。每天第一次调用时生成。"""
+def snapshot(keep_days: int = 30, force: bool = False):
+    """SQLite 在线备份，保留最近若干天。
+
+    force=False：每天一份，当天已有就复用（定时任务用）。
+    force=True：手动按钮用，文件名带时分秒，保证这次真的新存了一份。
+    """
     if not os.path.exists(DB_PATH):
         return None
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     stamp = today()
-    target = os.path.join(SNAPSHOT_DIR, "family-%s.db" % stamp)
-    if stamp in _written or os.path.exists(target):
-        return target
+    if force:
+        target = os.path.join(SNAPSHOT_DIR, "family-%s-%s.db" %
+                               (stamp, datetime.now().strftime("%H%M%S")))
+        if os.path.exists(target):
+            return target
+    else:
+        target = os.path.join(SNAPSHOT_DIR, "family-%s.db" % stamp)
+        if stamp in _written or os.path.exists(target):
+            return target
     src = get_conn()
     dst = sqlite3.connect(target)
     with dst:
@@ -535,18 +613,96 @@ def snapshot(keep_days: int = 30):
 
 
 def export_json() -> dict:
-    """整库导出，用于一键备份。"""
-    tables = ["member", "setting", "dimension", "cycle", "score_entry", "ledger", "ledger_item",
-              "item", "holding", "box_tier", "box_open", "explore", "wish", "wish_pool",
-              "wish_pool_entry", "wish_pool_log", "task", "calibration", "holiday",
-              "calendar_day", "help_request",
-              "overtime_request", "notification", "fragment_use", "item_use", "audit_log"]
-    out = {"exported_at": now(), "schema_version": seed_data.SCHEMA_VERSION}
-    for t in tables:
+    """导出全部业务表。会话、限流记录、密码哈希、推送密钥不导出。
+
+    返回结构：
+      format / version / exported_at / schema_version / app_version
+      tables: {表名: [行]}
+      counts: {表名: 行数}
+      content_sha256: 对 tables 的规范化 JSON 算的指纹
+    """
+    skip = {"session", "login_attempt", "meta"}
+    names = [r[0] for r in query(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+        " AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+    out = {
+        "format": "family-points-export",
+        "version": 1,
+        "exported_at": now(),
+        "schema_version": seed_data.SCHEMA_VERSION,
+        "app_version": seed_data.APP_VERSION,
+        "tables": {},
+        "counts": {},
+    }
+    for t in names:
+        if t in skip:
+            continue
+        rows = to_dicts(query("SELECT * FROM %s" % t))
+        if t == "member":
+            for row in rows:
+                row.pop("password_hash", None)
+        elif t == "push_target":
+            # 设备 key / topic / 访问令牌是密钥，不进导出；恢复后重新填。
+            for row in rows:
+                row.pop("target", None)
+                row.pop("secret", None)
+        out["tables"][t] = rows
+        out["counts"][t] = len(rows)
+    payload = json.dumps(out["tables"], ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"))
+    out["content_sha256"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return out
+
+
+def latest_snapshot():
+    if not os.path.isdir(SNAPSHOT_DIR):
+        return None
+    files = [os.path.join(SNAPSHOT_DIR, f) for f in os.listdir(SNAPSHOT_DIR)
+             if f.endswith(".db")]
+    return max(files, key=os.path.getmtime) if files else None
+
+
+def verify_snapshot(path=None, against_live=False):
+    """只读校验一份快照：integrity_check + schema + 关键表行数。"""
+    import pathlib
+    path = path or latest_snapshot()
+    if not path or not os.path.isfile(path):
+        return {"ok": False, "file": path or "", "detail": "没有找到快照"}
+    try:
+        uri = pathlib.Path(path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+    except sqlite3.Error as e:
+        return {"ok": False, "file": path, "detail": "打不开：%s" % e}
+    try:
+        integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        schema = row[0] if row else ""
+        counts = {}
+        for t in ("member", "ledger", "task", "score_entry", "holding", "box_open"):
+            try:
+                counts[t] = conn.execute("SELECT COUNT(*) FROM %s" % t).fetchone()[0]
+            except sqlite3.Error:
+                counts[t] = None
+    except sqlite3.Error as e:
+        conn.close()
+        return {"ok": False, "file": path, "detail": "校验失败：%s" % e}
+    finally:
         try:
-            out[t] = to_dicts(query("SELECT * FROM %s" % t))
-        except sqlite3.Error:
-            out[t] = []
+            conn.close()
+        except Exception:
+            pass
+    out = {"ok": integrity == "ok", "file": path, "schema_version": schema,
+           "counts": counts, "detail": integrity}
+    if against_live:
+        live = {}
+        for t in counts:
+            try:
+                live[t] = query_one("SELECT COUNT(*) c FROM %s" % t)["c"]
+            except sqlite3.Error:
+                live[t] = None
+        out["live_counts"] = live
+        out["match"] = all(counts[t] == live[t] for t in counts
+                           if counts[t] is not None and live[t] is not None)
     return out
 
 
@@ -641,6 +797,7 @@ def _check_setting(key, vtype, value):
     return True, ""
 
 
+@transactional
 def set_setting(key: str, value, actor_id=None, approve=False):
     """写设置。locked 的项拒绝写入。返回 (ok, message)。"""
     row = query_one("SELECT * FROM setting WHERE key=?", (key,))
