@@ -1724,7 +1724,7 @@ async function walkTabs(page, tag) {
   await page.waitForTimeout(700);
   const pubSeg = (await page.locator('#view .seg-item').allInnerTexts()).map(flat);
   say('   发布胶囊: ' + pubSeg.join(' / '));
-  if (pubSeg.length !== 3) bad('[v40] 发布胶囊不是 3 格，是 ' + pubSeg.length);
+  if (pubSeg.length !== 4) bad('[v25] 发布胶囊不是 4 格，是 ' + pubSeg.length);
   if (pubSeg[1] !== '写校准') bad('[v40] 发布胶囊第二格不是「写校准」，是「' + pubSeg[1] + '」');
   if (!/^我发出的\s*\d+$/.test(pubSeg[2] || '')) {
     bad('[v40] 第三格没带件数写成「我发出的 N」，是「' + pubSeg[2] + '」');

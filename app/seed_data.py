@@ -682,8 +682,8 @@ POOL_TEMPLATES = [
 
 # 库结构版本。迁移链、pack_release.py 的打包名、verify_devdoc.py 的判据都认它，
 # 改它等于宣告库结构变了，要配套写 _migrate_vNN。跟对外叫的版本号是两码事。
-SCHEMA_VERSION = "48"
+SCHEMA_VERSION = "49"
 
 # 对外版本号。v1.2 是本项目的第一版对外发布，此前 v3–v39 的内部编号作废。
 # 登录页与家长端「我的」页脚显示的是它，不是 SCHEMA_VERSION。
-APP_VERSION = "1.24"
+APP_VERSION = "1.25"

@@ -187,6 +187,54 @@ def task_templates(ctx):
         "SELECT value FROM setting WHERE key='repair.templates'")["value"])}
 
 
+@route("GET", "/api/task-templates")
+def list_task_templates(ctx):
+    ctx.as_parent()
+    return {"items": E.task_template_list()}
+
+
+@route("POST", "/api/task-templates")
+def post_task_template(ctx):
+    me = ctx.as_parent()
+    r = E.create_task_template(
+        ctx.need("title"), ctx.need("std"),
+        ctx.need("repeat_type"), ctx.need("repeat_value"),
+        assignee_id=(ctx.i("assignee_id") or None),
+        reward_type=ctx.p("reward_type", "stardust"),
+        reward={"amount": ctx.f("amount", 5)},
+        created_by=me["id"],
+        slots=ctx.i("slots", 1),
+        icon=ctx.p("icon", ""))
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "建不了"))
+    return r
+
+
+@route("POST", "/api/task-templates/:id/toggle")
+def toggle_task_template(ctx):
+    me = ctx.as_parent()
+    r = E.set_task_template_active(ctx.id_path("id", "周期任务"),
+                                   ctx.truthy("active", True), operator_id=me["id"])
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "改不了"))
+    return r
+
+
+@route("DELETE", "/api/task-templates/:id")
+def delete_task_template(ctx):
+    me = ctx.as_parent()
+    r = E.delete_task_template(ctx.id_path("id", "周期任务"), operator_id=me["id"])
+    if not r.get("ok"):
+        raise ApiError(r.get("msg", "删不了"))
+    return r
+
+
+@route("POST", "/api/task-templates/generate")
+def generate_task_templates(ctx):
+    ctx.as_parent()
+    return E.generate_task_templates(E.today())
+
+
 # ---------------------------------------------------------------------------
 # 任务大厅（v15）
 # ---------------------------------------------------------------------------

@@ -28,12 +28,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="家庭积分">
-<link rel="stylesheet" href="style.css?v=1.24">
+<link rel="stylesheet" href="style.css?v=1.25">
 <!-- 登录页自带一套最小变量，不依赖孩子端/家长端 tokens。 -->
-<link rel="stylesheet" href="login.css?v=1.24">
+<link rel="stylesheet" href="login.css?v=1.25">
 <!-- 浅蓝皮肤「晴空」。放最后：靠 .theme-sky body.kid 这层选择器压住上面所有皮。 -->
-<link rel="stylesheet" href="theme-sky.css?v=1.24">
-<!-- 孩子端/家长端的 tokens + 组件由 app.js 在登录后按角色加载（v1.24）。
+<link rel="stylesheet" href="theme-sky.css?v=1.25">
+<!-- 孩子端/家长端的 tokens + 组件由 app.js 在登录后按角色加载（v1.25）。
      首屏只带三个基础 CSS，家长不下载 child.css，孩子不下载 parent.css。 -->
 </head>
 <body>
@@ -54,16 +54,16 @@
 </div>
 <div id="sheet" class="sheet"><div class="sheet-body" id="sheetBody"></div></div>
 <div id="toast" class="toast"></div>
-<script src="icons.js?v=1.24"></script>
-<script src="avatars.js?v=1.24"></script>
-<script src="app.js?v=1.24"></script>
+<script src="icons.js?v=1.25"></script>
+<script src="avatars.js?v=1.25"></script>
+<script src="app.js?v=1.25"></script>
 <script>
 /* 角色资源在 app.js 的 boot() 里按 S.me.role 动态加载：孩子端才拉
    child-tokens/child.css/candy-icons/child.js/chest-opening，家长端才拉
    parent-tokens/parent.css/parent-icons。 */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js?v=1.24').catch(function () {});
+    navigator.serviceWorker.register('sw.js?v=1.25').catch(function () {});
   });
 }
 </script>

@@ -504,6 +504,7 @@ def run_scheduled(now_dt=None):
     _sched_settle(now_dt)
     _sched_snapshot(now_dt)
     _sched_season(now_dt)
+    _sched_task_templates(now_dt)
     # 国家节假日日历不在这里同步。它要出网，而这套系统默认跑在没有外网
     # 的 Docker 里，自动联网只会换来一堆超时日志。那张表只由家长在设置页
     # 点「立即更新」来填，见 holiday_cn.sync。
@@ -594,6 +595,15 @@ def _meta_json(key, default):
 def _meta_set_json(key, obj):
     db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
                (key, json.dumps(obj, ensure_ascii=False)))
+
+
+def _sched_task_templates(now_dt):
+    """到期的周期任务生成普通任务。生成和推进在 engine 里同一个事务。"""
+    import engine as E
+    try:
+        E.generate_task_templates(now_dt.strftime("%Y-%m-%d"))
+    except Exception:
+        traceback.print_exc()
 
 
 def _sched_daily_score(now_dt):

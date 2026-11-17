@@ -5756,6 +5756,165 @@ def _doing_row(r, hall_id=None):
     return d
 
 
+def _template_next(repeat_type, value, from_day):
+    """严格晚于 from_day 的下一个到期日。"""
+    d = parse_day(from_day)
+    if repeat_type == "daily":
+        return fmt(d + timedelta(days=1))
+    if repeat_type == "weekly":
+        v = int(value) % 7
+        delta = (v - d.weekday()) % 7
+        if delta == 0:
+            delta = 7
+        return fmt(d + timedelta(days=delta))
+    if repeat_type == "monthly":
+        v = max(1, min(28, int(value)))
+        y, m = d.year, d.month
+        if d.day < v:
+            return fmt(datetime(y, m, v))
+        if m == 12:
+            y, m = y + 1, 1
+        else:
+            m += 1
+        return fmt(datetime(y, m, v))
+    return fmt(d + timedelta(days=1))
+
+
+def _repeat_text(repeat_type, value):
+    if repeat_type == "daily":
+        return "每天"
+    if repeat_type == "weekly":
+        return "每周" + "一二三四五六日"[int(value) % 7]
+    if repeat_type == "monthly":
+        return "每月 %d 号" % int(value)
+    return repeat_type
+
+
+def task_template_list():
+    rows = db.query(
+        "SELECT t.*, m.name AS assignee_name, c.name AS creator_name"
+        " FROM task_template t LEFT JOIN member m ON m.id=t.assignee_id"
+        " LEFT JOIN member c ON c.id=t.created_by"
+        " ORDER BY t.active DESC, t.next_due, t.id")
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["repeat_text"] = _repeat_text(r["repeat_type"], r["repeat_value"])
+        d["active"] = bool(r["active"])
+        d["who"] = r["assignee_name"] or "大厅"
+        d["reward"] = json.loads(r["reward_json"] or "{}")
+        out.append(d)
+    return out
+
+
+@db.transactional
+def create_task_template(title, std, repeat_type, repeat_value, *, assignee_id=None,
+                         reward_type="stardust", reward=None, created_by=None,
+                         slots=1, icon=""):
+    if not is_judge(created_by):
+        return {"ok": False, "msg": "只有爸爸妈妈能建周期任务"}
+    title = (title or "").strip()
+    std = (std or "").strip()
+    if not title:
+        return {"ok": False, "msg": "任务要有标题"}
+    if not std:
+        return {"ok": False, "msg": "完成标准要能一眼核对，别留空"}
+    if assignee_id not in (None, ""):
+        try:
+            assignee_id = int(assignee_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "msg": "给谁不对"}
+        if not is_player(assignee_id):
+            return {"ok": False, "msg": "只能派给孩子，或者挂大厅"}
+    else:
+        assignee_id = None
+    if repeat_type not in ("daily", "weekly", "monthly"):
+        return {"ok": False, "msg": "周期只有每天/每周/每月"}
+    try:
+        repeat_value = int(repeat_value or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "msg": "周期值不对"}
+    if repeat_type == "weekly" and not 0 <= repeat_value <= 6:
+        return {"ok": False, "msg": "周几要选 0–6"}
+    if repeat_type == "monthly" and not 1 <= repeat_value <= 28:
+        return {"ok": False, "msg": "每月几号要在 1–28"}
+    if reward_type not in ("stardust", "energy"):
+        return {"ok": False, "msg": "周期任务只支持星尘或周能量"}
+    reward = reward if isinstance(reward, dict) else {}
+    try:
+        amt = float(reward.get("amount", 5) or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "msg": "奖励数量不对"}
+    if reward_type == "stardust" and not 0 < amt <= 10:
+        return {"ok": False, "msg": "星尘奖励是 1 到 10"}
+    if reward_type == "energy" and not 0 < amt <= 3:
+        return {"ok": False, "msg": "周能量奖励是 1 到 3 分"}
+    nxt = _template_next(repeat_type, repeat_value, today())
+    tid = db.execute(
+        "INSERT INTO task_template (title, std, assignee_id, created_by, reward_type,"
+        " reward_json, repeat_type, repeat_value, next_due, active, icon, slots,"
+        " created_at, last_result) VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,'')",
+        (title, std, assignee_id, created_by, reward_type,
+         json.dumps({"amount": amt}, ensure_ascii=False), repeat_type, repeat_value,
+         nxt, clean_icon(icon), max(1, min(9, int(slots or 1))), now()))
+    return {"ok": True, "id": tid, "next_due": nxt,
+            "repeat_text": _repeat_text(repeat_type, repeat_value)}
+
+
+@db.transactional
+def set_task_template_active(template_id, active, operator_id=None):
+    if not is_judge(operator_id):
+        return {"ok": False, "msg": "只有爸爸妈妈能改周期任务"}
+    n = db.execute_rowcount("UPDATE task_template SET active=? WHERE id=?",
+                            (1 if active else 0, int(template_id)))
+    if n != 1:
+        return {"ok": False, "msg": "没有这条周期任务"}
+    return {"ok": True, "active": bool(active)}
+
+
+@db.transactional
+def delete_task_template(template_id, operator_id=None):
+    if not is_judge(operator_id):
+        return {"ok": False, "msg": "只有爸爸妈妈能删周期任务"}
+    n = db.execute_rowcount("DELETE FROM task_template WHERE id=?", (int(template_id),))
+    if n != 1:
+        return {"ok": False, "msg": "没有这条周期任务"}
+    return {"ok": True}
+
+
+def generate_task_templates(day=None):
+    """到期的周期任务生成普通任务；生成完把 next_due 推到未来。
+
+    每个模板单独一个事务：一条失败不影响别的；生成和推进同进同退，重启不会重发。
+    """
+    day = day or today()
+    rows = db.query("SELECT id FROM task_template WHERE active=1 AND next_due<=?"
+                    " ORDER BY id", (day,))
+    made = 0
+    for row in rows:
+        with db.tx():
+            t = db.query_one("SELECT * FROM task_template WHERE id=? AND active=1"
+                             " AND next_due<=?", (row["id"], day))
+            if not t:
+                continue
+            reward = json.loads(t["reward_json"] or "{}")
+            r = create_task(t["assignee_id"], t["title"], t["std"],
+                            reward_type=t["reward_type"], reward=reward,
+                            created_by=t["created_by"], slots=t["slots"],
+                            icon=t["icon"])
+            ok = isinstance(r, int)
+            err = "" if ok else ((r or {}).get("msg") if isinstance(r, dict) else "发不出去")
+            nxt = _template_next(t["repeat_type"], t["repeat_value"], day)
+            while nxt <= day:
+                nxt = _template_next(t["repeat_type"], t["repeat_value"], nxt)
+            result = "已生成" if ok else ("跳过：" + (err or "未知原因"))
+            db.execute("UPDATE task_template SET next_due=?, last_generated_at=?,"
+                       " last_result=? WHERE id=?", (nxt, now(), result, t["id"]))
+            if ok:
+                made += 1
+    return {"ok": True, "generated": made}
+
+
 def task_hall(viewer=None):
     """任务大厅。家长和孩子看同一份数据，只是各自多几个「我能干嘛」的标记。
 

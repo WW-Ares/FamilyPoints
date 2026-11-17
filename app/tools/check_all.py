@@ -29,6 +29,7 @@ def main():
         ("未打分提醒", [sys.executable, "app/tools/test_unscored_reminder.py"]),
         ("事务与并发", [sys.executable, "app/tools/test_transactions.py"]),
         ("导出与恢复", [sys.executable, "app/tools/test_export_restore.py"]),
+        ("周期任务", [sys.executable, "app/tools/test_task_templates.py"]),
         ("引擎冒烟", [sys.executable, "app/smoke_test.py"]),
         ("接口巡检", [sys.executable, "app/api_test.py"]),
         ("开发文档", [sys.executable, "app/tools/verify_devdoc.py"]),

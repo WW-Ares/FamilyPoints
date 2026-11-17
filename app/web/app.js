@@ -43,17 +43,17 @@ function kMarkSeen(key) {
 }
 
 /* ---------------------------------------------------------- 角色资源加载 */
-/* v1.24：首屏只带 style/login/theme + icons/avatars/app.js。
+/* v1.25：首屏只带 style/login/theme + icons/avatars/app.js。
    登录后按角色再拉各自的 tokens、皮肤、图标清单和 child.js，
    家长不下载 child.css，孩子不下载 parent.css。 */
 const ROLE_ASSETS = {
   parent: {
-    css: ['parent-tokens.css?v=1.24', 'parent.css?v=1.24'],
-    js: ['parent-icons.js?v=1.24'],
+    css: ['parent-tokens.css?v=1.25', 'parent.css?v=1.25'],
+    js: ['parent-icons.js?v=1.25'],
   },
   child: {
-    css: ['child-tokens.css?v=1.24', 'child.css?v=1.24', 'chest-opening.css?v=1.24'],
-    js: ['candy-icons.js?v=1.24', 'chest-opening.js?v=1.24', 'child.js?v=1.24'],
+    css: ['child-tokens.css?v=1.25', 'child.css?v=1.25', 'chest-opening.css?v=1.25'],
+    js: ['candy-icons.js?v=1.25', 'chest-opening.js?v=1.25', 'child.js?v=1.25'],
   },
 };
 const ROLE_LOADED = {};
@@ -4369,6 +4369,7 @@ async function renderAdminPublish(v) {
   const seg = P_PUBSEG;
   const all = await pg('/api/tasks', { items: [] });
   const mine = (all.items || []).filter(t => t.kind !== 'repair' && t.created_by === S.me.id);
+  const tpl = seg === 'cycle' ? await pg('/api/task-templates', { items: [] }) : { items: [] };
 
   let h = pHead({ title: '发布', sub: '发个任务，谁做到谁拿' });
   // 三格做成真胶囊（底衬 + 选中橙底白字），数字单独一个小牌，
@@ -4380,7 +4381,9 @@ async function renderAdminPublish(v) {
     '" data-pseg="calib">写校准</button>' +
     '<button type="button" class="seg-item' + (seg === 'mine' ? ' on' : '') +
     '" data-pseg="mine">我发出的<span class="seg-n">' + mine.length +
-    '</span></button></div>';
+    '</span></button>' +
+    '<button type="button" class="seg-item' + (seg === 'cycle' ? ' on' : '') +
+    '" data-pseg="cycle">周期</button></div>';
 
   if (seg === 'new') {
     /* 两张卡，卡里不写编号标题。
@@ -4496,6 +4499,29 @@ async function renderAdminPublish(v) {
       '罚款与还款都不会把他扣空，留多少在设置「校准与钱」里改；四条红线改不了。</p>';
     v.innerHTML = h;
     bindCalibForm();
+  } else if (seg === 'cycle') {
+    const items = tpl.items || [];
+    h += '<div class="sec"><div class="sec-h"><h2>周期任务</h2><span class="sub">' +
+      items.length + ' 条</span></div><div class="card">';
+    if (!items.length) {
+      h += '<div class="empty">还没有周期任务。建一条，到日子系统自己发。</div>';
+    }
+    items.forEach(t => {
+      h += '<div class="item"><div class="txt"><div class="nm">' + esc(t.title) +
+        (t.active ? '' : ' <span class="tag warn">停用</span>') + '</div>' +
+        '<div class="ds">' + esc(t.who) + ' · ' + esc(t.repeat_text) +
+        ' · 下次 ' + esc(t.next_due) + '</div>' +
+        '<div class="ds">' + (t.reward_type === 'energy' ? '周能量' : '星尘') +
+        ' +' + num((t.reward || {}).amount || 0) +
+        (t.last_result ? ' · 上次：' + esc(t.last_result) : '') + '</div></div>' +
+        '<button class="btn sm line" data-ttoggle="' + t.id + '" data-on="' +
+        (t.active ? 1 : 0) + '">' + (t.active ? '停用' : '启用') + '</button>' +
+        '<button class="btn sm line" data-tdel="' + t.id + '">删</button></div>';
+    });
+    h += '</div></div><button class="btn wide line" id="tplGen" style="margin-bottom:8px">立即生成到期任务</button>' +
+      '<button class="btn wide" id="tplNew">新建周期任务</button>';
+    v.innerHTML = h;
+    bindTaskTemplates();
   } else {
     const t = await pTasksHTML();
     h += t.h;
@@ -4507,6 +4533,101 @@ async function renderAdminPublish(v) {
     if (b.dataset.pseg === seg) return;
     P_PUBSEG = b.dataset.pseg; render();
   }));
+}
+
+function bindTaskTemplates() {
+  const b = $('#tplNew');
+  if (b) b.addEventListener('click', taskTemplateSheet);
+  const g = $('#tplGen');
+  if (g) g.addEventListener('click', async () => {
+    try {
+      const r = await api('POST', '/api/task-templates/generate');
+      toast(r.generated ? '生成了 ' + r.generated + ' 条' : '今天没有到期的');
+      render();
+    } catch (e) { err(e); }
+  });
+  $$('#view [data-ttoggle]').forEach(el => el.addEventListener('click', async () => {
+    try {
+      await api('POST', '/api/task-templates/' + el.dataset.ttoggle + '/toggle',
+        { active: el.dataset.on !== '1' });
+      render();
+    } catch (e) { err(e); }
+  }));
+  $$('#view [data-tdel]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm('删掉这条周期任务？已经发出去的任务不受影响。')) return;
+    try {
+      await api('DELETE', '/api/task-templates/' + el.dataset.tdel);
+      toast('删掉了'); render();
+    } catch (e) { err(e); }
+  }));
+}
+
+function taskTemplateSheet() {
+  let rt = 'stardust', to = 'hall', repeat = 'weekly', rv = 6;
+  const kids = KIDS();
+  const h = '<h3>新建周期任务</h3>' +
+    '<p class="muted">到日子系统自己发一条普通任务。第一次从下一次到期开始，不会一建就发。</p>' +
+    '<div class="field"><input id="ttTitle" placeholder="标题，例如：倒垃圾"></div>' +
+    '<div class="field"><input id="ttStd" placeholder="完成标准：垃圾袋换新、桶放回原位"></div>' +
+    '<div class="field"><label>奖励</label><div class="chips">' +
+    '<button type="button" class="chip on" data-ttr="stardust">星尘</button>' +
+    '<button type="button" class="chip" data-ttr="energy">周能量</button></div></div>' +
+    '<div class="field"><label>数量</label>' +
+    '<input id="ttAmt" type="number" inputmode="numeric" value="5" min="1" max="10"></div>' +
+    '<div class="field"><label>给谁</label><div class="chips">' +
+    '<button type="button" class="chip on" data-tto="hall">挂大厅</button>' +
+    kids.map(m => '<button type="button" class="chip" data-tto="' + m.id + '">' +
+      esc(m.name) + '</button>').join('') + '</div></div>' +
+    '<div class="field"><label>周期</label><div class="chips">' +
+    '<button type="button" class="chip" data-ttre="daily">每天</button>' +
+    '<button type="button" class="chip on" data-ttre="weekly">每周</button>' +
+    '<button type="button" class="chip" data-ttre="monthly">每月</button></div></div>' +
+    '<div class="field" id="ttWeek"><label>周几</label><div class="chips">' +
+    ['一','二','三','四','五','六','日'].map((n, i) =>
+      '<button type="button" class="chip' + (i === 6 ? ' on' : '') +
+      '" data-ttrv="' + i + '">' + n + '</button>').join('') + '</div></div>' +
+    '<div class="field" id="ttMonth" style="display:none"><label>每月几号</label>' +
+    '<input id="ttDay" type="number" inputmode="numeric" value="1" min="1" max="28"></div>' +
+    '<button class="btn wide" id="ttGo">建好</button>';
+  sheet(h, box => {
+    const amt = () => $('#ttAmt', box);
+    const syncMax = () => { amt().max = rt === 'energy' ? '3' : '10'; };
+    $$('[data-ttr]', box).forEach(b => b.addEventListener('click', () => {
+      rt = b.dataset.ttr;
+      $$('[data-ttr]', box).forEach(x => x.classList.toggle('on', x === b));
+      syncMax();
+    }));
+    $$('[data-tto]', box).forEach(b => b.addEventListener('click', () => {
+      to = b.dataset.tto;
+      $$('[data-tto]', box).forEach(x => x.classList.toggle('on', x === b));
+    }));
+    $$('[data-ttre]', box).forEach(b => b.addEventListener('click', () => {
+      repeat = b.dataset.ttre;
+      $$('[data-ttre]', box).forEach(x => x.classList.toggle('on', x === b));
+      $('#ttWeek', box).style.display = repeat === 'weekly' ? '' : 'none';
+      $('#ttMonth', box).style.display = repeat === 'monthly' ? '' : 'none';
+    }));
+    $$('[data-ttrv]', box).forEach(b => b.addEventListener('click', () => {
+      rv = +b.dataset.ttrv;
+      $$('[data-ttrv]', box).forEach(x => x.classList.toggle('on', x === b));
+    }));
+    $('#ttGo', box).addEventListener('click', async () => {
+      const title = $('#ttTitle', box).value.trim();
+      const std = $('#ttStd', box).value.trim();
+      if (!title) return toast('先写标题');
+      if (!std) return toast('完成标准不能空');
+      const value = repeat === 'weekly' ? rv :
+        (repeat === 'monthly' ? +$('#ttDay', box).value : 0);
+      try {
+        await api('POST', '/api/task-templates', {
+          title: title, std: std, repeat_type: repeat, repeat_value: value,
+          assignee_id: to === 'hall' ? null : +to,
+          reward_type: rt, amount: +amt().value,
+        });
+        closeSheet(); toast('建好了'); render();
+      } catch (e) { err(e); }
+    });
+  });
 }
 
 function bindPublishForm() {

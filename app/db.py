@@ -316,6 +316,7 @@ def _seed(conn, verbose: bool = False):
     _migrate_v46(conn)
     _migrate_v47(conn)
     _migrate_v48(conn)
+    _migrate_v49(conn)
 
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (seed_data.SCHEMA_VERSION,))
@@ -1530,6 +1531,32 @@ def _migrate_v46(conn):
     for key, old_note, note in renote:
         conn.execute(
             "UPDATE setting SET note=? WHERE key=? AND note=?", (note, key, old_note))
+
+
+def _migrate_v49(conn):
+    """v49：周期任务模板。"""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS task_template (
+             id                INTEGER PRIMARY KEY AUTOINCREMENT,
+             title             TEXT    NOT NULL,
+             std               TEXT    NOT NULL DEFAULT '',
+             assignee_id       INTEGER REFERENCES member(id),
+             created_by        INTEGER NOT NULL REFERENCES member(id),
+             reward_type       TEXT    NOT NULL DEFAULT 'stardust',
+             reward_json       TEXT    NOT NULL DEFAULT '{}',
+             repeat_type       TEXT    NOT NULL DEFAULT 'weekly',
+             repeat_value      INTEGER NOT NULL DEFAULT 6,
+             next_due          TEXT    NOT NULL,
+             active            INTEGER NOT NULL DEFAULT 1,
+             icon              TEXT    NOT NULL DEFAULT '',
+             slots             INTEGER NOT NULL DEFAULT 1,
+             created_at        TEXT    NOT NULL,
+             last_generated_at TEXT,
+             last_result       TEXT    NOT NULL DEFAULT ''
+           )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_task_template_due"
+                 " ON task_template(active, next_due)")
 
 
 def _migrate_v48(conn):

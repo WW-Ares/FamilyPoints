@@ -1,10 +1,10 @@
-/* 家庭积分 v1.24 · app shell 缓存
+/* 家庭积分 v1.25 · app shell 缓存
    只缓存静态壳，API 永远走网络；导航离线时回 index.html。 */
-const CACHE = 'fp-1.24';
+const CACHE = 'fp-1.25';
 const CORE = [
   '/', '/index.html',
-  '/style.css?v=1.24', '/login.css?v=1.24', '/theme-sky.css?v=1.24',
-  '/icons.js?v=1.24', '/avatars.js?v=1.24', '/app.js?v=1.24',
+  '/style.css?v=1.25', '/login.css?v=1.25', '/theme-sky.css?v=1.25',
+  '/icons.js?v=1.25', '/avatars.js?v=1.25', '/app.js?v=1.25',
   '/icon-192.png', '/icon-512.png', '/site.webmanifest',
 ];
 

@@ -1,5 +1,5 @@
 -- 家庭积分工程 · 数据库结构
--- 规则真值以最新的《项目当前开发文档》为准（当前 schema v48），结构变更都带 _migrate_vNN 迁移。
+-- 规则真值以最新的《项目当前开发文档》为准（当前 schema v49），结构变更都带 _migrate_vNN 迁移。
 --
 -- 两条贯穿全库的约定：
 --   1. 所有余额都由流水求和得出，不存冗余余额字段（项目原则 6）。
@@ -420,6 +420,26 @@ CREATE TABLE IF NOT EXISTS task (
   icon           TEXT    NOT NULL DEFAULT '',        -- v21：图标 token，发任务的人选
   created_at     TEXT, submitted_at TEXT, confirmed_at TEXT, archived_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS task_template (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  title             TEXT    NOT NULL,
+  std               TEXT    NOT NULL DEFAULT '',
+  assignee_id       INTEGER REFERENCES member(id),   -- NULL = 挂大厅
+  created_by        INTEGER NOT NULL REFERENCES member(id),
+  reward_type       TEXT    NOT NULL DEFAULT 'stardust',
+  reward_json       TEXT    NOT NULL DEFAULT '{}',
+  repeat_type       TEXT    NOT NULL DEFAULT 'weekly', -- daily|weekly|monthly
+  repeat_value      INTEGER NOT NULL DEFAULT 6,        -- 周几 0=周一；每月 1-28；每天 0
+  next_due          TEXT    NOT NULL,
+  active            INTEGER NOT NULL DEFAULT 1,
+  icon              TEXT    NOT NULL DEFAULT '',
+  slots             INTEGER NOT NULL DEFAULT 1,
+  created_at        TEXT    NOT NULL,
+  last_generated_at TEXT,
+  last_result       TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_task_template_due ON task_template (active, next_due);
 
 -- ---------------------------------------------------------------------------
 -- 校准（惩罚）三层
