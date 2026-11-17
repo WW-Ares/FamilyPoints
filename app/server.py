@@ -5,6 +5,7 @@ HTTP 服务入口。
 只用标准库：http.server + sqlite3 + json。没有第三方依赖，Docker 镜像里不用 pip install。
 启动：python server.py  （默认监听 0.0.0.0:8080）
 """
+import gzip
 import json
 import os
 import secrets
@@ -24,6 +25,8 @@ from api.auth import resolve_session
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
 MAX_BODY = 1000000
+GZIP_TYPES = {".html", ".js", ".css", ".json", ".svg", ".txt", ".webmanifest"}
+_gz_cache = {}
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -188,21 +191,41 @@ class Handler(BaseHTTPRequestHandler):
         ctype = MIME.get(ext, "application/octet-stream")
         with open(full, "rb") as f:
             data = f.read()
-        # 内容指纹。有了它，下面那些 no-cache 的资源才能回 304 而不是每趟整份重下。
-        etag = '"%s-%s"' % (len(data), hashlib.md5(data).hexdigest()[:16])
-        if self.headers.get("If-None-Match") == etag:
-            return self._send(304, b"", ctype, headers={"ETag": etag, "Cache-Control": "no-cache"})
-        # 缓存分三档。图标和清单被系统/桌面按「快照」缓存：iOS 加到主屏幕那一刻
-        # 就拍下图标，安卓装桌面时同样，之后换文件内容它们不会回来问，只有 URL
-        # 变了才更新。所以这两类必须可随时校验（no-cache + ETag），不能压 24 小时；
-        # 换图标时再给 URL 加版本号（index.html 与 site.webmanifest 里的 ?v=）。
-        if ext in (".html", ".js", ".css", ".webmanifest", ".json", ".png", ".ico"):
+        # 文本资源按 Accept-Encoding 压缩，缓存按 (文件, mtime, 大小) 记，别每次重压。
+        use_gzip = (ext in GZIP_TYPES and len(data) > 512
+                    and "gzip" in (self.headers.get("Accept-Encoding") or "").lower())
+        body = data
+        if use_gzip:
+            st = os.stat(full)
+            key = (full, st.st_mtime_ns, st.st_size)
+            body = _gz_cache.get(key)
+            if body is None:
+                if len(_gz_cache) > 128:
+                    _gz_cache.clear()
+                body = gzip.compress(data, 6)
+                _gz_cache[key] = body
+        suffix = "-gz" if use_gzip else ""
+        etag = '"%s-%s%s"' % (len(data), hashlib.md5(data).hexdigest()[:16], suffix)
+        # 缓存分档：带 ?v= 的 JS/CSS 一年 immutable；sw.js 和 HTML 不缓存。
+        if full.endswith(os.sep + "sw.js"):
             cache = "no-cache"
+        elif ext in (".html", ".webmanifest", ".json"):
+            cache = "no-cache"
+        elif ext in (".js", ".css"):
+            cache = "public, max-age=31536000, immutable"
+        elif ext in (".png", ".ico"):
+            cache = "public, max-age=86400"
         elif ext in (".svg", ".jpg", ".jpeg", ".webp", ".gif"):
             cache = "public, max-age=3600"
         else:
             cache = "public, max-age=86400"
-        return self._send(200, data, ctype, headers={"ETag": etag, "Cache-Control": cache})
+        headers = {"ETag": etag, "Cache-Control": cache}
+        if use_gzip:
+            headers["Content-Encoding"] = "gzip"
+            headers["Vary"] = "Accept-Encoding"
+        if self.headers.get("If-None-Match") == etag:
+            return self._send(304, b"", ctype, headers=headers)
+        return self._send(200, body, ctype, headers=headers)
 
 
 def main():

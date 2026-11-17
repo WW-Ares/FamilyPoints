@@ -346,13 +346,6 @@ function kValid(v) { return !!K_TAB_OF[v]; }
 /* 「新」这个标记记在浏览器本地，不记到账号上：它是给「这一屏改了、你还没看过」
    用的，同一个人两台设备各出现一次不是问题；写进库里反而要为它加一次网络往返，
    而且孩子把浏览器数据清了就会又冒出来，那时更奇怪。 */
-function kSeen(key) {
-  try { return localStorage.getItem('kseen.' + key) === '1'; } catch (e) { return true; }
-}
-function kMarkSeen(key) {
-  try { localStorage.setItem('kseen.' + key, '1'); } catch (e) { /* 无痕模式里写不进去，随它 */ }
-}
-
 function kHash(v, push) {
   if (location.hash === '#' + v) return;
   try {

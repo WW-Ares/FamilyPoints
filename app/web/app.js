@@ -33,6 +33,60 @@ const S = {
 const KIDS = () => S.members.filter(m => m.role === 'child');
 const PARENTS = () => S.members.filter(m => m.role !== 'child');
 
+/* 「新」角标看过没有。家长端「我的」也用它，所以放在 app.js，
+   不能只留在 child.js。 */
+function kSeen(key) {
+  try { return localStorage.getItem('kseen.' + key) === '1'; } catch (e) { return true; }
+}
+function kMarkSeen(key) {
+  try { localStorage.setItem('kseen.' + key, '1'); } catch (e) { /* 无痕模式里写不进去，随它 */ }
+}
+
+/* ---------------------------------------------------------- 角色资源加载 */
+/* v1.24：首屏只带 style/login/theme + icons/avatars/app.js。
+   登录后按角色再拉各自的 tokens、皮肤、图标清单和 child.js，
+   家长不下载 child.css，孩子不下载 parent.css。 */
+const ROLE_ASSETS = {
+  parent: {
+    css: ['parent-tokens.css?v=1.24', 'parent.css?v=1.24'],
+    js: ['parent-icons.js?v=1.24'],
+  },
+  child: {
+    css: ['child-tokens.css?v=1.24', 'child.css?v=1.24', 'chest-opening.css?v=1.24'],
+    js: ['candy-icons.js?v=1.24', 'chest-opening.js?v=1.24', 'child.js?v=1.24'],
+  },
+};
+const ROLE_LOADED = {};
+
+function loadAsset(kind, url) {
+  return new Promise((resolve, reject) => {
+    if (kind === 'css') {
+      const el = document.createElement('link');
+      el.rel = 'stylesheet';
+      el.href = url;
+      el.onload = () => resolve();
+      el.onerror = () => reject(new Error('样式没加载出来：' + url));
+      document.head.appendChild(el);
+      return;
+    }
+    const el = document.createElement('script');
+    el.src = url;
+    el.async = false;
+    el.onload = () => resolve();
+    el.onerror = () => reject(new Error('脚本没加载出来：' + url));
+    document.body.appendChild(el);
+  });
+}
+
+async function ensureRoleAssets(role) {
+  if (ROLE_LOADED[role]) return;
+  const spec = ROLE_ASSETS[role];
+  if (!spec) return;
+  await Promise.all(spec.css.map(url => loadAsset('css', url)));
+  for (const url of spec.js) await loadAsset('js', url);
+  ROLE_LOADED[role] = true;
+}
+
 /* ------------------------------------------------------------------ 基础 */
 async function api(method, path, body) {
   const opt = { method: method, credentials: 'same-origin', headers: {} };
@@ -853,6 +907,9 @@ async function boot() {
     // 看出来，但家长端的装饰层会漏到孩子端头上）。
     document.body.classList.toggle('kid', !S.isParent);
     document.body.classList.toggle('grown', S.isParent);
+    // 角色资源要在 pickView / render 之前就位：child.js 定义 CHILD，
+    // parent.css 决定家长端布局。
+    await ensureRoleAssets(S.isParent ? 'parent' : 'child');
     /* iOS 加到主屏之后，状态栏那一整条（15 Pro Max 上 59px）是拿这个值画的，
        页面从它底下才开始画 —— 值必须等于页面顶部那一档 --bg-top #FFD08A，
        写深橙就是顶部横着一条跟页面对不上的色带。v1.8 只把 index.html 那条
@@ -6079,12 +6136,16 @@ async function renderParentKidGuide(v) {
   const mid = kidId();
   const back = view === 'kidguide' ? pBack('kidguide') : (P_FROM[view] || 'kidguide');
 
+  // 家长端「怎么玩」复用的是孩子端那四屏正文；用到时才把 child.js / candy-icons
+  // 拉进来，首屏和普通家长页面仍然不下载它们。
+  await ensureRoleAssets('child');
+
   let h = pHead({ title: pg2[0], small: true, back: back, sub: pg2[1] });
 
   // 只读那一句只在目录上写：三张子页是从这儿点进去的，进去就该是内容，
   // 每页顶上都压一句「你改不了」是重复。
   if (view === 'kidguide') {
-    h += '<div class="kd-note">' + ic('i-info', 15, '#C98A3C') +
+    h += '<div class="kd-note">' + glyph('i-info', '', 15) +
       '这是孩子在他自己那一端看到的同一份说明，你在这儿只能看，改不了。' +
       '要改口径去「规则说明」。</div>';
   }
