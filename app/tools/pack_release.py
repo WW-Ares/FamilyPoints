@@ -41,7 +41,8 @@ TEXT_NAMES = {"Dockerfile", ".dockerignore"}
 # 包里额外带上的文件。Dockerfile 的 COPY 里不会有它们（它们不是被 COPY 的对象，
 # 而是执行 COPY 的人），但 NAS 上没有一个都构建不了。
 EXTRA = ["Dockerfile", "docker-compose.yml", ".dockerignore", "README.md",
-         "部署到NAS.md", "tools/carryover_in.py"]
+         "部署到NAS.md", "tools/carryover_in.py",
+         "tools/verify_backup.py", "tools/restore_backup.py", "tools/reset_admin.py"]
 REQUIRED = ["Dockerfile", "docker-compose.yml"]
 
 
