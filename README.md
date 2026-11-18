@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="screenshots/kid-home.png" width="104" alt="FamilyPoints">
+  <img src="app/web/favicon.svg" width="96" alt="FamilyPoints">
 </p>
 
 <h1 align="center">家庭积分 FamilyPoints</h1>
