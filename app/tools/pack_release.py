@@ -36,7 +36,7 @@ PKG_ROOT = "family-points"
 
 TEXT_SUFFIX = {".py", ".yml", ".yaml", ".md", ".sql", ".js", ".css",
                ".html", ".json", ".svg", ".txt"}
-TEXT_NAMES = {"Dockerfile", ".dockerignore"}
+TEXT_NAMES = {"Dockerfile", ".dockerignore", "LICENSE"}
 
 # 包里额外带上的文件。Dockerfile 的 COPY 里不会有它们（它们不是被 COPY 的对象，
 # 而是执行 COPY 的人），但 NAS 上没有一个都构建不了。
@@ -116,12 +116,17 @@ def main():
         if (APP / extra).is_file() and extra not in names:
             names.append(extra)
 
+    # 仓库根目录的 LICENSE 跟着包走：源码发到哪，条款就到哪
+    root_license = APP.parent / "LICENSE"
+    if root_license.is_file() and "LICENSE" not in names:
+        names.append("LICENSE")
+
     crlf_fixed = []
     total = 0
     with tarfile.open(target, "w:gz") as tf:
         dirs = set()
         for rel in names:
-            src = APP / rel
+            src = APP.parent / rel if rel == "LICENSE" else APP / rel
             if not src.is_file():
                 print("  ! 缺文件 %s" % rel)
                 continue

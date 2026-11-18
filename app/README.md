@@ -291,3 +291,7 @@ FAMILY_PORT=8090 FAMILY_DATA_DIR=data/demo python server.py
 ## 技术选择说明
 
 选 Python 标准库而不是 Go，是因为这套东西的难点在规则和数值，不在并发。四个人的家用系统不需要框架，`http.server` 加一个路由表足够。代价是没有 ORM 和模板引擎，好处是零依赖：镜像小、构建不需要联网装包、也不会有哪天某个库升级把服务搞崩。
+
+## 许可
+
+本仓库是 **Source Available**，不是开源项目：源码可读，但未授予运行、复制、修改、分发和商用的权利。完整条款见 [LICENSE](https://github.com/WW-Ares/FamilyPoints/blob/main/LICENSE)（发布包里在解压目录下）。

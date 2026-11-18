@@ -13,7 +13,7 @@
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-green">
   <img alt="dependencies" src="https://img.shields.io/badge/dependencies-0-brightgreen">
   <img alt="schema" src="https://img.shields.io/badge/schema-49-lightgrey">
-  <img alt="license" src="https://img.shields.io/badge/license-proprietary-red">
+  <img alt="license" src="https://img.shields.io/badge/license-Source%20Available-orange">
 </p>
 
 ---
@@ -214,4 +214,8 @@ FAMILY_BASE=http://127.0.0.1:8090 node app/tools/e2e_v13.js
 
 ## 许可
 
-仓库公开，但不是开源。这里没有许可文件，未授予使用、复制、修改或再分发的权利。
+**Source Available，不是开源项目。**
+
+源码公开是为了让人能读、能学、能评估，不是把使用权一起给出去。本仓库没有采用任何开源许可证，版权归作者所有；除阅读、学习和带出处的短引用外，未授予运行、复制、修改、分发、商用或对外提供服务的权利。
+
+需要其他授权，开 [issue](https://github.com/WW-Ares/FamilyPoints/issues) 联系。完整条款见 [LICENSE](LICENSE)。
